@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { ApiDashboardTab } from './ApiDashboardTab';
 import { useAuth } from '../hooks/useAuth';
 import { ONBOARDING_PLANS } from '../constants/index';
 import { openCheckout, DODO_PRODUCTS } from '../utils/dodoCheckout';
@@ -6,7 +7,7 @@ import { getDashboardUrl, getWorkspaceCreationUrl } from '../utils/dashboardUrl'
 
 import OnboardingFlow from './OnboardingFlow';
 
-type TabType = 'dashboard' | 'billing' | 'support';
+type TabType = 'dashboard' | 'billing' | 'support' | 'apis';
 type FormStep = 1 | 2 | 3;
 
 /* ─── design tokens ─────────────────────────────────────────────── */
@@ -143,6 +144,7 @@ const Dashboard: React.FC = () => {
     { id: 'dashboard', label: 'Dashboard',    icon: 'solar:widget-2-bold'        },
     { id: 'billing',   label: 'Subscription', icon: 'solar:card-transfer-bold'   },
     { id: 'support',   label: 'Support',      icon: 'solar:chat-round-line-bold' },
+    { id: 'apis',      label: 'APIs',         icon: 'solar:key-bold'             },
   ];
 
   // True once the user is allowed to see the embedded app (after onboarding +
@@ -478,7 +480,7 @@ const Dashboard: React.FC = () => {
           style={{ background: BG, borderBottom: `1px solid ${BORDER}` }}
         >
           <h1 className="text-sm font-semibold" style={{ color: TXT }}>
-            {activeTab === 'dashboard' ? 'Overview' : activeTab === 'billing' ? 'Subscription' : 'Support'}
+            {activeTab === 'dashboard' ? 'Overview' : activeTab === 'billing' ? 'Subscription' : activeTab === 'apis' ? 'API Management' : 'Support'}
           </h1>
         </div>
 
@@ -562,6 +564,9 @@ const Dashboard: React.FC = () => {
         {!showIframe && (
           <div className="flex-grow overflow-auto">
             <div className="p-6 max-w-4xl mx-auto w-full">
+
+              {/* ─── API TAB ────────────────────────────────────────────── */}
+              {activeTab === 'apis' && <ApiDashboardTab />}
 
               {/* ─── DASHBOARD TAB ──────────────────────────────────────── */}
               {activeTab === 'dashboard' && (

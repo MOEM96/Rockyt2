@@ -14,6 +14,16 @@ async function startServer() {
   // Assuming these are available in environment
   const supabase = createClient(process.env.VITE_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
+  // Middleware to authenticate via Supabase Session
+  async function supabaseAuth(req: any, res: any, next: any) {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) return res.status(401).json({ error: 'Missing auth token' });
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (error || !user) return res.status(401).json({ error: 'Invalid token' });
+    req.user = user;
+    next();
+  }
+
   // Middleware to authenticate via custom API Key
   async function authenticate(req: any, res: any, next: any) {
     const token = req.headers.authorization?.replace('Bearer ', '');
@@ -34,6 +44,30 @@ async function startServer() {
     req.connectedCount = data.profiles.connected_accounts_count;
     next();
   }
+
+  // API Key Management Routes
+  app.post('/api/v1/keys', supabaseAuth, async (req: any, res: any) => {
+    const rawKey = 'zwl_' + crypto.randomBytes(32).toString('hex');
+    const hash = crypto.createHash('sha256').update(rawKey).digest('hex');
+    
+    await supabase.from('user_api_keys').insert({
+      user_id: req.user.id,
+      key_hash: hash,
+      key_prefix: rawKey.substring(0, 8)
+    });
+    
+    res.json({ key: rawKey });
+  });
+
+  app.get('/api/v1/keys', supabaseAuth, async (req: any, res: any) => {
+    const { data } = await supabase.from('user_api_keys').select('id, key_prefix, created_at').eq('user_id', req.user.id).eq('revoked', false);
+    res.json(data);
+  });
+
+  app.delete('/api/v1/keys/:id', supabaseAuth, async (req: any, res: any) => {
+    await supabase.from('user_api_keys').update({ revoked: true }).eq('id', req.params.id).eq('user_id', req.user.id);
+    res.status(204).send();
+  });
 
   // API routes
   app.get('/api/v1/connect/:platform', authenticate, async (req: any, res: any) => {
