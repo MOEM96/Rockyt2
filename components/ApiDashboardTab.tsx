@@ -36,25 +36,51 @@ export const ApiDashboardTab: React.FC = () => {
   };
 
   const generateKey = async () => {
-    const { data: { session } } = await import('../utils/supabase').then(m => m.supabase.auth.getSession());
-    const res = await fetch('/api/v1/keys', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${session?.access_token}` }
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setNewKey(data.key);
-      fetchData();
+    try {
+      const { data: { session } } = await import('../utils/supabase').then(m => m.supabase.auth.getSession());
+      if (!session) {
+        alert('You must be logged in to generate an API key.');
+        return;
+      }
+      const res = await fetch('/api/v1/keys', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setNewKey(data.key);
+        fetchData();
+      } else {
+        const errorData = await res.json();
+        alert(`Failed to generate key: ${errorData.error}`);
+      }
+    } catch (error) {
+      console.error('Error generating key:', error);
+      alert('An error occurred while generating the key.');
     }
   };
 
   const revokeKey = async (id: string) => {
-    const { data: { session } } = await import('../utils/supabase').then(m => m.supabase.auth.getSession());
-    await fetch(`/api/v1/keys/${id}`, {
-      method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${session?.access_token}` }
-    });
-    fetchData();
+    try {
+      const { data: { session } } = await import('../utils/supabase').then(m => m.supabase.auth.getSession());
+      if (!session) {
+        alert('You must be logged in to revoke an API key.');
+        return;
+      }
+      const res = await fetch(`/api/v1/keys/${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
+      });
+      if (res.ok) {
+        fetchData();
+      } else {
+        const errorData = await res.json();
+        alert(`Failed to revoke key: ${errorData.error}`);
+      }
+    } catch (error) {
+      console.error('Error revoking key:', error);
+      alert('An error occurred while revoking the key.');
+    }
   };
 
   if (loading) return <div style={{ color: API_TAB_TXT }}>Loading...</div>;

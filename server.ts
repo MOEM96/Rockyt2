@@ -47,6 +47,25 @@ async function startServer() {
 
   // API Key Management Routes
   app.post('/api/v1/keys', supabaseAuth, async (req: any, res: any) => {
+    // 1. Check/Create Zernio Profile
+    let { data: profile } = await supabase.from('profiles').select('zernio_profile_id').eq('id', req.user.id).single();
+    
+    if (!profile?.zernio_profile_id) {
+        const zernioRes = await fetch('https://zernio.com/api/v1/profiles', {
+            method: 'POST',
+            headers: { 
+                Authorization: `Bearer ${process.env.ZERNIO_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ name: req.user.email })
+        });
+        const zernioProfile = await zernioRes.json();
+        const zernioProfileId = zernioProfile._id;
+        
+        await supabase.from('profiles').update({ zernio_profile_id: zernioProfileId }).eq('id', req.user.id);
+        profile = { zernio_profile_id: zernioProfileId };
+    }
+
     const rawKey = 'zwl_' + crypto.randomBytes(32).toString('hex');
     const hash = crypto.createHash('sha256').update(rawKey).digest('hex');
     
