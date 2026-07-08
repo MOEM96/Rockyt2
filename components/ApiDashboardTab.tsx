@@ -28,7 +28,7 @@ export const ApiDashboardTab: React.FC = () => {
     
     const [keysRes, usageRes] = await Promise.all([
       fetch('/api/v1/keys', { headers }),
-      fetch('/api/v1/me/usage', { headers })
+      fetch('/api/v1/me/dashboard-usage', { headers })
     ]);
     if (keysRes.ok) setKeys(await keysRes.json());
     if (usageRes.ok) setUsage(await usageRes.json());

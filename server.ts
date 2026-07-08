@@ -103,6 +103,12 @@ async function startServer() {
     res.json({ connectedAccounts: req.connectedCount, maxAccounts: req.maxAccounts });
   });
 
+  app.get('/api/v1/me/dashboard-usage', supabaseAuth, async (req: any, res: any) => {
+    const { data: profile } = await supabase.from('profiles').select('max_accounts, connected_accounts_count').eq('id', req.user.id).single();
+    if (!profile) return res.status(404).json({ error: 'Profile not found' });
+    res.json({ connectedAccounts: profile.connected_accounts_count, maxAccounts: profile.max_accounts });
+  });
+
   app.all(/^\/api\/v1\/(.*)/, authenticate, async (req: any, res: any) => {
     const path = req.originalUrl.replace('/api/v1', '');
     const url = new URL(`https://zernio.com/api/v1${path}`);
