@@ -145,4 +145,9 @@ async function startServer() {
   return app;
 }
 
-export default await startServer();
+const appPromise = startServer();
+
+export default async function handler(req: any, res: any) {
+  const app = await appPromise;
+  app(req, res);
+}
