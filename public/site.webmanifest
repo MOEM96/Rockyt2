@@ -1,0 +1,14 @@
+{
+    "name": "Rockyt",
+    "short_name": "Rockyt",
+    "icons": [
+        {
+            "src": "/favicon.png",
+            "sizes": "any",
+            "type": "image/png"
+        }
+    ],
+    "theme_color": "#161616",
+    "background_color": "#161616",
+    "display": "standalone"
+}

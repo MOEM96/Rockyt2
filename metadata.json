@@ -1,0 +1,6 @@
+{
+  "name": "Rockyt - Ad Automation",
+  "description": "Rockyt automates your advertising strategy. Scale faster with less manual work.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

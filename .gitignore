@@ -1,0 +1,11 @@
+# environment variables
+.env
+.env.local
+.env.*.local
+
+node_modules
+dist
+.DS_Store
+*.local
+dist-ssr
+*.lock
