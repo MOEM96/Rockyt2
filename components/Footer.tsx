@@ -57,6 +57,7 @@ const Footer: React.FC<NavigationProps> = ({ onNavigate }) => {
                     <div className="md:col-span-2">
                         <h4 className="font-bold text-white mb-6 text-sm uppercase tracking-wider">Product</h4>
                         <div className="flex flex-col gap-4">
+                            <button onClick={() => handleNavigate('apis')} className="text-left text-gray-400 hover:text-brand-yellow transition-colors text-sm">APIs</button>
                             <button onClick={() => handleNavigate('performance')} className="text-left text-gray-400 hover:text-brand-yellow transition-colors text-sm">Performance</button>
                             <button onClick={() => handleNavigate('cases')} className="text-left text-gray-400 hover:text-brand-yellow transition-colors text-sm">Case Studies</button>
                             <button onClick={() => handleNavigate('pricing')} className="text-left text-gray-400 hover:text-brand-yellow transition-colors text-sm">Pricing</button>

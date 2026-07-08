@@ -4,21 +4,26 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0 --port 3000",
-    "build": "vite build",
-    "preview": "vite preview"
+    "dev": "tsx server.ts",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "start": "node dist/server.cjs"
   },
   "dependencies": {
     "@calcom/embed-react": "^1.5.3",
     "@supabase/supabase-js": "^2.105.1",
     "dodopayments-checkout": "^1.8.0",
+    "express": "^5.2.1",
+    "motion": "^12.42.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/react": "^18.2.66",
     "@types/react-dom": "^18.2.22",
     "@vitejs/plugin-react": "^4.2.1",
+    "esbuild": "^0.28.1",
+    "tsx": "^4.23.0",
     "typescript": "^5.2.2",
     "vite": "^5.2.0"
   }

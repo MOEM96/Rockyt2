@@ -1,6 +1,6 @@
 {
   "name": "Rockyt - Ad Automation",
-  "description": "Rockyt automates your advertising strategy. Scale faster with less manual work.",
+  "description": "Rockyt automates your advertising strategy and provides unified social media & messaging APIs for developers and AI agents. Scale faster with less manual work.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

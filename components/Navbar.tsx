@@ -78,6 +78,13 @@ const Navbar: React.FC<NavbarProps> = ({ onNavigate, isMobileMenuOpen, setIsMobi
             <div className="flex items-center p-1.5 gap-1 bg-[#161616]/80 backdrop-blur-xl border border-white/10 rounded-full shadow-2xl">
               <a
                 href="#"
+                onClick={(e) => handleDesktopNavigate(e, 'apis')}
+                className="px-6 py-2.5 rounded-full text-sm font-semibold text-gray-400 hover:text-white hover:bg-white/10 transition-all duration-300"
+              >
+                APIs
+              </a>
+              <a
+                href="#"
                 onClick={(e) => handleDesktopNavigate(e, 'performance')}
                 className="px-6 py-2.5 rounded-full text-sm font-semibold text-gray-400 hover:text-white hover:bg-white/10 transition-all duration-300 capitalize"
               >
@@ -194,6 +201,13 @@ const Navbar: React.FC<NavbarProps> = ({ onNavigate, isMobileMenuOpen, setIsMobi
 
           {/* Navigation Links - Compact & Minimal */}
           <div className="flex flex-col items-center gap-5 w-full">
+            <a
+              href="#"
+              onClick={(e) => { e.preventDefault(); handleMobileNavigate('apis'); }}
+              className="text-lg font-medium text-gray-300 hover:text-white transition-colors w-full text-center py-2 border-b border-white/5"
+            >
+              APIs
+            </a>
             <a
               href="#"
               onClick={(e) => { e.preventDefault(); handleMobileNavigate('performance'); }}

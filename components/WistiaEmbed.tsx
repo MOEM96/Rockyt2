@@ -48,9 +48,6 @@ export const WistiaEmbed: React.FC<WistiaEmbedProps> = ({
                 title="Wistia video player"
                 allow="autoplay; fullscreen"
                 allowFullScreen
-                allowTransparency
-                frameBorder="0"
-                scrolling="no"
                 className={`absolute top-0 left-0 w-full h-full border-none rounded-inherit ${classAttr || ''}`}
                 style={{ border: 'none' }}
             />
