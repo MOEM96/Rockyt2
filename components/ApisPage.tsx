@@ -151,9 +151,16 @@ export const ApisPage: React.FC<BasePageProps> = ({ onGetStarted }) => {
             Ship custom integrations, workflows, and dashboards in minutes instead of months. One API to post, message, boost, and analyze across 15 channels.
           </p>
 
-          <p className="text-xs text-gray-500 font-mono mb-8">
-            No credit card required • First 2 connected accounts free forever • Unlimited team seats
-          </p>
+          {/* CTA Button */}
+          <motion.button
+            whileHover={{ scale: 1.05, y: -2 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => onGetStarted()}
+            className="px-8 py-4 bg-[#FFE241] text-black font-extrabold text-sm md:text-base rounded-full uppercase tracking-wider hover:bg-white hover:text-black hover:shadow-[0_0_30px_rgba(255,226,65,0.4)] transition-all duration-300 flex items-center gap-2 mb-8 shadow-lg cursor-pointer"
+          >
+            <span>Get API Keys & Start Building</span>
+            <iconify-icon icon="solar:arrow-right-bold" class="text-lg"></iconify-icon>
+          </motion.button>
         </div>
 
         {/* TRUSTED BY ROW & META/TIKTOK PARTNERS */}
