@@ -9,3 +9,7 @@ dist
 *.local
 dist-ssr
 *.lock
+/Rockyt2/
+
+# supabase CLI temp state (may leak project refs)
+supabase/.temp/

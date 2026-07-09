@@ -10,8 +10,10 @@
     "start": "node dist/server.cjs"
   },
   "dependencies": {
+    "@zernio/node": "^0.2.325",
     "@calcom/embed-react": "^1.5.3",
     "@supabase/supabase-js": "^2.105.1",
+    "@zernio/node": "^0.2.335",
     "dodopayments-checkout": "^1.8.0",
     "express": "^5.2.1",
     "motion": "^12.42.2",
