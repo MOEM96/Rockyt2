@@ -16,37 +16,58 @@ async function startServer() {
 
   const supabase = createClient(process.env.VITE_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
+  function asyncHandler(fn: Function) {
+    return (req: any, res: any, next: any) => {
+      Promise.resolve(fn(req, res, next)).catch((err) => {
+        console.error('Express async handler caught error:', err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Internal Server Error', details: err?.message || String(err) });
+        }
+      });
+    };
+  }
+
   async function supabaseAuth(req: any, res: any, next: any) {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) return res.status(401).json({ error: 'Missing auth token' });
-    const { data: { user }, error } = await supabase.auth.getUser(token);
-    if (error || !user) return res.status(401).json({ error: 'Invalid token' });
-    req.user = user;
-    next();
+    try {
+      const token = req.headers.authorization?.replace('Bearer ', '');
+      if (!token) return res.status(401).json({ error: 'Missing auth token' });
+      const { data: { user }, error } = await supabase.auth.getUser(token);
+      if (error || !user) return res.status(401).json({ error: 'Invalid token' });
+      req.user = user;
+      next();
+    } catch (err: any) {
+      console.error('supabaseAuth error:', err);
+      res.status(401).json({ error: 'Authentication failed', details: err?.message });
+    }
   }
 
   async function authenticate(req: any, res: any, next: any) {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) return res.status(401).json({ error: 'Missing API key' });
+    try {
+      const token = req.headers.authorization?.replace('Bearer ', '');
+      if (!token) return res.status(401).json({ error: 'Missing API key' });
 
-    const hash = crypto.createHash('sha256').update(token).digest('hex');
+      const hash = crypto.createHash('sha256').update(token).digest('hex');
 
-    const { data, error } = await supabase
-      .from('user_api_keys')
-      .select('user_id, revoked, profiles(zernio_profile_id, max_accounts, connected_accounts_count)')
-      .eq('key_hash', hash)
-      .single();
+      const { data, error } = await supabase
+        .from('user_api_keys')
+        .select('user_id, revoked, profiles(zernio_profile_id, max_accounts, connected_accounts_count)')
+        .eq('key_hash', hash)
+        .single();
 
-    if (error || !data || data.revoked) return res.status(401).json({ error: 'Invalid API key' });
+      if (error || !data || data.revoked) return res.status(401).json({ error: 'Invalid API key' });
 
-    req.zernioProfileId = data.profiles.zernio_profile_id;
-    req.maxAccounts = data.profiles.max_accounts;
-    req.connectedCount = data.profiles.connected_accounts_count;
-    next();
+      req.zernioProfileId = data.profiles.zernio_profile_id;
+      req.maxAccounts = data.profiles.max_accounts;
+      req.connectedCount = data.profiles.connected_accounts_count;
+      next();
+    } catch (err: any) {
+      console.error('authenticate error:', err);
+      res.status(401).json({ error: 'Authentication failed', details: err?.message });
+    }
   }
 
   // API Key Management Routes
-  app.post('/api/v1/keys', supabaseAuth, async (req: any, res: any) => {
+  app.post('/api/v1/keys', supabaseAuth, asyncHandler(async (req: any, res: any) => {
     let { data: profile } = await supabase.from('profiles').select('zernio_profile_id').eq('id', req.user.id).single();
 
     if (!profile?.zernio_profile_id) {
@@ -69,21 +90,21 @@ async function startServer() {
     });
 
     res.json({ key: rawKey });
-  });
+  }));
 
-  app.get('/api/v1/keys', supabaseAuth, async (req: any, res: any) => {
+  app.get('/api/v1/keys', supabaseAuth, asyncHandler(async (req: any, res: any) => {
     const { data } = await supabase.from('user_api_keys').select('id, key_prefix, created_at').eq('user_id', req.user.id).eq('revoked', false);
-    res.json(data);
-  });
+    res.json(data || []);
+  }));
 
-  app.delete('/api/v1/keys/:id', supabaseAuth, async (req: any, res: any) => {
+  app.delete('/api/v1/keys/:id', supabaseAuth, asyncHandler(async (req: any, res: any) => {
     await supabase.from('user_api_keys').update({ revoked: true }).eq('id', req.params.id).eq('user_id', req.user.id);
     res.status(204).send();
-  });
+  }));
 
   // Connect flow — via SDK, with our own redirect_url so Zernio sends
   // profileId/accountId back to us directly, no state table needed.
-  app.get('/api/v1/connect/:platform', authenticate, async (req: any, res: any) => {
+  app.get('/api/v1/connect/:platform', authenticate, asyncHandler(async (req: any, res: any) => {
     if (req.connectedCount >= req.maxAccounts) {
       return res.status(403).json({ error: 'Account limit reached. Upgrade your plan.' });
     }
@@ -99,9 +120,9 @@ async function startServer() {
     } catch (err: any) {
       res.status(err.status ?? 500).json({ error: err.message ?? 'Zernio connect failed' });
     }
-  });
+  }));
 
-  app.get('/oauth/callback', async (req: any, res: any) => {
+  app.get('/oauth/callback', asyncHandler(async (req: any, res: any) => {
     const { profileId, accountId } = req.query;
     if (profileId && accountId) {
       const { data: p } = await supabase
@@ -117,11 +138,11 @@ async function startServer() {
       }
     }
     res.redirect('/dashboard?connected=1');
-  });
+  }));
 
   // Curated post creation: users pass platform names, we resolve to
   // accountIds scoped strictly to the caller's own profile.
-  app.post('/api/v1/posts', authenticate, async (req: any, res: any) => {
+  app.post('/api/v1/posts', authenticate, asyncHandler(async (req: any, res: any) => {
     const { platforms, content, scheduledFor, publishNow } = req.body;
     if (!Array.isArray(platforms) || platforms.length === 0) {
       return res.status(400).json({ error: 'platforms must be a non-empty array of platform names' });
@@ -149,20 +170,20 @@ async function startServer() {
     } catch (err: any) {
       res.status(err.status ?? 500).json({ error: err.message ?? 'Zernio post creation failed' });
     }
-  });
+  }));
 
-  app.get('/api/v1/me/usage', authenticate, (req: any, res: any) => {
+  app.get('/api/v1/me/usage', authenticate, asyncHandler(async (req: any, res: any) => {
     res.json({ connectedAccounts: req.connectedCount, maxAccounts: req.maxAccounts });
-  });
+  }));
 
-  app.get('/api/v1/me/dashboard-usage', supabaseAuth, async (req: any, res: any) => {
+  app.get('/api/v1/me/dashboard-usage', supabaseAuth, asyncHandler(async (req: any, res: any) => {
     const { data: profile } = await supabase.from('profiles').select('max_accounts, connected_accounts_count').eq('id', req.user.id).single();
     if (!profile) return res.status(404).json({ error: 'Profile not found' });
     res.json({ connectedAccounts: profile.connected_accounts_count, maxAccounts: profile.max_accounts });
-  });
+  }));
 
   // Generic passthrough proxy for everything else (full 1:1 mirror)
-  app.all(/^\/api\/v1\/(.*)/, authenticate, async (req: any, res: any) => {
+  app.all(/^\/api\/v1\/(.*)/, authenticate, asyncHandler(async (req: any, res: any) => {
     const path = req.originalUrl.replace('/api/v1', '');
     const url = new URL(`https://zernio.com/api/v1${path}`);
     url.searchParams.set('profileId', req.zernioProfileId);
@@ -177,7 +198,7 @@ async function startServer() {
     });
     const data = await zernioRes.json();
     res.status(zernioRes.status).json(data);
-  });
+  }));
 
   if (process.env.NODE_ENV !== "production") {
     const { createServer: createViteServer } = await import("vite");

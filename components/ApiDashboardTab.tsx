@@ -27,12 +27,23 @@ export const ApiDashboardTab: React.FC = () => {
     }
     setLoading(true);
     setError(null);
+
+    const fetchWithTimeout = async (url: string, options: RequestInit, timeoutMs = 8000) => {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        return await fetch(url, { ...options, signal: controller.signal });
+      } finally {
+        clearTimeout(id);
+      }
+    };
+
     try {
       const headers = { 'Authorization': `Bearer ${session.access_token}` };
       
       const [keysRes, usageRes] = await Promise.all([
-        fetch('/api/v1/keys', { headers }),
-        fetch('/api/v1/me/dashboard-usage', { headers })
+        fetchWithTimeout('/api/v1/keys', { headers }),
+        fetchWithTimeout('/api/v1/me/dashboard-usage', { headers })
       ]);
 
       if (keysRes.ok) {
@@ -41,6 +52,7 @@ export const ApiDashboardTab: React.FC = () => {
       } else {
         const errData = await keysRes.json().catch(() => ({}));
         console.error('Keys API error:', keysRes.status, errData);
+        setError('Failed to fetch API keys. Please verify your credentials or try again.');
       }
 
       if (usageRes.ok) {
@@ -49,10 +61,14 @@ export const ApiDashboardTab: React.FC = () => {
       } else {
         const errData = await usageRes.json().catch(() => ({}));
         console.error('Usage API error:', usageRes.status, errData);
+        setError('Failed to fetch API usage limit.');
       }
     } catch (err: any) {
       console.error('Failed to fetch API tab data:', err);
-      setError('Failed to load API keys and usage. Please try again.');
+      setError(err.name === 'AbortError' 
+        ? 'Request timed out. Please check your network connection and try again.'
+        : 'Failed to load API keys and usage. Please try again.'
+      );
     } finally {
       setLoading(false);
     }
@@ -155,10 +171,21 @@ export const ApiDashboardTab: React.FC = () => {
         </p>
       </div>
 
-      {error && (
-        <div className="p-4 rounded-xl border border-red-500/20 bg-red-500/10 text-red-400 text-sm flex items-center justify-between">
-          <span>{error}</span>
-          <button onClick={() => setError(null)} className="hover:text-white font-bold px-2">×</button>
+       {error && (
+        <div className="p-4 rounded-xl border border-red-500/20 bg-red-500/10 text-red-400 text-sm flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <iconify-icon icon="solar:danger-bold" class="text-lg"></iconify-icon>
+            <span>{error}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={fetchData} 
+              className="px-3 py-1 bg-red-500/20 hover:bg-red-500/30 text-white rounded text-xs font-bold transition-all"
+            >
+              Retry
+            </button>
+            <button onClick={() => setError(null)} className="hover:text-white font-bold px-2">×</button>
+          </div>
         </div>
       )}
 
@@ -183,7 +210,7 @@ export const ApiDashboardTab: React.FC = () => {
               </span>
             </div>
             {/* Progress bar */}
-            {usage && (
+            {usage && usage.maxAccounts > 0 && (
               <div className="w-full h-1.5 rounded-full bg-white/5 overflow-hidden">
                 <div 
                   className="h-full rounded-full transition-all duration-500 bg-blue-500"
