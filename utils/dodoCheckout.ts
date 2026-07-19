@@ -1,4 +1,4 @@
-import { DodoPayments } from 'dodopayments-checkout';
+﻿import { DodoPayments } from 'dodopayments-checkout';
 import { getDashboardUrl } from './dashboardUrl';
 
 // Dodo Payments Configuration
@@ -20,7 +20,7 @@ const productDataCache: Record<string, { value: number; currency: string; conten
 let currentCheckoutEventId: string | null = null;
 
 // Tracks the most recent user we initiated checkout against, so post-checkout
-// redirect URLs get a ref_id bound to the live user — never to a hardcoded env value.
+// redirect URLs get a ref_id bound to the live user â€” never to a hardcoded env value.
 let currentCheckoutUserId: string | null = null;
 
 const dashboardWithRefId = (): string => {
@@ -177,7 +177,7 @@ type ProductPayload = {
 /**
  * Generate full product data based on Dodo ID and billing cadence.
  * The current yearly product IDs are aliased to monthly in the DODO_PRODUCTS
- * map, so the analytics layer can't see yearly from the ID alone — the caller
+ * map, so the analytics layer can't see yearly from the ID alone â€” the caller
  * MUST pass isYearly when starting a yearly checkout.
  */
 function getProductPayload(productId: string, isYearly = false): ProductPayload {
@@ -231,3 +231,4 @@ export async function openCheckout(
         throw error;
     }
 }
+

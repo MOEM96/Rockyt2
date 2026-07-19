@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import Modal from './Modal';
 import { EXTERNAL_LINKS, ONBOARDING_PLANS } from '../constants/index';
 import { openCheckout, DODO_PRODUCTS } from '../utils/dodoCheckout';
@@ -396,7 +396,7 @@ const GetStartedModal: React.FC<GetStartedModalProps> = ({ isOpen, onClose, init
                             </div>
 
                             <p className="text-center text-[9px] md:text-[10px] text-gray-600 mt-8 md:mt-10 font-medium tracking-wide">
-                                14-DAY FREE TRIAL • 100% SECURE CHECKOUT • CANCEL ANYTIME
+                                14-DAY FREE TRIAL â€¢ 100% SECURE CHECKOUT â€¢ CANCEL ANYTIME
                             </p>
                         </div>
                     </div>
@@ -457,3 +457,4 @@ const GetStartedModal: React.FC<GetStartedModalProps> = ({ isOpen, onClose, init
 };
 
 export default GetStartedModal;
+
