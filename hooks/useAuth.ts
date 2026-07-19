@@ -115,17 +115,17 @@ export const useAuth = () => {
 
     // Drive both initial-load and subsequent updates through a single funnel.
     supabase.auth.getSession()
-      .then(({ data: { session } }) => {
+      .then(({ data: { session } }: any) => {
         clearTimeout(timeoutId);
         applySession(session);
       })
-      .catch(err => {
+      .catch((err: any) => {
         console.error('Auth error:', err);
         clearTimeout(timeoutId);
         if (isMounted) setLoading(false);
       });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: any, session: any) => {
       applySession(session);
     });
 

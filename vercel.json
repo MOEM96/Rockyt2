@@ -5,6 +5,7 @@
   ],
   "routes": [
     { "src": "/api/(.*)", "dest": "server.ts" },
+    { "src": "/oauth/callback", "dest": "server.ts" },
     { "src": "/(.*)", "dest": "/$1" }
   ]
 }

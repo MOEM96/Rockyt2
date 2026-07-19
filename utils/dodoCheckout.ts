@@ -3,13 +3,7 @@ import { getDashboardUrl } from './dashboardUrl';
 
 // Dodo Payments Configuration
 const DODO_CONFIG = {
-    apiKey: import.meta.env.VITE_DODO_API_KEY || '',
     mode: (import.meta.env.VITE_DODO_MODE || 'live') as 'test' | 'live',
-    get baseUrl() {
-        return this.mode === 'live'
-            ? 'https://live.dodopayments.com'
-            : 'https://test.dodopayments.com';
-    }
 };
 
 // Product IDs for Dodo Payments
@@ -137,36 +131,19 @@ export function initDodoPayments() {
  */
 async function createCheckoutSession(productId: string, userId: string): Promise<string> {
     currentCheckoutUserId = userId || null;
-    const response = await fetch(`${DODO_CONFIG.baseUrl}/checkouts`, {
+
+    const { supabase } = await import('./supabase');
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+
+    const response = await fetch('/api/v1/checkouts', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${DODO_CONFIG.apiKey}`,
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
-            customer: {
-                metadata: {
-                    user_id: userId
-                }
-            },
-            product_cart: [
-                {
-                    product_id: productId,
-                    quantity: 1,
-                },
-            ],
-            subscription_data: {
-                trial_period_days: 14,
-                on_demand: {
-                    mandate_only: false
-                }
-            },
-            return_url: dashboardWithRefId(),
-            customization: {
-                theme: 'dark',
-                show_order_details: true,
-                // Removed theme_config font_size: 'xs' as it might hide details in inline mode
-            }
+            productId
         }),
     });
 

@@ -95,7 +95,10 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     const ok = isAccessGranted();
-    if (profile && !ok && activeTab !== 'billing') setActiveTab('billing');
+    // Allow apis & support tabs even without an active subscription
+    if (profile && !ok && activeTab !== 'billing' && activeTab !== 'apis' && activeTab !== 'support') {
+      setActiveTab('billing');
+    }
   }, [profile, activeTab]);
 
   // Whenever the signed-in user changes (including switching accounts on the

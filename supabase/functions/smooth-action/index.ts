@@ -51,15 +51,35 @@ serve(async (req: Request) => {
       status = 'active'
     }
 
-    console.log(`Updating user ${userId} to status: ${status}`)
+    // Map Product ID to plan name & limit
+    const productId = data.product_id || data.product_cart?.[0]?.product_id || data.items?.[0]?.product_id
+    let planName = null
+    let maxAccounts = 5
+
+    if (productId === 'pdt_0NWDjeAeatQKryEvRe4eb') {
+      planName = 'Growth'
+      maxAccounts = 5
+    } else if (productId === 'pdt_0NWDjzl0TS6LNFrVdFZYQ') {
+      planName = 'Scale'
+      maxAccounts = 10
+    }
+
+    console.log(`Updating user ${userId} to status: ${status}, plan: ${planName}, maxAccounts: ${maxAccounts}`)
+
+    const updateData: any = {
+      subscription_status: status,
+      subscription_id: subscriptionId,
+      is_trial: false
+    }
+
+    if (planName) {
+      updateData.plan = planName
+      updateData.max_accounts = maxAccounts
+    }
 
     const { error } = await supabaseClient
       .from('profiles')
-      .update({ 
-        subscription_status: status,
-        subscription_id: subscriptionId,
-        is_trial: false // Once they pay or a sub is created, trial is over
-      })
+      .update(updateData)
       .eq('id', userId)
 
     if (error) throw error

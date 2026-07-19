@@ -26,6 +26,10 @@ const GetStartedModal: React.FC<GetStartedModalProps> = ({ isOpen, onClose, init
     // If initialProductId changes while open or when first opening, jump to checkout
     useEffect(() => {
         if (isOpen && initialProductId) {
+            if (!user) {
+                setStep(1);
+                return;
+            }
             setStep(4);
             setIsYearly(initialIsYearly || false);
 
@@ -42,7 +46,7 @@ const GetStartedModal: React.FC<GetStartedModalProps> = ({ isOpen, onClose, init
             };
             triggerCheckout();
         }
-    }, [isOpen, initialProductId, initialIsYearly]);
+    }, [isOpen, initialProductId, initialIsYearly, user]);
 
     // Listen for Cal.com booking success to advance to pricing
     useEffect(() => {
@@ -100,6 +104,11 @@ const GetStartedModal: React.FC<GetStartedModalProps> = ({ isOpen, onClose, init
     const handlePlanSelect = async (plan: typeof ONBOARDING_PLANS[number]) => {
         if ((plan as any).isCustom) {
             window.location.href = `mailto:${EXTERNAL_LINKS.supportEmail}?subject=White-Label%20Solution%20Inquiry&body=Hi%20Rockyt%20Team%2C%0A%0AI'm%20interested%20in%20the%20Custom%20%2F%20White-Label%20solution.%0A%0APlease%20share%20more%20details.`;
+            return;
+        }
+
+        if (!user) {
+            setStep(1);
             return;
         }
 
