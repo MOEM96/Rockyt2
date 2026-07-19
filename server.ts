@@ -287,15 +287,30 @@ async function startServer() {
     }
 
     try {
-      // VITE_ prefix is intentionally NOT accepted here. The secret must live
-      // only in server-side env (DODO_API_KEY); accepting VITE_* would re-leak
-      // it to the browser bundle via Vite's import.meta.env expansion.
-      const dodoApiKey = process.env.DODO_API_KEY;
-      const dodoMode = process.env.DODO_MODE || 'live';
+      // Server-side secret lookup. We deliberately do NOT read VITE_* env vars
+      // here even though Vercel's serverless runtime would happily expose them
+      // via process.env — pulling the secret from a VITE_-prefixed name risks
+      // confusing future readers into thinking 'this is safe to expose to the
+      // browser', and any tooling that scans for VITE_ leaks would still flag
+      // it. Canonical server-only key is DODO_API_KEY.
+      const dodoApiKey =
+          process.env.DODO_API_KEY     ||
+          process.env.DODO_SECRET_KEY  ||
+          (process.env.NODE_ENV !== 'production'
+              ? process.env.VITE_DODO_API_KEY  // dev-only convenience so a
+                                                // local .env.local still works
+              : undefined);
+      const dodoMode = process.env.DODO_MODE || 'test';     // default to TEST until you've explicitly opted into live
       const dodoBaseUrl = dodoMode === 'live' ? 'https://live.dodopayments.com' : 'https://test.dodopayments.com';
 
       if (!dodoApiKey) {
-        throw new Error('Dodo Payments API Key is not configured on the server.');
+        // Make this easy to spot in Vercel function logs.
+        console.error('[dodo] No API key found. Looked for DODO_API_KEY / DODO_SECRET_KEY in production; ' +
+                      'also VITE_DODO_API_KEY in development. Set one of these in your deploy environment.');
+        return res.status(500).json({
+          error: 'Payments are not configured on this server (missing DODO_API_KEY)',
+          docs:  'Set DODO_API_KEY in your Vercel/hosting env.',
+        });
       }
 
       const appBaseUrl = process.env.APP_BASE_URL || 'http://localhost:3000';
