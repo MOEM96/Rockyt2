@@ -217,7 +217,7 @@ export async function openCheckout(
         console.log(`Rockyt: Generating checkout URL for product: ${productId} (yearly=${isYearly})`);
 
         // Generate a deduplication ID for this entire flow (Initiate -> Purchase)
-        currentCheckoutEventId = 'chk_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+        currentCheckoutEventId = 'chk_' + Math.random().toString(36).slice(2, 11) + '_' + Date.now();
 
         const payload = getProductPayload(productId, isYearly);
         productDataCache[currentCheckoutEventId] = payload;

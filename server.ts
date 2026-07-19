@@ -287,8 +287,11 @@ async function startServer() {
     }
 
     try {
-      const dodoApiKey = process.env.VITE_DODO_API_KEY || process.env.DODO_API_KEY;
-      const dodoMode = process.env.VITE_DODO_MODE || 'live';
+      // VITE_ prefix is intentionally NOT accepted here. The secret must live
+      // only in server-side env (DODO_API_KEY); accepting VITE_* would re-leak
+      // it to the browser bundle via Vite's import.meta.env expansion.
+      const dodoApiKey = process.env.DODO_API_KEY;
+      const dodoMode = process.env.DODO_MODE || 'live';
       const dodoBaseUrl = dodoMode === 'live' ? 'https://live.dodopayments.com' : 'https://test.dodopayments.com';
 
       if (!dodoApiKey) {
@@ -421,7 +424,23 @@ async function startServer() {
       if (planName) {
         updateData.plan = planName;
         updateData.max_accounts = maxAccounts;
+        updateData.plan_product_id = productId;  // remember which Dodo SKU they paid for
       }
+      // Persist Dodo's stable customer id so future webhook lookups don't
+      // have to rely solely on metadata.user_id (which can be missing on
+      // events like subscription.renewed after the original metadata fell off).
+      const dodoCustomerId =
+          data.customer?.customer_id || data.customer_id || null;
+      if (dodoCustomerId) {
+        updateData.dodo_customer_id = dodoCustomerId;
+      }
+      // When Dodo tells us the next billing date, save it for display.
+      const currentPeriodEnd =
+          data.current_period_end || data.subscription?.current_period_end || null;
+      if (currentPeriodEnd) {
+        updateData.current_period_end = currentPeriodEnd;
+      }
+
       const { error } = await supabase
         .from('profiles')
         .update(updateData)
