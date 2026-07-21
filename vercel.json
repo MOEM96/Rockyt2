@@ -1,6 +1,11 @@
 {
-  "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api" },
-    { "source": "/oauth/callback", "destination": "/api" }
+  "builds": [
+    { "src": "server.ts", "use": "@vercel/node" },
+    { "src": "package.json", "use": "@vercel/static-build", "config": { "distDir": "dist" } }
+  ],
+  "routes": [
+    { "src": "/api/(.*)", "dest": "server.ts" },
+    { "src": "/oauth/callback", "dest": "server.ts" },
+    { "src": "/(.*)", "dest": "/$1" }
   ]
 }
