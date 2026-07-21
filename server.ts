@@ -5,18 +5,10 @@ import { Zernio } from "@zernio/node";
 import crypto from "crypto";
 import DodoPayments from "dodopayments";
 
-// Instantiated once at module load — the SDK's client is a shared
-// singleton internally, so this must NOT be created per-request.
-// In production, ZERNIO_API_KEY must be set. In dev, a dummy key prevents
-// startup crashes — actual Zernio calls will simply 401.
-if (!process.env.ZERNIO_API_KEY && process.env.NODE_ENV === 'production') {
-  console.error('WARNING: ZERNIO_API_KEY is not set. Zernio API calls will fail.');
-}
-const zernio = new Zernio({ apiKey: process.env.ZERNIO_API_KEY || "dummy_dev_key" });
-
 async function startServer() {
   const app = express();
   const PORT = 3000;
+  const zernio = new Zernio({ apiKey: process.env.ZERNIO_API_KEY || "dummy_dev_key" });
 
   // Capture raw body buffer for webhook signature verification
   app.use(express.json({
