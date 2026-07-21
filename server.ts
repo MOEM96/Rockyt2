@@ -191,8 +191,17 @@ async function startServer() {
         key_prefix: rawKey.substring(0, 8)
       });
       if (insertError) {
-        console.error('Failed to insert API key:', insertError);
-        return res.status(500).json({ error: `Failed to save API key: ${insertError.message}` });
+        console.error('Failed to insert API key:', JSON.stringify({
+          message: insertError.message,
+          code: insertError.code,
+          details: insertError.details,
+          hint: insertError.hint
+        }));
+        return res.status(500).json({ 
+          error: `Failed to save API key: ${insertError.message}`,
+          code: insertError.code,
+          hint: insertError.hint
+        });
       }
     } else {
       mockKeys.push({
