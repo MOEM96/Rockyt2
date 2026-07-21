@@ -287,9 +287,26 @@ async function startServer() {
 
   app.get('/api/v1/me/dashboard-usage', supabaseAuth, asyncHandler(async (req: any, res: any) => {
     if (supabase) {
-      const { data: profile } = await supabase.from('profiles').select('max_accounts, connected_accounts_count').eq('id', req.user.id).single();
-      if (!profile) return res.status(404).json({ error: 'Profile not found' });
-      res.json({ connectedAccounts: profile.connected_accounts_count, maxAccounts: profile.max_accounts });
+      let { data: profile } = await supabase.from('profiles').select('max_accounts, connected_accounts_count').eq('id', req.user.id).maybeSingle();
+      if (!profile) {
+        console.log(`[profiles] Auto-creating missing profile for user: ${req.user.id} (${req.user.email})`);
+        const { data: insertedProfile } = await supabase
+          .from('profiles')
+          .upsert({
+            id: req.user.id,
+            email: req.user.email,
+            plan: 'Trial',
+            max_accounts: 5,
+            connected_accounts_count: 0,
+            is_trial: true,
+            subscription_status: 'trialing'
+          })
+          .select('max_accounts, connected_accounts_count')
+          .maybeSingle();
+
+        profile = insertedProfile || { max_accounts: 5, connected_accounts_count: 0 };
+      }
+      res.json({ connectedAccounts: profile.connected_accounts_count ?? 0, maxAccounts: profile.max_accounts ?? 5 });
     } else {
       res.json({ connectedAccounts: mockConnectedCount, maxAccounts: 5 });
     }
