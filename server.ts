@@ -141,12 +141,31 @@ async function startServer() {
 
       if (!profile?.zernio_profile_id) {
         try {
-          const zernioProfile = await zernio.profiles.createProfile({
-            body: { name: req.user.email }
-          });
-          zernioProfileId = (zernioProfile.data as any).profile?._id;
-          if (!zernioProfileId) {
-            throw new Error('Failed to retrieve profile ID from Zernio response');
+          // First, try to find an existing Zernio profile for this user
+          let existingProfileId: string | null = null;
+          try {
+            const listRes = await zernio.profiles.listProfiles();
+            const profiles = (listRes.data as any)?.profiles || (listRes.data as any) || [];
+            const existing = Array.isArray(profiles)
+              ? profiles.find((p: any) => p.name === req.user.email)
+              : null;
+            if (existing?._id) {
+              existingProfileId = existing._id;
+            }
+          } catch (_listErr) {
+            // If listing fails, proceed to create
+          }
+
+          if (existingProfileId) {
+            zernioProfileId = existingProfileId;
+          } else {
+            const zernioProfile = await zernio.profiles.createProfile({
+              body: { name: req.user.email }
+            });
+            zernioProfileId = (zernioProfile.data as any).profile?._id;
+            if (!zernioProfileId) {
+              throw new Error('Failed to retrieve profile ID from Zernio response');
+            }
           }
           await supabase.from('profiles').update({ zernio_profile_id: zernioProfileId }).eq('id', req.user.id);
         } catch (err: any) {
