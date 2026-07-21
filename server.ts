@@ -224,10 +224,11 @@ async function startServer() {
         path: { platform: req.params.platform as any },
         query: {
           profileId: req.zernioProfileId,
-          redirect_url: `${process.env.APP_BASE_URL}/oauth/callback`
+          redirect_url: `${process.env.APP_BASE_URL || 'https://dashboard.rockyt.io'}/oauth/callback`
         }
       });
-      res.json(result.data);
+      const authUrl = (result.data as any)?.authUrl || (result.data as any)?.url;
+      res.json({ url: authUrl, authUrl, ...result.data });
     } catch (err: any) {
       res.status(err.status ?? 500).json({ error: err.message ?? 'Zernio connect failed' });
     }
