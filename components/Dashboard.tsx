@@ -279,9 +279,9 @@ const Dashboard: React.FC = () => {
         ? (isBillingYearly ? DODO_PRODUCTS.growthYearly : DODO_PRODUCTS.growth)
         : (isBillingYearly ? DODO_PRODUCTS.scaleYearly : DODO_PRODUCTS.scale);
       await openCheckoutOverlay(productId, user?.id || '', isBillingYearly);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Error starting checkout overlay:', e);
-      alert('Unable to open checkout window. Please try again.');
+      alert(e?.message || 'Unable to open checkout window. Please try again.');
     } finally {
       setIsLoading(false);
     }

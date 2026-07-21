@@ -286,6 +286,7 @@ async function startServer() {
       return res.status(400).json({ error: 'productId is required' });
     }
 
+    try {
       const dodoApiKey =
           process.env.DODO_API_KEY     ||
           process.env.DODO_SECRET_KEY  ||

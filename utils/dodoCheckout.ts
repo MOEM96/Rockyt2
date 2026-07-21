@@ -16,7 +16,6 @@ let isInitialized = false;
 
 const productDataCache: Record<string, { value: number; currency: string; content_name: string; content_ids: string[]; content_type: string; num_items: number }> = {};
 let currentCheckoutEventId: string | null = null;
-let currentCheckoutUserId: string | null = null;
 /**
  * Internal event handler logic shared across initializations
  */
