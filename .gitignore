@@ -9,3 +9,4 @@ dist
 *.local
 dist-ssr
 *.lock
+dodo.exe
