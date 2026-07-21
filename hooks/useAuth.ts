@@ -129,10 +129,18 @@ export const useAuth = () => {
       applySession(session);
     });
 
+    const handleSubUpdated = () => {
+      supabase.auth.getSession().then(({ data: { session } }: any) => {
+        if (session?.user) fetchProfile(session.user.id);
+      });
+    };
+    window.addEventListener('rockyt:subscriptionUpdated', handleSubUpdated);
+
     return () => {
       clearTimeout(timeoutId);
       isMounted = false;
       subscription.unsubscribe();
+      window.removeEventListener('rockyt:subscriptionUpdated', handleSubUpdated);
     };
   }, []);
 

@@ -1,7 +1,7 @@
 ﻿import React, { useState, useEffect } from 'react';
 import Modal from './Modal';
 import { EXTERNAL_LINKS, ONBOARDING_PLANS } from '../constants/index';
-import { openCheckout, DODO_PRODUCTS } from '../utils/dodoCheckout';
+import { openCheckoutOverlay, DODO_PRODUCTS } from '../utils/dodoCheckout';
 import { cn } from '../utils/helpers';
 import Cal, { getCalApi } from "@calcom/embed-react";
 import { useAuth } from '../hooks/useAuth';
@@ -30,15 +30,13 @@ const GetStartedModal: React.FC<GetStartedModalProps> = ({ isOpen, onClose, init
                 setStep(1);
                 return;
             }
-            setStep(4);
             setIsYearly(initialIsYearly || false);
 
-            // Re-trigger checkout session creation
+            // Re-trigger checkout session creation via overlay
             const triggerCheckout = async () => {
                 try {
-                    setIsCheckoutReady(false);
-                    const url = await openCheckout(initialProductId, user?.id || '', initialIsYearly || false);
-                    setCheckoutUrl(url);
+                    onClose();
+                    await openCheckoutOverlay(initialProductId, user?.id || '', initialIsYearly || false);
                 } catch (error) {
                     console.error('Error starting initial checkout:', error);
                     setStep(3);
@@ -88,8 +86,17 @@ const GetStartedModal: React.FC<GetStartedModalProps> = ({ isOpen, onClose, init
         // initDodoPayments() is expected to be called in App.tsx or similar
         // We just listen for events here if needed
         const handleDodoReady = () => setIsCheckoutReady(true);
+        const handleDodoClosed = () => {
+            setStep(3);
+            setIsCheckoutReady(false);
+            setCheckoutUrl('');
+        };
         window.addEventListener('rockyt:checkoutOpened', handleDodoReady);
-        return () => window.removeEventListener('rockyt:checkoutOpened', handleDodoReady);
+        window.addEventListener('rockyt:checkoutClosed', handleDodoClosed);
+        return () => {
+            window.removeEventListener('rockyt:checkoutOpened', handleDodoReady);
+            window.removeEventListener('rockyt:checkoutClosed', handleDodoClosed);
+        };
     }, []);
 
     const handleClose = () => {
@@ -117,11 +124,8 @@ const GetStartedModal: React.FC<GetStartedModalProps> = ({ isOpen, onClose, init
             if (isYearly) {
                 productId = plan.name === 'Growth' ? DODO_PRODUCTS.growthYearly : DODO_PRODUCTS.scaleYearly;
             }
-            setStep(4);
-            setIsCheckoutReady(false);
-
-            const url = await openCheckout(productId, user?.id || '', isYearly);
-            setCheckoutUrl(url);
+            onClose();
+            await openCheckoutOverlay(productId, user?.id || '', isYearly);
         } catch (error) {
             console.error('Error starting checkout:', error);
             setStep(3);

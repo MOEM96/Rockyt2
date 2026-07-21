@@ -281,26 +281,16 @@ async function startServer() {
   // Secure Dodo Payments Checkout Endpoint
   // ---------------------------------------------------------------------------
   app.post('/api/v1/checkouts', supabaseAuth, async (req: any, res: any) => {
-    const { productId } = req.body;
+    const { productId, trialPeriodDays } = req.body;
     if (!productId) {
       return res.status(400).json({ error: 'productId is required' });
     }
 
-    try {
-      // Server-side secret lookup. We deliberately do NOT read VITE_* env vars
-      // here even though Vercel's serverless runtime would happily expose them
-      // via process.env — pulling the secret from a VITE_-prefixed name risks
-      // confusing future readers into thinking 'this is safe to expose to the
-      // browser', and any tooling that scans for VITE_ leaks would still flag
-      // it. Canonical server-only key is DODO_API_KEY.
       const dodoApiKey =
           process.env.DODO_API_KEY     ||
           process.env.DODO_SECRET_KEY  ||
-          (process.env.NODE_ENV !== 'production'
-              ? process.env.VITE_DODO_API_KEY  // dev-only convenience so a
-                                                // local .env.local still works
-              : undefined);
-      const dodoMode = process.env.DODO_MODE || 'test';     // default to TEST until you've explicitly opted into live
+          process.env.VITE_DODO_API_KEY;
+      const dodoMode = process.env.DODO_MODE || process.env.VITE_DODO_MODE || (process.env.NODE_ENV !== 'production' ? 'test' : 'live');
       const dodoBaseUrl = dodoMode === 'live' ? 'https://live.dodopayments.com' : 'https://test.dodopayments.com';
 
       if (!dodoApiKey) {
@@ -316,7 +306,7 @@ async function startServer() {
       const appBaseUrl = process.env.APP_BASE_URL || 'http://localhost:3000';
       const returnUrl = `${appBaseUrl}/dashboard?ref_id=${encodeURIComponent(req.user.id)}`;
 
-      const requestBody = {
+      const requestBody: any = {
         customer: {
           email: req.user.email
         },
@@ -326,12 +316,6 @@ async function startServer() {
             quantity: 1,
           },
         ],
-        subscription_data: {
-          trial_period_days: 14,
-          on_demand: {
-            mandate_only: false
-          }
-        },
         metadata: {
           user_id: req.user.id
         },
@@ -341,6 +325,15 @@ async function startServer() {
           show_order_details: true,
         }
       };
+
+      if (typeof trialPeriodDays === 'number') {
+        requestBody.subscription_data = {
+          trial_period_days: trialPeriodDays,
+          on_demand: {
+            mandate_only: false
+          }
+        };
+      }
 
       console.log('Creating checkout session for:', req.user.email, productId);
 
@@ -372,11 +365,17 @@ async function startServer() {
   // ---------------------------------------------------------------------------
   app.post('/api/v1/webhooks/dodo', async (req: any, res: any) => {
     const dodoWebhookSecret = process.env.DODO_WEBHOOK_SECRET;
-    const webhookId = req.headers['webhook-id'];
-    const webhookSignature = req.headers['webhook-signature'];
-    const webhookTimestamp = req.headers['webhook-timestamp'];
 
-    if (dodoWebhookSecret && webhookSignature && webhookId && webhookTimestamp) {
+    if (dodoWebhookSecret) {
+      const webhookId = req.headers['webhook-id'];
+      const webhookSignature = req.headers['webhook-signature'];
+      const webhookTimestamp = req.headers['webhook-timestamp'];
+
+      if (!webhookId || !webhookSignature || !webhookTimestamp) {
+        console.error('Dodo Webhook Signature verification headers missing');
+        return res.status(401).json({ error: 'Missing webhook signature headers' });
+      }
+
       const rawBody = req.rawBody ? req.rawBody.toString() : '';
       const signedPayload = `${webhookId}.${webhookTimestamp}.${rawBody}`;
       const computedSignature = crypto

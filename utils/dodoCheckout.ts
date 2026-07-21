@@ -1,36 +1,22 @@
-﻿import { DodoPayments } from 'dodopayments-checkout';
-import { getDashboardUrl } from './dashboardUrl';
+import { DodoPayments } from 'dodopayments-checkout';
 
-// Dodo Payments Configuration
 const DODO_CONFIG = {
-    mode: (import.meta.env.VITE_DODO_MODE || 'live') as 'test' | 'live',
+    mode: (import.meta.env.VITE_DODO_MODE || (import.meta.env.DEV ? 'test' : 'live')) as 'test' | 'live',
 };
 
 // Product IDs for Dodo Payments
 export const DODO_PRODUCTS = {
     growth: 'pdt_0NWDjeAeatQKryEvRe4eb',
     scale: 'pdt_0NWDjzl0TS6LNFrVdFZYQ',
-    growthYearly: 'pdt_0NWDjeAeatQKryEvRe4eb', // temporarily fallback to monthly until updated
-    scaleYearly: 'pdt_0NWDjzl0TS6LNFrVdFZYQ', // temporarily fallback to monthly until updated
+    growthYearly: 'pdt_0NWDjeAeatQKryEvRe4eb',
+    scaleYearly: 'pdt_0NWDjzl0TS6LNFrVdFZYQ',
 } as const;
 
 let isInitialized = false;
 
 const productDataCache: Record<string, { value: number; currency: string; content_name: string; content_ids: string[]; content_type: string; num_items: number }> = {};
 let currentCheckoutEventId: string | null = null;
-
-// Tracks the most recent user we initiated checkout against, so post-checkout
-// redirect URLs get a ref_id bound to the live user â€” never to a hardcoded env value.
 let currentCheckoutUserId: string | null = null;
-
-const dashboardWithRefId = (): string => {
-    const base = getDashboardUrl();
-    if (!base) return '';
-    if (!currentCheckoutUserId) return base;
-    const sep = base.includes('?') ? '&' : '?';
-    return `${base}${sep}ref_id=${encodeURIComponent(currentCheckoutUserId)}`;
-};
-
 /**
  * Internal event handler logic shared across initializations
  */
@@ -72,19 +58,11 @@ function handleDodoEvent(event: any, onTrialClick?: () => void) {
 
             setTimeout(() => {
                 try {
-                    if ((window as any).DodoPayments && (window as any).DodoPayments.Checkout) {
-                        (window as any).DodoPayments.Checkout.close();
-                    }
+                    DodoPayments.Checkout.close();
                 } catch {
-                    // SDK close can fail if already closed; redirect still proceeds.
+                    // SDK close can fail if already closed
                 }
-                const redirectTo = dashboardWithRefId();
-                if (!redirectTo) return;
-                if (window.top) {
-                    window.top.location.href = redirectTo;
-                } else {
-                    window.location.href = redirectTo;
-                }
+                window.dispatchEvent(new CustomEvent('rockyt:subscriptionUpdated', { detail: event }));
             }, 1500);
         }
     }
@@ -232,3 +210,15 @@ export async function openCheckout(
     }
 }
 
+/**
+ * Creates a Dodo checkout session and opens it as a modal overlay directly on screen.
+ */
+export async function openCheckoutOverlay(
+    productId: string,
+    userId: string,
+    isYearly = false,
+): Promise<void> {
+    initDodoPayments();
+    const checkoutUrl = await openCheckout(productId, userId, isYearly);
+    DodoPayments.Checkout.open({ checkoutUrl });
+}

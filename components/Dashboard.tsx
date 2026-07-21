@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ApiDashboardTab } from './ApiDashboardTab';
 import { useAuth } from '../hooks/useAuth';
 import { ONBOARDING_PLANS } from '../constants/index';
-import { openCheckout, DODO_PRODUCTS } from '../utils/dodoCheckout';
+import { openCheckoutOverlay, DODO_PRODUCTS } from '../utils/dodoCheckout';
 import { getDashboardUrl, getWorkspaceCreationUrl } from '../utils/dashboardUrl';
 
 import OnboardingFlow from './OnboardingFlow';
@@ -60,6 +60,7 @@ const Dashboard: React.FC = () => {
   const [sidebarOpen,    setSidebarOpen]    = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [isLoading,      setIsLoading]      = useState(false);
+  const [isBillingYearly, setIsBillingYearly] = useState(false);
 
   // Form state
   const [formStep,       setFormStep]       = useState<FormStep>(1);
@@ -274,11 +275,16 @@ const Dashboard: React.FC = () => {
   const handleUpgrade = async (planName: string) => {
     setIsLoading(true);
     try {
-      const productId = planName === 'Growth' ? DODO_PRODUCTS.growth : DODO_PRODUCTS.scale;
-      const url = await openCheckout(productId, user?.id || '', false);
-      window.location.href = url;
-    } catch (e) { console.error(e); }
-    finally { setIsLoading(false); }
+      const productId = planName === 'Growth'
+        ? (isBillingYearly ? DODO_PRODUCTS.growthYearly : DODO_PRODUCTS.growth)
+        : (isBillingYearly ? DODO_PRODUCTS.scaleYearly : DODO_PRODUCTS.scale);
+      await openCheckoutOverlay(productId, user?.id || '', isBillingYearly);
+    } catch (e) {
+      console.error('Error starting checkout overlay:', e);
+      alert('Unable to open checkout window. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   // Sidebar hover
@@ -770,14 +776,42 @@ const Dashboard: React.FC = () => {
               {/* ─── BILLING TAB ────────────────────────────────────────── */}
               {activeTab === 'billing' && (
                 <div className="space-y-5">
-                  <div>
-                    <h2 className="text-lg font-semibold" style={{ color: TXT }}>Choose a plan</h2>
-                    <p className="text-sm mt-0.5" style={{ color: MUTED }}>Scale your ad operations.</p>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-lg font-semibold" style={{ color: TXT }}>Choose a plan</h2>
+                      <p className="text-sm mt-0.5" style={{ color: MUTED }}>Scale your ad operations.</p>
+                    </div>
+                    <div className="flex items-center gap-1 p-1 rounded-full border self-start sm:self-auto" style={{ background: SURF, borderColor: BORDER }}>
+                      <button
+                        onClick={() => setIsBillingYearly(false)}
+                        className="px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all"
+                        style={{
+                          background: !isBillingYearly ? BLUE : 'transparent',
+                          color: !isBillingYearly ? '#fff' : MUTED,
+                        }}
+                      >
+                        Monthly
+                      </button>
+                      <button
+                        onClick={() => setIsBillingYearly(true)}
+                        className="px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all flex items-center gap-1.5"
+                        style={{
+                          background: isBillingYearly ? BLUE : 'transparent',
+                          color: isBillingYearly ? '#fff' : MUTED,
+                        }}
+                      >
+                        Yearly
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold" style={{ background: `${PINK}22`, color: PINK }}>Save 50%</span>
+                      </button>
+                    </div>
                   </div>
+
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     {ONBOARDING_PLANS.filter(p => !p.name.includes('Custom')).map(plan => {
-                      const accent    = plan.name === 'Growth' ? BLUE : PINK;
-                      const isCurrent = profile?.plan === plan.name && profile?.subscription_status === 'active';
+                      const accent       = plan.name === 'Growth' ? BLUE : PINK;
+                      const isCurrent    = profile?.plan === plan.name && profile?.subscription_status === 'active';
+                      const displayPrice = plan.price !== null ? (isBillingYearly ? Math.ceil(plan.price * 0.5) : plan.price) : null;
+
                       return (
                         <div
                           key={plan.name}
@@ -795,9 +829,14 @@ const Dashboard: React.FC = () => {
                           <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: accent }}>
                             {plan.name}
                           </p>
-                          <div className="flex items-baseline gap-1 mb-5">
-                            <span className="text-3xl font-bold" style={{ color: TXT }}>${plan.price}</span>
-                            <span className="text-sm" style={{ color: MUTED }}>/mo</span>
+                          <div className="flex flex-col gap-0.5 mb-5">
+                            <div className="flex items-baseline gap-1">
+                              <span className="text-3xl font-bold" style={{ color: TXT }}>${displayPrice}</span>
+                              <span className="text-sm" style={{ color: MUTED }}>/mo</span>
+                            </div>
+                            <p className="text-[11px] font-medium" style={{ color: MUTED }}>
+                              {isBillingYearly ? `Billed $${(displayPrice || 0) * 12} annually` : 'Billed monthly'}
+                            </p>
                           </div>
                           <ul className="space-y-2.5 mb-6 flex-grow">
                             {plan.features.slice(0, 6).map((f, i) => (

@@ -21,6 +21,52 @@ serve(async (req: Request) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
+    const dodoWebhookSecret = Deno.env.get('DODO_WEBHOOK_SECRET')
+    if (dodoWebhookSecret) {
+      const webhookId = req.headers.get('webhook-id')
+      const webhookSignature = req.headers.get('webhook-signature')
+      const webhookTimestamp = req.headers.get('webhook-timestamp')
+
+      if (!webhookId || !webhookSignature || !webhookTimestamp) {
+        console.error('Dodo Webhook Signature verification headers missing')
+        return new Response(JSON.stringify({ error: 'Missing webhook verification headers' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 401,
+        })
+      }
+
+      const rawBody = await req.clone().text()
+      const encoder = new TextEncoder()
+      const keyData = encoder.encode(dodoWebhookSecret)
+      const messageData = encoder.encode(`${webhookId}.${webhookTimestamp}.${rawBody}`)
+
+      const key = await crypto.subtle.importKey(
+        "raw",
+        keyData,
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"]
+      )
+
+      const signatureBuffer = await crypto.subtle.sign(
+        "HMAC",
+        key,
+        messageData
+      )
+
+      const computedSignature = Array.from(new Uint8Array(signatureBuffer))
+        .map(b => b.toString(16).padStart(2, "0"))
+        .join("")
+
+      if (computedSignature !== webhookSignature) {
+        console.error('Dodo Webhook Signature verification failed')
+        return new Response(JSON.stringify({ error: 'Invalid webhook signature' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 401,
+        })
+      }
+    }
+
     const payload = await req.json()
     console.log('Received Dodo Webhook:', payload)
 
