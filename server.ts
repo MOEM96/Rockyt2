@@ -9,6 +9,14 @@ async function startServer() {
   const PORT = 3000;
   const zernio = new Zernio({ apiKey: process.env.ZERNIO_API_KEY || "dummy_dev_key" });
 
+  // Normalize Vercel serverless rewritten URLs
+  app.use((req: any, _res: any, next: any) => {
+    if (req.url && !req.url.startsWith('/api') && !req.url.startsWith('/oauth')) {
+      req.url = `/api${req.url.startsWith('/') ? '' : '/'}${req.url}`;
+    }
+    next();
+  });
+
   // Capture raw body buffer for webhook signature verification
   app.use(express.json({
     verify: (req: any, _res, buf) => {
