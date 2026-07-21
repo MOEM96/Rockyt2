@@ -108,7 +108,13 @@ export function initDodoPayments() {
  */
 async function createCheckoutSession(productId: string, _userId?: string): Promise<string> {
     const { supabase } = await import('./supabase');
-    const { data: { session } } = await supabase.auth.getSession();
+    let { data: { session } } = await supabase.auth.getSession();
+    if (!session || (session.expires_at && session.expires_at * 1000 < Date.now() + 60000)) {
+        const { data: refreshed } = await supabase.auth.refreshSession();
+        if (refreshed.session) {
+            session = refreshed.session;
+        }
+    }
     const token = session?.access_token;
 
     const response = await fetch('/api/v1/checkouts', {
