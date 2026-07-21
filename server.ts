@@ -3,7 +3,6 @@ import path from "path";
 import { createClient } from "@supabase/supabase-js";
 import { Zernio } from "@zernio/node";
 import crypto from "crypto";
-import DodoPayments from "dodopayments";
 
 async function startServer() {
   const app = express();
@@ -269,11 +268,6 @@ async function startServer() {
       res.json({ connectedAccounts: mockConnectedCount, maxAccounts: 5 });
     }
   }));
-
-  // ---------------------------------------------------------------------------
-  // Secure Dodo Payments Checkout Endpoint
-  // ---------------------------------------------------------------------------
-  // ---------------------------------------------------------------------------
   // Secure Dodo Payments Checkout Endpoint
   // ---------------------------------------------------------------------------
   app.post('/api/v1/checkouts', supabaseAuth, async (req: any, res: any) => {
@@ -290,7 +284,7 @@ async function startServer() {
           process.env.VITE_DODO_API_KEY;
 
       if (!apiKey) {
-        console.error('[dodo] No API key found. Set DODO_PAYMENTS_API_KEY or DODO_API_KEY in your deployment environment.');
+        console.error('[dodo] No API key found. Set DODO_PAYMENTS_API_KEY in your deployment environment.');
         return res.status(500).json({
           error: 'Payments are not configured on this server (missing DODO_PAYMENTS_API_KEY).',
           docs:  'Set DODO_PAYMENTS_API_KEY in your Vercel project environment variables.',
@@ -309,7 +303,8 @@ async function startServer() {
         envMode = 'test_mode';
       }
 
-      const appBaseUrl = process.env.APP_BASE_URL || 'http://localhost:3000';
+      const baseUrl = envMode === 'live_mode' ? 'https://live.dodopayments.com' : 'https://test.dodopayments.com';
+      const appBaseUrl = process.env.APP_BASE_URL || (req.headers.origin || `https://${req.headers.host}`);
       const returnUrl = `${appBaseUrl}/dashboard?ref_id=${encodeURIComponent(req.user.id)}`;
 
       const requestBody: any = {
@@ -334,55 +329,39 @@ async function startServer() {
         };
       }
 
-      console.log(`Creating Dodo checkout session (${envMode}) for:`, req.user.email, productId);
+      console.log(`[Dodo] Creating checkout session (${envMode}) for:`, req.user.email, productId);
 
-      let checkoutUrl: string | undefined;
-      let sessionId: string | undefined;
+      const fetchRes = await fetch(`${baseUrl}/checkouts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(requestBody),
+      });
 
-      // Primary: Official SDK (safely resolved constructor)
-      try {
-        const DodoPaymentsClient = (DodoPayments as any).default || DodoPayments;
-        const client = new DodoPaymentsClient({ bearerToken: apiKey, environment: envMode });
-        const session = await client.checkoutSessions.create(requestBody);
-        checkoutUrl = session.checkout_url;
-        sessionId = session.session_id;
-      } catch (sdkErr: any) {
-        console.warn('SDK checkout creation failed, falling back to direct REST endpoint:', sdkErr?.message || sdkErr);
-        // Fallback: Direct REST call to Dodo Payments API
-        const baseUrl = envMode === 'live_mode' ? 'https://live.dodopayments.com' : 'https://test.dodopayments.com';
-        const fetchRes = await fetch(`${baseUrl}/checkouts`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify(requestBody),
+      if (!fetchRes.ok) {
+        const errText = await fetchRes.text();
+        console.error('[Dodo API REST Error]:', fetchRes.status, errText);
+        let detailMsg = errText;
+        try {
+          const parsed = JSON.parse(errText);
+          detailMsg = parsed.message || parsed.error || errText;
+        } catch {}
+        return res.status(fetchRes.status).json({
+          error: `Dodo Payments API error (${fetchRes.status}): ${detailMsg}`
         });
-
-        if (!fetchRes.ok) {
-          const errText = await fetchRes.text();
-          console.error('[Dodo API REST Error]:', fetchRes.status, errText);
-          let detailMsg = errText;
-          try {
-            const parsed = JSON.parse(errText);
-            detailMsg = parsed.message || parsed.error || errText;
-          } catch {}
-          return res.status(fetchRes.status).json({
-            error: `Dodo Payments API error (${fetchRes.status}): ${detailMsg}`
-          });
-        }
-
-        const data = await fetchRes.json();
-        checkoutUrl = data.checkout_url;
-        sessionId = data.session_id || data.checkout_id;
       }
+
+      const data = await fetchRes.json();
+      const checkoutUrl = data.checkout_url;
+      const dodoSessionId = data.session_id || data.checkout_id || 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
 
       if (!checkoutUrl) {
         return res.status(500).json({ error: 'No checkout_url returned from Dodo Payments' });
       }
 
       const planName = productId === 'pdt_0NWDjzl0TS6LNFrVdFZYQ' ? 'Scale' : 'Growth';
-      const dodoSessionId = sessionId || 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
 
       // Record checkout session in Supabase checkout_sessions table
       if (supabase && req.user?.id) {
@@ -405,7 +384,7 @@ async function startServer() {
       console.error('Error creating checkout session:', error);
       const statusCode = error.status || error.statusCode || 500;
       const errorDetail = error.message || error.error || String(error);
-      res.status(statusCode).json({ error: `Dodo Payments API error (${statusCode}): ${errorDetail}` });
+      res.status(statusCode).json({ error: `Checkout session creation error (${statusCode}): ${errorDetail}` });
     }
   });
 
@@ -421,7 +400,6 @@ async function startServer() {
       const webhookTimestamp = req.headers['webhook-timestamp'];
 
       if (!webhookId || !webhookSignature || !webhookTimestamp) {
-        console.error('Dodo Webhook Signature verification headers missing');
         return res.status(401).json({ error: 'Missing webhook signature headers' });
       }
 
@@ -433,7 +411,6 @@ async function startServer() {
         .digest('hex');
 
       if (computedSignature !== webhookSignature) {
-        console.error('Dodo Webhook Signature verification failed');
         return res.status(401).json({ error: 'Invalid webhook signature' });
       }
     }
@@ -443,8 +420,6 @@ async function startServer() {
       const eventType = payload?.event_type || payload?.type || 'unknown';
       const dodoEventId = payload?.event_id || payload?.id || null;
       const data = payload?.data || payload || {};
-
-      console.log('Dodo Payments Webhook received:', eventType);
 
       let userId = data?.metadata?.user_id || data?.customer?.metadata?.user_id || data?.customer_metadata?.user_id;
       const customerEmail = data?.customer?.email || data?.email;
@@ -464,22 +439,16 @@ async function startServer() {
         }
       }
 
-      // 1. Audit log raw webhook event into payment_events table
       if (supabase) {
-        try {
-          await supabase.from('payment_events').insert({
-            event_type: eventType,
-            dodo_event_id: dodoEventId,
-            user_id: userId || null,
-            payload: payload,
-            processed_at: new Date().toISOString(),
-          });
-        } catch (dbErr: any) {
-          console.error('[Supabase] Non-fatal error inserting payment_event:', dbErr?.message || dbErr);
-        }
+        await supabase.from('payment_events').insert({
+          event_type: eventType,
+          dodo_event_id: dodoEventId,
+          user_id: userId || null,
+          payload: payload,
+          processed_at: new Date().toISOString(),
+        });
       }
 
-      // 2. Process profile & checkout_sessions updates
       if (userId && supabase) {
         const isSuccess =
           eventType === 'subscription.created' ||
@@ -501,7 +470,7 @@ async function startServer() {
         }
 
         if (isSuccess) {
-          const updateData: any = {
+          await supabase.from('profiles').update({
             plan: planName,
             max_accounts: maxAccounts,
             subscription_status: 'active',
@@ -509,13 +478,7 @@ async function startServer() {
             is_trial: false,
             dodo_customer_id: customerId || null,
             plan_product_id: productId || null,
-          };
-          const currentPeriodEnd = data.current_period_end || data.subscription?.current_period_end || null;
-          if (currentPeriodEnd) {
-            updateData.current_period_end = currentPeriodEnd;
-          }
-
-          await supabase.from('profiles').update(updateData).eq('id', userId);
+          }).eq('id', userId);
 
           if (dodoSessionId) {
             await supabase.from('checkout_sessions').update({
@@ -539,7 +502,6 @@ async function startServer() {
 
       res.status(200).json({ received: true });
     } catch (err: any) {
-      console.error('Error handling Dodo webhook:', err);
       res.status(500).json({ error: err.message });
     }
   });
@@ -547,10 +509,12 @@ async function startServer() {
   // ---------------------------------------------------------------------------
   // Generic passthrough proxy for everything else (full 1:1 mirror)
   // ---------------------------------------------------------------------------
-  app.all(/^\/api\/v1\/(.*)/, authenticate, asyncHandler(async (req: any, res: any) => {
+  app.all(/^\/api\/v1\/(.*)/, asyncHandler(async (req: any, res: any) => {
     const urlPath = req.originalUrl.replace('/api/v1', '');
     const url = new URL(`https://zernio.com/api/v1${urlPath}`);
-    url.searchParams.set('profileId', req.zernioProfileId);
+    if (req.zernioProfileId) {
+      url.searchParams.set('profileId', req.zernioProfileId);
+    }
 
     const zernioRes = await fetch(url, {
       method: req.method,
@@ -564,14 +528,18 @@ async function startServer() {
     res.status(zernioRes.status).json(data);
   }));
 
-  if (process.env.NODE_ENV !== "production") {
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
+  if (!process.env.VERCEL && process.env.NODE_ENV !== "production") {
+    try {
+      const { createServer: createViteServer } = await import("vite");
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+    } catch (e) {
+      console.warn('Vite dev server middleware skipped:', e);
+    }
+  } else if (!process.env.VERCEL) {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (_req, res) => {
