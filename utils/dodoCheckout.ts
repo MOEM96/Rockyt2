@@ -125,7 +125,16 @@ async function createCheckoutSession(productId: string, _userId?: string): Promi
     if (!response.ok) {
         const errorText = await response.text();
         console.error('Dodo checkout session error:', response.status, errorText);
-        throw new Error(`Failed to create checkout session: ${response.status}`);
+        let errorMsg = `Failed to create checkout session (${response.status})`;
+        try {
+            const parsed = JSON.parse(errorText);
+            if (parsed.error) errorMsg = parsed.error;
+            else if (parsed.message) errorMsg = parsed.message;
+            else if (parsed.details) errorMsg = parsed.details;
+        } catch {
+            if (errorText) errorMsg += `: ${errorText}`;
+        }
+        throw new Error(errorMsg);
     }
 
     const data = await response.json();

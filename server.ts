@@ -3,6 +3,7 @@ import path from "path";
 import { createClient } from "@supabase/supabase-js";
 import { Zernio } from "@zernio/node";
 import crypto from "crypto";
+import DodoPayments from "dodopayments";
 
 // Instantiated once at module load — the SDK's client is a shared
 // singleton internally, so this must NOT be created per-request.
@@ -287,77 +288,72 @@ async function startServer() {
     }
 
     try {
-      const dodoApiKey =
-          process.env.DODO_API_KEY     ||
-          process.env.DODO_SECRET_KEY  ||
+      const apiKey =
+          process.env.DODO_PAYMENTS_API_KEY ||
+          process.env.DODO_API_KEY          ||
+          process.env.DODO_SECRET_KEY       ||
           process.env.VITE_DODO_API_KEY;
-      const dodoMode = process.env.DODO_MODE || process.env.VITE_DODO_MODE || (process.env.NODE_ENV !== 'production' ? 'test' : 'live');
-      const dodoBaseUrl = dodoMode === 'live' ? 'https://live.dodopayments.com' : 'https://test.dodopayments.com';
 
-      if (!dodoApiKey) {
-        // Make this easy to spot in Vercel function logs.
-        console.error('[dodo] No API key found. Looked for DODO_API_KEY / DODO_SECRET_KEY in production; ' +
-                      'also VITE_DODO_API_KEY in development. Set one of these in your deploy environment.');
+      if (!apiKey) {
+        console.error('[dodo] No API key found. Set DODO_PAYMENTS_API_KEY or DODO_API_KEY in your deployment environment.');
         return res.status(500).json({
-          error: 'Payments are not configured on this server (missing DODO_API_KEY)',
-          docs:  'Set DODO_API_KEY in your Vercel/hosting env.',
+          error: 'Payments are not configured on this server (missing DODO_PAYMENTS_API_KEY).',
+          docs:  'Set DODO_PAYMENTS_API_KEY in your Vercel project environment variables.',
         });
       }
+
+      let envMode: 'test_mode' | 'live_mode' = 'test_mode';
+      const explicitMode = process.env.DODO_PAYMENTS_ENVIRONMENT || process.env.DODO_MODE || process.env.VITE_DODO_MODE;
+      if (explicitMode === 'live' || explicitMode === 'live_mode') {
+        envMode = 'live_mode';
+      } else if (explicitMode === 'test' || explicitMode === 'test_mode') {
+        envMode = 'test_mode';
+      } else if (apiKey.startsWith('live')) {
+        envMode = 'live_mode';
+      } else {
+        envMode = 'test_mode';
+      }
+
+      const client = new DodoPayments({
+        bearerToken: apiKey,
+        environment: envMode,
+      });
 
       const appBaseUrl = process.env.APP_BASE_URL || 'http://localhost:3000';
       const returnUrl = `${appBaseUrl}/dashboard?ref_id=${encodeURIComponent(req.user.id)}`;
 
-      const requestBody: any = {
-        customer: {
-          email: req.user.email
-        },
+      const sessionCreateParams: any = {
         product_cart: [
           {
             product_id: productId,
             quantity: 1,
           },
         ],
+        customer: {
+          email: req.user.email,
+        },
         metadata: {
-          user_id: req.user.id
+          user_id: req.user.id,
         },
         return_url: returnUrl,
-        customization: {
-          theme: 'dark',
-          show_order_details: true,
-        }
       };
 
       if (typeof trialPeriodDays === 'number') {
-        requestBody.subscription_data = {
+        sessionCreateParams.subscription_data = {
           trial_period_days: trialPeriodDays,
-          on_demand: {
-            mandate_only: false
-          }
         };
       }
 
-      console.log('Creating checkout session for:', req.user.email, productId);
+      console.log(`Creating Dodo checkout session (${envMode}) for:`, req.user.email, productId);
 
-      const response = await fetch(`${dodoBaseUrl}/checkouts`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${dodoApiKey}`,
-        },
-        body: JSON.stringify(requestBody),
-      });
+      const session = await client.checkoutSessions.create(sessionCreateParams);
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Dodo checkout session creation failed:', response.status, errorText);
-        return res.status(response.status).json({ error: `Failed to create checkout session: ${errorText}` });
-      }
-
-      const data = await response.json();
-      res.json({ checkout_url: data.checkout_url, session_id: data.session_id });
+      res.json({ checkout_url: session.checkout_url, session_id: session.session_id });
     } catch (error: any) {
-      console.error('Error creating checkout session:', error);
-      res.status(500).json({ error: error.message || 'Internal Server Error' });
+      console.error('Error creating checkout session via SDK:', error);
+      const statusCode = error.status || error.statusCode || 500;
+      const errorDetail = error.message || error.error || String(error);
+      res.status(statusCode).json({ error: `Dodo Payments API error (${statusCode}): ${errorDetail}` });
     }
   });
 

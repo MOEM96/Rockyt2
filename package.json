@@ -12,6 +12,7 @@
   "dependencies": {
     "@calcom/embed-react": "^1.5.3",
     "@supabase/supabase-js": "^2.105.1",
+    "dodopayments": "^2.42.2",
     "dodopayments-checkout": "^1.8.0",
     "express": "^5.2.1",
     "motion": "^12.42.2",
