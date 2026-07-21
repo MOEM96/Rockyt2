@@ -192,7 +192,7 @@ const CasesPage: React.FC<DemoBookingProps> = ({ onBookDemo, onGetStarted }) => 
               className="w-full md:w-auto h-auto py-5 px-8 text-lg border-white/20 hover:border-white/40 hover:bg-white/5 flex items-center justify-center gap-3"
             >
               <span>Book Strategy Call</span>
-              <img src="https://cdn.prod.website-files.com/6716718ea408f53194adf9a9/6716718ea408f53194adfec6_sales.png" alt="" width="24" className="rounded-full" loading="lazy" decoding="async" />
+              <img src="https://cdn.prod.website-files.com/6716718ea408f53194adf9a9/6716718ea408f53194adfec6_sales.png" alt="Strategy call icon" width="24" height="24" className="rounded-full" loading="lazy" decoding="async" />
             </Button>
           </div>
           <div className="flex flex-wrap justify-center gap-4 text-sm font-medium text-gray-500">

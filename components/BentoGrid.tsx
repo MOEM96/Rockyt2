@@ -488,15 +488,16 @@ const BentoGrid: React.FC<DemoBookingProps> = ({ onGetStarted }) => {
                                 <div className="mb-4 md:mb-6 relative z-10 h-6 md:h-8">
                                     <img
                                         src={cs.logo}
-                                        alt="Logo"
+                                        alt={`${cs.title} logo`}
                                         className={`h-full w-auto object-contain ${cs.id === 'loop' ? '' : 'brightness-0 invert'}`}
+                                        loading="lazy"
                                     />
                                 </div>
 
                                 <div className="rounded-xl overflow-hidden mb-4 md:mb-6 aspect-video shadow-lg group-hover:scale-[1.03] transition-transform duration-500 bg-black/10">
                                     <img
                                         src={cs.image}
-                                        alt=""
+                                        alt={`${cs.title} case study preview`}
                                         className="w-full h-full object-cover"
                                         loading="lazy"
                                     />
