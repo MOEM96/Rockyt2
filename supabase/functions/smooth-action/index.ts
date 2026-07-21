@@ -67,21 +67,72 @@ serve(async (req: Request) => {
     const eventType = payload.event_type || payload.type || 'test_event'
     const data = payload.data || payload || {}
     
-    // Extract User ID from metadata
-    let userId = data.customer?.metadata?.user_id || data.metadata?.user_id || data.customer_metadata?.user_id
+    const metadataUserId = data.customer?.metadata?.user_id || data.metadata?.user_id || payload.metadata?.user_id
     const customerEmail = data.customer?.email || data.email || payload.email
+    const customerId = data.customer?.customer_id || data.customer_id
+    const subscriptionId = data.subscription_id || data.id
+    const sessionId = data.session_id || data.checkout_id
 
-    // Fallback: If user_id isn't in metadata, look up user by profile email in Supabase
+    let userId: string | null = metadataUserId || null
+    let lookupMethod = userId ? 'metadata.user_id' : null
+
+    // 1. Try lookup by dodo_session_id in checkout_sessions table
+    if (!userId && sessionId) {
+      const { data: sessionRow } = await supabaseClient
+        .from('checkout_sessions')
+        .select('user_id')
+        .eq('dodo_session_id', sessionId)
+        .maybeSingle()
+      if (sessionRow?.user_id) {
+        userId = sessionRow.user_id
+        lookupMethod = 'checkout_sessions.dodo_session_id'
+      }
+    }
+
+    // 2. Try lookup by dodo_customer_id in profiles table
+    if (!userId && customerId) {
+      const { data: profileRow } = await supabaseClient
+        .from('profiles')
+        .select('id')
+        .eq('dodo_customer_id', customerId)
+        .maybeSingle()
+      if (profileRow?.id) {
+        userId = profileRow.id
+        lookupMethod = 'profiles.dodo_customer_id'
+      }
+    }
+
+    // 3. Try lookup by subscription_id in profiles table
+    if (!userId && subscriptionId) {
+      const { data: profileRow } = await supabaseClient
+        .from('profiles')
+        .select('id')
+        .eq('subscription_id', subscriptionId)
+        .maybeSingle()
+      if (profileRow?.id) {
+        userId = profileRow.id
+        lookupMethod = 'profiles.subscription_id'
+      }
+    }
+
+    // 4. Try lookup by email in profiles table
     if (!userId && customerEmail) {
-      const { data: profile } = await supabaseClient
+      const { data: profileRow } = await supabaseClient
         .from('profiles')
         .select('id')
         .eq('email', customerEmail)
         .maybeSingle()
-      if (profile?.id) {
-        userId = profile.id
+      if (profileRow?.id) {
+        userId = profileRow.id
+        lookupMethod = 'profiles.email'
       }
     }
+
+    console.log('[Webhook User Lookup Result]:', JSON.stringify({
+      receivedKeys: { metadataUserId, customerEmail, customerId, subscriptionId, sessionId },
+      matchedUserId: userId,
+      lookupMethod: lookupMethod || 'NONE'
+    }))
 
     // 1. Record raw webhook event into payment_events table
     try {
@@ -99,16 +150,16 @@ serve(async (req: Request) => {
     // If test event or unlinked webhook call, return HTTP 200 so Dodo Payments / test curl receives success
     if (!userId) {
       console.log('No user_id matched for webhook payload. Responding 200 OK.')
-      return new Response(JSON.stringify({ message: 'Webhook received successfully' }), {
+      return new Response(JSON.stringify({
+        message: 'Webhook received successfully',
+        lookupDetails: { metadataUserId, customerEmail, customerId, subscriptionId, sessionId }
+      }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 200,
       })
     }
 
     let status = 'active'
-    const subscriptionId = data.subscription_id || data.id
-    const sessionId = data.session_id || data.checkout_id
-    
     if (eventType.includes('failed') || eventType.includes('expired')) {
       status = 'past_due'
     } else if (eventType.includes('canceled')) {

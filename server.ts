@@ -421,23 +421,75 @@ async function startServer() {
       const dodoEventId = payload?.event_id || payload?.id || null;
       const data = payload?.data || payload || {};
 
-      let userId = data?.metadata?.user_id || data?.customer?.metadata?.user_id || data?.customer_metadata?.user_id;
-      const customerEmail = data?.customer?.email || data?.email;
+      const metadataUserId = data?.metadata?.user_id || data?.customer?.metadata?.user_id || payload?.metadata?.user_id;
+      const customerEmail = data?.customer?.email || data?.email || payload?.email;
       const customerId = data?.customer?.customer_id || data?.customer_id;
       const subscriptionId = data?.subscription_id || data?.id;
       const productId = data?.product_id || data?.product_cart?.[0]?.product_id || data?.items?.[0]?.product_id;
       const dodoSessionId = data?.session_id || data?.checkout_id;
 
-      if (!userId && customerEmail && supabase) {
-        const { data: userProfile } = await supabase
-          .from('profiles')
-          .select('id')
-          .eq('email', customerEmail)
-          .single();
-        if (userProfile?.id) {
-          userId = userProfile.id;
+      let userId: string | null = metadataUserId || null;
+      let lookupMethod = userId ? 'metadata.user_id' : null;
+
+      if (supabase) {
+        // 1. Try lookup by dodo_session_id in checkout_sessions table
+        if (!userId && dodoSessionId) {
+          const { data: sessionRow } = await supabase
+            .from('checkout_sessions')
+            .select('user_id')
+            .eq('dodo_session_id', dodoSessionId)
+            .single();
+          if (sessionRow?.user_id) {
+            userId = sessionRow.user_id;
+            lookupMethod = 'checkout_sessions.dodo_session_id';
+          }
+        }
+
+        // 2. Try lookup by dodo_customer_id in profiles table
+        if (!userId && customerId) {
+          const { data: profileRow } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('dodo_customer_id', customerId)
+            .single();
+          if (profileRow?.id) {
+            userId = profileRow.id;
+            lookupMethod = 'profiles.dodo_customer_id';
+          }
+        }
+
+        // 3. Try lookup by subscription_id in profiles table
+        if (!userId && subscriptionId) {
+          const { data: profileRow } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('subscription_id', subscriptionId)
+            .single();
+          if (profileRow?.id) {
+            userId = profileRow.id;
+            lookupMethod = 'profiles.subscription_id';
+          }
+        }
+
+        // 4. Try lookup by email in profiles table
+        if (!userId && customerEmail) {
+          const { data: profileRow } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('email', customerEmail)
+            .single();
+          if (profileRow?.id) {
+            userId = profileRow.id;
+            lookupMethod = 'profiles.email';
+          }
         }
       }
+
+      console.log('[Webhook User Lookup Result]:', {
+        receivedKeys: { metadataUserId, customerEmail, customerId, subscriptionId, dodoSessionId },
+        matchedUserId: userId,
+        lookupMethod: lookupMethod || 'NONE'
+      });
 
       if (supabase) {
         await supabase.from('payment_events').insert({
