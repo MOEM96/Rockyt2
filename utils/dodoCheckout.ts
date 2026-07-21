@@ -106,9 +106,7 @@ export function initDodoPayments() {
  * Create a checkout session via Dodo Payments API.
  * Returns the checkout URL.
  */
-async function createCheckoutSession(productId: string, userId: string): Promise<string> {
-    currentCheckoutUserId = userId || null;
-
+async function createCheckoutSession(productId: string, _userId?: string): Promise<string> {
     const { supabase } = await import('./supabase');
     const { data: { session } } = await supabase.auth.getSession();
     const token = session?.access_token;
