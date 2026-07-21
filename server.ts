@@ -141,7 +141,16 @@ async function startServer() {
     let zernioProfileId = 'mock-zernio-profile-id';
 
     if (supabase) {
-      let { data: profile } = await supabase.from('profiles').select('zernio_profile_id').eq('id', req.user.id).single();
+      let { data: profile } = await supabase.from('profiles').select('zernio_profile_id, is_trial, plan, subscription_status').eq('id', req.user.id).single();
+
+      // Gate: only paid users with active subscriptions can generate API keys
+      if (!profile || profile.is_trial || !profile.subscription_status || profile.subscription_status !== 'active') {
+        return res.status(403).json({ 
+          error: 'API key generation requires an active paid subscription. Please upgrade your plan.',
+          is_trial: profile?.is_trial ?? true,
+          subscription_status: profile?.subscription_status ?? null
+        });
+      }
 
       if (!profile?.zernio_profile_id) {
         try {
