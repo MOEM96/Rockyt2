@@ -4,8 +4,8 @@
     { "src": "package.json", "use": "@vercel/static-build", "config": { "distDir": "dist" } }
   ],
   "routes": [
-    { "src": "/api/(.*)", "dest": "server.ts" },
-    { "src": "/oauth/callback", "dest": "server.ts" },
+    { "src": "/api/(.*)", "dest": "/server.ts" },
+    { "src": "/oauth/callback", "dest": "/server.ts" },
     { "src": "/(.*)", "dest": "/$1" }
   ]
 }
