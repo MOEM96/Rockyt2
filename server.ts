@@ -105,7 +105,11 @@ async function startServer() {
         .eq('key_hash', hash)
         .single();
 
-      if (keyError || !keyData || keyData.revoked) {
+      if (keyError) {
+        console.error('API key lookup error:', keyError.message, 'hash_prefix:', hash.substring(0, 12));
+        return res.status(401).json({ error: 'Invalid API key' });
+      }
+      if (!keyData || keyData.revoked) {
         return res.status(401).json({ error: 'Invalid API key' });
       }
 
@@ -181,11 +185,15 @@ async function startServer() {
     const hash = crypto.createHash('sha256').update(rawKey).digest('hex');
 
     if (supabase) {
-      await supabase.from('user_api_keys').insert({
+      const { error: insertError } = await supabase.from('user_api_keys').insert({
         user_id: req.user.id,
         key_hash: hash,
         key_prefix: rawKey.substring(0, 8)
       });
+      if (insertError) {
+        console.error('Failed to insert API key:', insertError);
+        return res.status(500).json({ error: `Failed to save API key: ${insertError.message}` });
+      }
     } else {
       mockKeys.push({
         id: crypto.randomUUID(),
