@@ -281,6 +281,9 @@ async function startServer() {
   // ---------------------------------------------------------------------------
   // Secure Dodo Payments Checkout Endpoint
   // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Secure Dodo Payments Checkout Endpoint
+  // ---------------------------------------------------------------------------
   app.post('/api/v1/checkouts', supabaseAuth, async (req: any, res: any) => {
     const { productId, trialPeriodDays } = req.body;
     if (!productId) {
@@ -314,24 +317,19 @@ async function startServer() {
         envMode = 'test_mode';
       }
 
-      const client = new DodoPayments({
-        bearerToken: apiKey,
-        environment: envMode,
-      });
-
       const appBaseUrl = process.env.APP_BASE_URL || 'http://localhost:3000';
       const returnUrl = `${appBaseUrl}/dashboard?ref_id=${encodeURIComponent(req.user.id)}`;
 
-      const sessionCreateParams: any = {
+      const requestBody: any = {
+        customer: {
+          email: req.user.email,
+        },
         product_cart: [
           {
             product_id: productId,
             quantity: 1,
           },
         ],
-        customer: {
-          email: req.user.email,
-        },
         metadata: {
           user_id: req.user.id,
         },
@@ -339,18 +337,80 @@ async function startServer() {
       };
 
       if (typeof trialPeriodDays === 'number') {
-        sessionCreateParams.subscription_data = {
+        requestBody.subscription_data = {
           trial_period_days: trialPeriodDays,
         };
       }
 
       console.log(`Creating Dodo checkout session (${envMode}) for:`, req.user.email, productId);
 
-      const session = await client.checkoutSessions.create(sessionCreateParams);
+      let checkoutUrl: string | undefined;
+      let sessionId: string | undefined;
 
-      res.json({ checkout_url: session.checkout_url, session_id: session.session_id });
+      // Primary: Official SDK (safely resolved constructor)
+      try {
+        const DodoPaymentsClient = (DodoPayments as any).default || DodoPayments;
+        const client = new DodoPaymentsClient({ bearerToken: apiKey, environment: envMode });
+        const session = await client.checkoutSessions.create(requestBody);
+        checkoutUrl = session.checkout_url;
+        sessionId = session.session_id;
+      } catch (sdkErr: any) {
+        console.warn('SDK checkout creation failed, falling back to direct REST endpoint:', sdkErr?.message || sdkErr);
+        // Fallback: Direct REST call to Dodo Payments API
+        const baseUrl = envMode === 'live_mode' ? 'https://live.dodopayments.com' : 'https://test.dodopayments.com';
+        const fetchRes = await fetch(`${baseUrl}/checkouts`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify(requestBody),
+        });
+
+        if (!fetchRes.ok) {
+          const errText = await fetchRes.text();
+          console.error('[Dodo API REST Error]:', fetchRes.status, errText);
+          let detailMsg = errText;
+          try {
+            const parsed = JSON.parse(errText);
+            detailMsg = parsed.message || parsed.error || errText;
+          } catch {}
+          return res.status(fetchRes.status).json({
+            error: `Dodo Payments API error (${fetchRes.status}): ${detailMsg}`
+          });
+        }
+
+        const data = await fetchRes.json();
+        checkoutUrl = data.checkout_url;
+        sessionId = data.session_id || data.checkout_id;
+      }
+
+      if (!checkoutUrl) {
+        return res.status(500).json({ error: 'No checkout_url returned from Dodo Payments' });
+      }
+
+      const planName = productId === 'pdt_0NWDjzl0TS6LNFrVdFZYQ' ? 'Scale' : 'Growth';
+      const dodoSessionId = sessionId || 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+
+      // Record checkout session in Supabase checkout_sessions table
+      if (supabase && req.user?.id) {
+        try {
+          await supabase.from('checkout_sessions').insert({
+            user_id: req.user.id,
+            dodo_session_id: dodoSessionId,
+            product_id: productId,
+            plan: planName,
+            status: 'pending',
+            checkout_url: checkoutUrl,
+          });
+        } catch (dbErr: any) {
+          console.error('[Supabase] Non-fatal error logging checkout_session:', dbErr?.message || dbErr);
+        }
+      }
+
+      res.json({ checkout_url: checkoutUrl, session_id: dodoSessionId });
     } catch (error: any) {
-      console.error('Error creating checkout session via SDK:', error);
+      console.error('Error creating checkout session:', error);
       const statusCode = error.status || error.statusCode || 500;
       const errorDetail = error.message || error.error || String(error);
       res.status(statusCode).json({ error: `Dodo Payments API error (${statusCode}): ${errorDetail}` });
@@ -373,7 +433,7 @@ async function startServer() {
         return res.status(401).json({ error: 'Missing webhook signature headers' });
       }
 
-      const rawBody = req.rawBody ? req.rawBody.toString() : '';
+      const rawBody = req.rawBody ? req.rawBody.toString() : (typeof req.body === 'string' ? req.body : JSON.stringify(req.body));
       const signedPayload = `${webhookId}.${webhookTimestamp}.${rawBody}`;
       const computedSignature = crypto
         .createHmac('sha256', dodoWebhookSecret)
@@ -386,86 +446,110 @@ async function startServer() {
       }
     }
 
-    const payload = req.body;
-    console.log('Received Dodo Webhook payload:', payload);
+    try {
+      const payload = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+      const eventType = payload?.event_type || payload?.type || 'unknown';
+      const dodoEventId = payload?.event_id || payload?.id || null;
+      const data = payload?.data || payload || {};
 
-    const eventType = payload.event_type;
-    const data = payload.data;
+      console.log('Dodo Payments Webhook received:', eventType);
 
-    // Extract User ID from metadata
-    const userId = data.customer?.metadata?.user_id || data.metadata?.user_id || data.customer_metadata?.user_id;
+      let userId = data?.metadata?.user_id || data?.customer?.metadata?.user_id || data?.customer_metadata?.user_id;
+      const customerEmail = data?.customer?.email || data?.email;
+      const customerId = data?.customer?.customer_id || data?.customer_id;
+      const subscriptionId = data?.subscription_id || data?.id;
+      const productId = data?.product_id || data?.product_cart?.[0]?.product_id || data?.items?.[0]?.product_id;
+      const dodoSessionId = data?.session_id || data?.checkout_id;
 
-    if (!userId) {
-      console.warn('No user_id found in Dodo webhook metadata');
-      return res.status(200).json({ message: 'No user_id, ignored' });
-    }
-
-    let status = 'active';
-    const subscriptionId = data.subscription_id || data.id;
-
-    if (eventType.includes('failed') || eventType.includes('expired')) {
-      status = 'past_due';
-    } else if (eventType.includes('canceled')) {
-      status = 'canceled';
-    } else if (eventType.includes('succeeded') || eventType.includes('active') || eventType.includes('created')) {
-      status = 'active';
-    }
-
-    // Map Product ID to plan name & limit
-    const productId = data.product_id || data.product_cart?.[0]?.product_id || data.items?.[0]?.product_id;
-    let planName = null;
-    let maxAccounts = 5;
-
-    if (productId === 'pdt_0NWDjeAeatQKryEvRe4eb') {
-      planName = 'Growth';
-      maxAccounts = 5;
-    } else if (productId === 'pdt_0NWDjzl0TS6LNFrVdFZYQ') {
-      planName = 'Scale';
-      maxAccounts = 10;
-    }
-
-    console.log(`Webhook: Updating user ${userId} to status: ${status}, plan: ${planName}, maxAccounts: ${maxAccounts}`);
-
-    if (supabase) {
-      const updateData: any = {
-        subscription_status: status,
-        subscription_id: subscriptionId,
-        is_trial: false
-      };
-      if (planName) {
-        updateData.plan = planName;
-        updateData.max_accounts = maxAccounts;
-        updateData.plan_product_id = productId;  // remember which Dodo SKU they paid for
-      }
-      // Persist Dodo's stable customer id so future webhook lookups don't
-      // have to rely solely on metadata.user_id (which can be missing on
-      // events like subscription.renewed after the original metadata fell off).
-      const dodoCustomerId =
-          data.customer?.customer_id || data.customer_id || null;
-      if (dodoCustomerId) {
-        updateData.dodo_customer_id = dodoCustomerId;
-      }
-      // When Dodo tells us the next billing date, save it for display.
-      const currentPeriodEnd =
-          data.current_period_end || data.subscription?.current_period_end || null;
-      if (currentPeriodEnd) {
-        updateData.current_period_end = currentPeriodEnd;
+      if (!userId && customerEmail && supabase) {
+        const { data: userProfile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('email', customerEmail)
+          .single();
+        if (userProfile?.id) {
+          userId = userProfile.id;
+        }
       }
 
-      const { error } = await supabase
-        .from('profiles')
-        .update(updateData)
-        .eq('id', userId);
-
-      if (error) {
-        console.error('Failed to update user profile in Supabase:', error);
-        return res.status(500).json({ error: 'DB update failed' });
+      // 1. Audit log raw webhook event into payment_events table
+      if (supabase) {
+        try {
+          await supabase.from('payment_events').insert({
+            event_type: eventType,
+            dodo_event_id: dodoEventId,
+            user_id: userId || null,
+            payload: payload,
+            processed_at: new Date().toISOString(),
+          });
+        } catch (dbErr: any) {
+          console.error('[Supabase] Non-fatal error inserting payment_event:', dbErr?.message || dbErr);
+        }
       }
-    } else {
-      console.log('Mock mode update completed successfully for userId:', userId);
-    }
 
-    res.json({ message: 'Success' });
+      // 2. Process profile & checkout_sessions updates
+      if (userId && supabase) {
+        const isSuccess =
+          eventType === 'subscription.created' ||
+          eventType === 'subscription.active'  ||
+          eventType === 'checkout.session.completed' ||
+          eventType === 'payment.succeeded' ||
+          (eventType === 'checkout.status' && data?.status === 'succeeded');
+
+        const isFailed =
+          eventType === 'subscription.cancelled' ||
+          eventType === 'subscription.failed'    ||
+          eventType === 'payment.failed';
+
+        let planName = 'Growth';
+        let maxAccounts = 5;
+        if (productId === 'pdt_0NWDjzl0TS6LNFrVdFZYQ') {
+          planName = 'Scale';
+          maxAccounts = 10;
+        }
+
+        if (isSuccess) {
+          const updateData: any = {
+            plan: planName,
+            max_accounts: maxAccounts,
+            subscription_status: 'active',
+            subscription_id: subscriptionId || null,
+            is_trial: false,
+            dodo_customer_id: customerId || null,
+            plan_product_id: productId || null,
+          };
+          const currentPeriodEnd = data.current_period_end || data.subscription?.current_period_end || null;
+          if (currentPeriodEnd) {
+            updateData.current_period_end = currentPeriodEnd;
+          }
+
+          await supabase.from('profiles').update(updateData).eq('id', userId);
+
+          if (dodoSessionId) {
+            await supabase.from('checkout_sessions').update({
+              status: 'completed',
+              dodo_subscription_id: subscriptionId || null,
+              completed_at: new Date().toISOString(),
+            }).eq('dodo_session_id', dodoSessionId);
+          }
+        } else if (isFailed) {
+          await supabase.from('profiles').update({
+            subscription_status: 'cancelled',
+          }).eq('id', userId);
+
+          if (dodoSessionId) {
+            await supabase.from('checkout_sessions').update({
+              status: 'failed',
+            }).eq('dodo_session_id', dodoSessionId);
+          }
+        }
+      }
+
+      res.status(200).json({ received: true });
+    } catch (err: any) {
+      console.error('Error handling Dodo webhook:', err);
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // ---------------------------------------------------------------------------
