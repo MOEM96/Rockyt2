@@ -22,56 +22,51 @@ export const ApiDashboardTab: React.FC = () => {
     setLoading(true);
     setError(null);
 
-    const fetchWithTimeout = async (url: string, options: RequestInit, timeoutMs = 8000) => {
-      const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), timeoutMs);
-      try {
-        return await fetch(url, { ...options, signal: controller.signal });
-      } finally {
-        clearTimeout(id);
-      }
-    };
+    const headers = { 'Authorization': `Bearer ${session.access_token}` };
 
     try {
-      const headers = { 'Authorization': `Bearer ${session.access_token}` };
-      
       const [keysRes, usageRes] = await Promise.all([
-        fetchWithTimeout('/api/v1/keys', { headers }),
-        fetchWithTimeout('/api/v1/me/dashboard-usage', { headers })
+        fetch('/api/v1/keys', { headers }).catch(err => {
+          console.warn('Keys fetch warning:', err);
+          return null;
+        }),
+        fetch('/api/v1/me/dashboard-usage', { headers }).catch(err => {
+          console.warn('Usage fetch warning:', err);
+          return null;
+        })
       ]);
 
-      if (keysRes.ok) {
-        const keysData = await keysRes.json();
+      if (keysRes && keysRes.ok) {
+        const keysData = await keysRes.json().catch(() => []);
         setKeys(keysData || []);
-      } else {
-        const errData = await keysRes.json().catch(() => ({}));
-        console.error('Keys API error:', keysRes.status, errData);
-        setError('Failed to fetch API keys. Please verify your credentials or try again.');
+      } else if (keysRes && !keysRes.ok) {
+        console.error('Keys API error status:', keysRes.status);
       }
 
-      if (usageRes.ok) {
-        const usageData = await usageRes.json();
-        setUsage(usageData);
-      } else {
-        const errData = await usageRes.json().catch(() => ({}));
-        console.error('Usage API error:', usageRes.status, errData);
-        setError('Failed to fetch API usage limit.');
+      if (usageRes && usageRes.ok) {
+        const usageData = await usageRes.json().catch(() => null);
+        if (usageData) setUsage(usageData);
+      } else if (usageRes && !usageRes.ok) {
+        console.error('Usage API error status:', usageRes.status);
       }
     } catch (err: any) {
-      console.error('Failed to fetch API tab data:', err);
-      setError(err.name === 'AbortError' 
-        ? 'Request timed out. Please check your network connection and try again.'
-        : 'Failed to load API keys and usage. Please try again.'
-      );
+      if (err.name !== 'AbortError') {
+        console.error('Failed to fetch API tab data:', err);
+        setError('Unable to load API credentials. Please check your connection or try again.');
+      }
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    if (!authLoading) {
+    let active = true;
+    if (!authLoading && session) {
       fetchData();
     }
+    return () => {
+      active = false;
+    };
   }, [session, authLoading]);
 
   const generateKey = async () => {
