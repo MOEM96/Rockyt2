@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import Modal from './Modal';
 import { ApiDashboardTab } from './ApiDashboardTab';
 import { useAuth } from '../hooks/useAuth';
 import { ONBOARDING_PLANS } from '../constants/index';
@@ -28,6 +29,13 @@ const PINK   = '#FF21A6';
 /* Scoped per-user so different accounts on the same browser never  */
 /* inherit each other's onboarding/completion state.                */
 const FORM_CACHE_KEY_PREFIX = 'rockyt_form_done_v1_';
+const WORKSPACE_CACHE_KEY_PREFIX = 'rockyt_workspaces_v1_';
+
+interface WorkspaceItem {
+  id: string;
+  name: string;
+  isNewSignup: boolean;
+}
 
 /* ─── form data ──────────────────────────────────────────────────── */
 const PLATFORMS = [
@@ -122,7 +130,90 @@ const Dashboard: React.FC = () => {
     }
   }, [profile?.dashboard_form_completed, user?.id]);
 
-  /* ─── derived values ─────────────────────────────────────────────── */
+  // Multi-Workspace state
+  const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([]);
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>('');
+  const [editingWorkspaceId, setEditingWorkspaceId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState<string>('');
+  const [showUpgradeModal, setShowUpgradeModal] = useState<boolean>(false);
+
+  // Sync user-scoped workspace list from localStorage or initialize default
+  useEffect(() => {
+    if (!user?.id) {
+      setWorkspaces([]);
+      setActiveWorkspaceId('');
+      return;
+    }
+    const key = WORKSPACE_CACHE_KEY_PREFIX + user.id;
+    const saved = localStorage.getItem(key);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setWorkspaces(parsed);
+          setActiveWorkspaceId(parsed[0].id);
+          return;
+        }
+      } catch (e) {
+        console.error('Error reading cached workspaces:', e);
+      }
+    }
+    const defaultWs: WorkspaceItem = {
+      id: 'ws_default_' + user.id.slice(0, 8),
+      name: 'Workspace 1',
+      isNewSignup: false,
+    };
+    setWorkspaces([defaultWs]);
+    setActiveWorkspaceId(defaultWs.id);
+  }, [user?.id]);
+
+  const saveWorkspaces = (updated: WorkspaceItem[]) => {
+    setWorkspaces(updated);
+    if (user?.id) {
+      localStorage.setItem(WORKSPACE_CACHE_KEY_PREFIX + user.id, JSON.stringify(updated));
+    }
+  };
+
+  const handleAddWorkspace = () => {
+    const isPaidActive = profile?.subscription_status === 'active';
+    if (!isPaidActive) {
+      setShowUpgradeModal(true);
+      return;
+    }
+    const newWs: WorkspaceItem = {
+      id: 'ws_' + Date.now(),
+      name: `Workspace ${workspaces.length + 1}`,
+      isNewSignup: true,
+    };
+    const updated = [...workspaces, newWs];
+    saveWorkspaces(updated);
+    setActiveWorkspaceId(newWs.id);
+  };
+
+  const handleStartRename = (ws: WorkspaceItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingWorkspaceId(ws.id);
+    setEditingName(ws.name);
+  };
+
+  const handleSaveRename = (id: string) => {
+    const trimmed = editingName.trim();
+    if (trimmed) {
+      const updated = workspaces.map(w => w.id === id ? { ...w, name: trimmed } : w);
+      saveWorkspaces(updated);
+    }
+    setEditingWorkspaceId(null);
+  };
+
+  const handleCloseWorkspace = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (workspaces.length <= 1) return;
+    const updated = workspaces.filter(w => w.id !== id);
+    saveWorkspaces(updated);
+    if (activeWorkspaceId === id) {
+      setActiveWorkspaceId(updated[updated.length - 1].id);
+    }
+  };
   const hasAccess = isAccessGranted();
 
   // Form is considered complete if Supabase says so OR optimistic local flag
@@ -183,8 +274,10 @@ const Dashboard: React.FC = () => {
     signupFrameRef.current = false;
   }
 
+  const activeWorkspace = workspaces.find(w => w.id === activeWorkspaceId) || workspaces[0];
+
   const dashboardSrc = (() => {
-    if (signupFrameRef.current) {
+    if (signupFrameRef.current || (activeWorkspace && activeWorkspace.isNewSignup)) {
       const base = workspaceBase;
       if (!base) return '';
       // If the base URL already has ref_id in it, use it exactly as is
@@ -483,14 +576,98 @@ const Dashboard: React.FC = () => {
       {/* ═══ MAIN ════════════════════════════════════════════════════════ */}
       <main className="flex-grow flex flex-col overflow-hidden" style={{ minWidth: 0 }}>
 
-        {/* Top bar */}
-        <div
-          className="h-14 flex items-center px-6 shrink-0"
-          style={{ background: BG, borderBottom: `1px solid ${BORDER}` }}
-        >
-          <h1 className="text-sm font-semibold" style={{ color: TXT }}>
-            {activeTab === 'dashboard' ? 'Overview' : activeTab === 'billing' ? 'Subscription' : activeTab === 'apis' ? 'API Management' : 'Support'}
-          </h1>
+        {/* Browser Top Bar with Workspaces & Tabs */}
+        <div className="h-12 flex items-center justify-between px-3 shrink-0 bg-[#121319] border-b border-white/10 select-none">
+          {/* Left: Workspace Tabs */}
+          <div className="flex items-center gap-1.5 overflow-x-auto hide-scrollbar max-w-[75%]">
+            {workspaces.map(ws => {
+              const isActive = activeWorkspaceId === ws.id;
+              const isEditing = editingWorkspaceId === ws.id;
+
+              return (
+                <div
+                  key={ws.id}
+                  onClick={() => setActiveWorkspaceId(ws.id)}
+                  className={`group relative flex items-center gap-2 px-3 py-1.5 rounded-t-lg font-mono text-xs cursor-pointer transition-all border-t border-x ${isActive ? 'bg-[#0B0C10] text-white border-t-blue-500 border-x-white/10 font-bold shadow-xs' : 'bg-white/5 text-gray-400 hover:text-gray-200 border-transparent hover:bg-white/10'}`}
+                >
+                  <iconify-icon icon="solar:folder-bold" class={isActive ? "text-blue-400 text-sm shrink-0" : "text-gray-500 text-sm shrink-0"}></iconify-icon>
+
+                  {isEditing ? (
+                    <input
+                      type="text"
+                      autoFocus
+                      value={editingName}
+                      onChange={(e) => setEditingName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSaveRename(ws.id);
+                        if (e.key === 'Escape') setEditingWorkspaceId(null);
+                      }}
+                      onBlur={() => handleSaveRename(ws.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="px-1.5 py-0.5 rounded bg-black/80 text-white font-mono text-xs border border-blue-500 focus:outline-none w-28"
+                    />
+                  ) : (
+                    <span className="truncate max-w-[110px]" onDoubleClick={(e) => handleStartRename(ws, e)}>
+                      {ws.name}
+                    </span>
+                  )}
+
+                  {!isEditing && (
+                    <button
+                      onClick={(e) => handleStartRename(ws, e)}
+                      className="opacity-0 group-hover:opacity-100 hover:text-white transition-opacity p-0.5"
+                      title="Rename Workspace"
+                    >
+                      <iconify-icon icon="solar:pen-bold" class="text-[10px]"></iconify-icon>
+                    </button>
+                  )}
+
+                  {workspaces.length > 1 && (
+                    <button
+                      onClick={(e) => handleCloseWorkspace(ws.id, e)}
+                      className="opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity p-0.5 ml-0.5"
+                      title="Close Workspace"
+                    >
+                      &times;
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* Add Workspace Button */}
+            <button
+              onClick={handleAddWorkspace}
+              className="p-1.5 rounded-md text-gray-400 hover:text-white hover:bg-white/10 transition-colors flex items-center justify-center shrink-0 ml-1"
+              title="Add New Workspace (Paid Active Subscription Required)"
+            >
+              <iconify-icon icon="solar:add-square-bold" class="text-base text-blue-400"></iconify-icon>
+            </button>
+          </div>
+
+          {/* Right: Plan Status & Quick Links */}
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-white/5 border border-white/10 text-gray-300">
+              {profile?.plan || 'Free Plan'}
+            </span>
+            {profile?.subscription_status !== 'active' && (
+              <button
+                onClick={() => setActiveTab('billing')}
+                className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-yellow-400 text-black hover:bg-yellow-300 transition-colors"
+              >
+                UPGRADE
+              </button>
+            )}
+            <a
+              href="https://aiads.tawk.help/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hidden md:inline-flex items-center gap-1 text-xs font-mono text-gray-400 hover:text-white transition-colors ml-1"
+            >
+              <span>Docs</span>
+              <iconify-icon icon="solar:arrow-right-up-linear" class="text-xs"></iconify-icon>
+            </a>
+          </div>
         </div>
 
         {/* ── Iframe (full remaining height, shown after form is done) ── */}
@@ -907,6 +1084,39 @@ const Dashboard: React.FC = () => {
           </div>
         )}
       </main>
+
+      {/* ═══ UPGRADE REQUIRED MODAL FOR WORKSPACE CREATION ═══ */}
+      {showUpgradeModal && (
+        <Modal isOpen={true} onClose={() => setShowUpgradeModal(false)} size="md">
+          <div className="p-6 font-sans text-gray-200 text-left space-y-4">
+            <div className="flex items-center gap-2 text-yellow-400 font-mono font-bold text-xs uppercase tracking-wider">
+              <iconify-icon icon="solar:shield-warning-bold" class="text-lg"></iconify-icon>
+              <span>Subscription Required</span>
+            </div>
+            <h3 className="text-xl font-bold text-white tracking-tight">Create Additional Workspace</h3>
+            <p className="text-sm text-gray-400 leading-relaxed">
+              Creating additional workspaces requires an active paid subscription. Upgrade your plan to Growth or Scale to unlock multi-workspace management.
+            </p>
+            <div className="pt-3 flex gap-3">
+              <button
+                onClick={() => {
+                  setShowUpgradeModal(false);
+                  setActiveTab('billing');
+                }}
+                className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-mono font-bold rounded-lg text-xs transition-colors"
+              >
+                Upgrade Plan Now
+              </button>
+              <button
+                onClick={() => setShowUpgradeModal(false)}
+                className="px-4 py-2.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white font-mono font-semibold rounded-lg text-xs transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };
