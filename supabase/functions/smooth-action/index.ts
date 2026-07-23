@@ -170,11 +170,11 @@ serve(async (req: Request) => {
 
     const productId = data.product_id || data.product_cart?.[0]?.product_id || data.items?.[0]?.product_id
     let planName = null
-    let maxAccounts = 5
+    let maxAccounts = 1
 
     if (productId === 'pdt_0NWDjeAeatQKryEvRe4eb') {
       planName = 'Growth'
-      maxAccounts = 5
+      maxAccounts = 1
     } else if (productId === 'pdt_0NWDjzl0TS6LNFrVdFZYQ') {
       planName = 'Scale'
       maxAccounts = 10

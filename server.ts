@@ -81,6 +81,20 @@ async function startServer() {
     }
   }
 
+  function getMaxAccountsForUser(profile?: { plan?: string | null; max_accounts?: number | null; plan_product_id?: string | null } | null): number {
+    if (!profile) return 1;
+    const planName = (profile.plan || '').toLowerCase();
+    const productId = profile.plan_product_id;
+
+    if (planName.includes('scale') || productId === 'pdt_0NWDjzl0TS6LNFrVdFZYQ') {
+      return 10;
+    }
+    if (planName.includes('growth') || productId === 'pdt_0NWDjeAeatQKryEvRe4eb') {
+      return 1;
+    }
+    return 1;
+  }
+
   async function authenticate(req: any, res: any, next: any) {
     try {
       const token = req.headers.authorization?.replace('Bearer ', '');
@@ -93,7 +107,8 @@ async function startServer() {
         const mockKey = mockKeys.find(k => k.key_hash === hash && !k.revoked);
         if (!mockKey) return res.status(401).json({ error: 'Invalid API key' });
         req.zernioProfileId = 'mock-zernio-profile-id';
-        req.maxAccounts = 5;
+        req.plan = 'Growth';
+        req.maxAccounts = 1;
         req.connectedCount = mockConnectedCount;
         return next();
       }
@@ -116,7 +131,7 @@ async function startServer() {
       // Step 2: Fetch profile details for that user_id
       const { data: profileData, error: profileError } = await supabase
         .from('profiles')
-        .select('zernio_profile_id, max_accounts, connected_accounts_count')
+        .select('zernio_profile_id, max_accounts, connected_accounts_count, plan, plan_product_id')
         .eq('id', keyData.user_id)
         .single();
 
@@ -125,7 +140,8 @@ async function startServer() {
       }
 
       req.zernioProfileId = profileData.zernio_profile_id;
-      req.maxAccounts = profileData.max_accounts;
+      req.plan = profileData.plan;
+      req.maxAccounts = getMaxAccountsForUser(profileData);
       req.connectedCount = profileData.connected_accounts_count;
       next();
     } catch (err: any) {
@@ -333,7 +349,7 @@ async function startServer() {
 
   app.get('/api/v1/me/dashboard-usage', supabaseAuth, asyncHandler(async (req: any, res: any) => {
     if (supabase) {
-      let { data: profile } = await supabase.from('profiles').select('max_accounts, connected_accounts_count').eq('id', req.user.id).maybeSingle();
+      let { data: profile } = await supabase.from('profiles').select('max_accounts, connected_accounts_count, plan, plan_product_id').eq('id', req.user.id).maybeSingle();
       if (!profile) {
         console.log(`[profiles] Auto-creating missing profile for user: ${req.user.id} (${req.user.email})`);
         const { data: insertedProfile } = await supabase
@@ -342,19 +358,20 @@ async function startServer() {
             id: req.user.id,
             email: req.user.email,
             plan: 'Trial',
-            max_accounts: 5,
+            max_accounts: 1,
             connected_accounts_count: 0,
             is_trial: true,
             subscription_status: 'trialing'
           })
-          .select('max_accounts, connected_accounts_count')
+          .select('max_accounts, connected_accounts_count, plan, plan_product_id')
           .maybeSingle();
 
-        profile = insertedProfile || { max_accounts: 5, connected_accounts_count: 0 };
+        profile = insertedProfile || { plan: 'Trial', max_accounts: 1, connected_accounts_count: 0 };
       }
-      res.json({ connectedAccounts: profile.connected_accounts_count ?? 0, maxAccounts: profile.max_accounts ?? 5 });
+      const maxAccounts = getMaxAccountsForUser(profile);
+      res.json({ connectedAccounts: profile.connected_accounts_count ?? 0, maxAccounts });
     } else {
-      res.json({ connectedAccounts: mockConnectedCount, maxAccounts: 5 });
+      res.json({ connectedAccounts: mockConnectedCount, maxAccounts: 1 });
     }
   }));
   // Secure Dodo Payments Checkout Endpoint
@@ -604,7 +621,7 @@ async function startServer() {
           eventType === 'payment.failed';
 
         let planName = 'Growth';
-        let maxAccounts = 5;
+        let maxAccounts = 1;
         if (productId === 'pdt_0NWDjzl0TS6LNFrVdFZYQ') {
           planName = 'Scale';
           maxAccounts = 10;

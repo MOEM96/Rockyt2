@@ -13,7 +13,7 @@ const PricingPage: React.FC<DemoBookingProps> = ({ onBookDemo, onGetStarted }) =
             price: 49,
             description: "Essential scaling for growing brands.",
             features: [
-                { text: "1 Brand/Workspace", icon: "solar:folder-bold" },
+                { text: "1 Connected Account / Workspace", icon: "solar:folder-bold" },
                 { text: "1 Ad Platform (Meta)", icon: "solar:layers-minimalistic-bold" },
                 { text: "Creative Hub Access (AI Images, Reels, UGC)", icon: "solar:magic-stick-3-bold" },
                 { text: "Template Library (1000+ Winning Ads)", icon: "solar:library-bold" },
@@ -33,7 +33,7 @@ const PricingPage: React.FC<DemoBookingProps> = ({ onBookDemo, onGetStarted }) =
             description: "Advanced automation for high-volume scaling.",
             features: [
                 { text: "Everything in Growth +", icon: "solar:star-bold", highlight: true },
-                { text: "Up to 10 Brands/Workspaces", icon: "solar:folder-with-files-bold" },
+                { text: "Up to 10 Connected Accounts", icon: "solar:folder-with-files-bold" },
                 { text: "All 11+ Ad Platforms (Meta, TikTok, etc.)", icon: "solar:layers-bold" },
                 { text: "Budget Optimizer (Platform & Campaign)", icon: "solar:card-transfer-bold" },
                 { text: "100K Events Server-Side Tracking", icon: "solar:server-path-bold", highlight: true },
