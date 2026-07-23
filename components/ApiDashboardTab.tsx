@@ -132,7 +132,7 @@ export const ApiDashboardTab: React.FC = () => {
     }
   };
 
-  const agentPromptText = "Get an API key from rockyt.io/api/v1, then follow rockyt.io/docs/quickstart to integrate Rockyt REST API into the codebase.";
+  const agentPromptText = "Sign up and get an API key with rockyt.io/auth.md, then follow rockyt.io/agent-quickstart.md to integrate Rockyt REST API into the codebase.";
 
   const copyAgentPrompt = () => {
     navigator.clipboard.writeText(agentPromptText);
@@ -294,7 +294,7 @@ Console.WriteLine($"Post {post.Id} created!");`
           </button>
 
           <a
-            href="https://aiads.tawk.help/"
+            href="/llms-full.txt"
             target="_blank"
             rel="noopener noreferrer"
             className="bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white border border-white/10 font-mono text-xs font-bold px-5 py-2.5 rounded-lg transition-colors inline-flex items-center gap-1.5"
@@ -375,7 +375,7 @@ Console.WriteLine($"Post {post.Id} created!");`
           <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs text-gray-400">
             <span>Pass <code className="text-white font-mono bg-white/5 px-1 py-0.5 rounded">Authorization: Bearer rkt_live_...</code> on every request</span>
             <a
-              href="https://aiads.tawk.help/"
+              href="/llms-full.txt"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 font-mono text-xs text-blue-400 hover:underline"
@@ -640,7 +640,7 @@ Console.WriteLine($"Post {post.Id} created!");`
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <a
-            href="https://aiads.tawk.help/"
+            href="/llms-full.txt"
             target="_blank"
             rel="noopener noreferrer"
             className="group rounded-xl p-4 bg-[#121319] border border-white/10 hover:border-blue-500/50 transition-all flex items-start justify-between"
@@ -656,7 +656,7 @@ Console.WriteLine($"Post {post.Id} created!");`
           </a>
 
           <a
-            href="https://aiads.tawk.help/"
+            href="/llms-full.txt"
             target="_blank"
             rel="noopener noreferrer"
             className="group rounded-xl p-4 bg-[#121319] border border-white/10 hover:border-blue-500/50 transition-all flex items-start justify-between"

@@ -659,7 +659,7 @@ const Dashboard: React.FC = () => {
               </button>
             )}
             <a
-              href="https://aiads.tawk.help/"
+              href="/llms-full.txt"
               target="_blank"
               rel="noopener noreferrer"
               className="hidden md:inline-flex items-center gap-1 text-xs font-mono text-gray-400 hover:text-white transition-colors ml-1"
