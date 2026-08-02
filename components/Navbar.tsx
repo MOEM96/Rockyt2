@@ -5,9 +5,10 @@ interface NavbarProps {
   onNavigateHome?: () => void;
   onOpenAgentSetup?: () => void;
   onNavigateToPath?: (path: string) => void;
+  userSession?: any;
 }
 
-const Navbar: React.FC<NavbarProps> = ({ onNavigateHome, onOpenAgentSetup, onNavigateToPath }) => {
+const Navbar: React.FC<NavbarProps> = ({ onNavigateHome, onOpenAgentSetup, onNavigateToPath, userSession }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileSubmenu, setMobileSubmenu] = useState<string | null>(null);
 
@@ -242,14 +243,16 @@ const Navbar: React.FC<NavbarProps> = ({ onNavigateHome, onOpenAgentSetup, onNav
             [04] PRICING
           </a>
 
-          {/* TAB 05: DASHBOARD */}
-          <a 
-            href="/dashboard" 
-            onClick={(e) => handleRouteClick(e, '/dashboard')}
-            className="border border-brand/50 bg-brand/10 text-brand px-3.5 py-1.5 font-mono text-[11px] hover:bg-brand hover:text-white transition-colors rounded-sm font-bold flex items-center gap-1 shadow-glow"
-          >
-            [05] DASHBOARD
-          </a>
+          {/* TAB 05: DASHBOARD (Only visible for signed-in users) */}
+          {!!userSession && (
+            <a 
+              href="/dashboard" 
+              onClick={(e) => handleRouteClick(e, '/dashboard')}
+              className="border border-brand/50 bg-brand/10 text-brand px-3.5 py-1.5 font-mono text-[11px] hover:bg-brand hover:text-white transition-colors rounded-sm font-bold flex items-center gap-1 shadow-glow"
+            >
+              [05] DASHBOARD
+            </a>
+          )}
 
           {/* CTA BUTTON */}
           <button
@@ -354,6 +357,17 @@ const Navbar: React.FC<NavbarProps> = ({ onNavigateHome, onOpenAgentSetup, onNav
           >
             [04] PRICING // DEVELOPER TIERS
           </a>
+
+          {/* MOBILE DASHBOARD (Only visible for signed-in users) */}
+          {!!userSession && (
+            <a 
+              href="/dashboard" 
+              onClick={(e) => handleRouteClick(e, '/dashboard')}
+              className="p-2 border border-brand/50 bg-brand/10 text-brand hover:bg-brand hover:text-white transition-colors font-bold"
+            >
+              [05] DASHBOARD
+            </a>
+          )}
 
           {/* MOBILE CTA */}
           <button

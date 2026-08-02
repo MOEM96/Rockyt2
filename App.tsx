@@ -13,6 +13,8 @@ import Reviews from './components/Reviews';
 import Pricing from './components/Pricing';
 import Footer from './components/Footer';
 
+import { supabase } from './lib/supabaseClient';
+
 const Onboarding = lazy(() => import('./components/Onboarding'));
 const PlatformPage = lazy(() => import('./components/PlatformPage'));
 const DocsPage = lazy(() => import('./components/DocsPage'));
@@ -63,11 +65,17 @@ const App: React.FC = () => {
     localStorage.removeItem('rockyt_session_user');
     sessionStorage.clear();
     try {
+      if (supabase) {
+        await supabase.auth.signOut();
+      }
+    } catch (e) {}
+    try {
       await fetch('/api/auth/signout', { method: 'POST' });
     } catch (e) {}
+
+    setIsOnboarding(false);
     window.history.replaceState({}, document.title, '/');
     setCurrentPath('/');
-    setIsOnboarding(true);
   };
 
   useEffect(() => {
@@ -107,7 +115,6 @@ const App: React.FC = () => {
       } else if (window.location.pathname === '/dashboard') {
         window.history.replaceState({}, document.title, '/');
         setCurrentPath('/');
-        setIsOnboarding(true);
       }
 
       if (window.location.pathname === '/signin' || window.location.pathname === '/signup') {
@@ -156,6 +163,7 @@ const App: React.FC = () => {
           onNavigateHome={() => navigateTo('/')} 
           onOpenAgentSetup={startOnboarding} 
           onNavigateToPath={navigateTo}
+          userSession={userSession}
         />
       )}
 
@@ -168,9 +176,9 @@ const App: React.FC = () => {
             onSignOut={handleSignOut}
           />
         ) : (currentPath === '/dashboard' && !userSession) ? (
-          <Onboarding onCancel={() => navigateTo('/')} />
+          <Onboarding onCancel={() => navigateTo('/')} initialMode="signin" />
         ) : isOnboarding ? (
-          <Onboarding onCancel={cancelOnboarding} />
+          <Onboarding onCancel={cancelOnboarding} initialMode="signup" />
         ) : docsTab ? (
           <>
             <main className="relative z-10 w-full transition-opacity duration-500">
