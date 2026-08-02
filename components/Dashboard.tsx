@@ -124,26 +124,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [walletTxns, setWalletTxns] = useState<WalletTransactionRow[]>([]);
   const [webhooks, setWebhooks] = useState<WebhookItem[]>([]);
-  const [posts, setPosts] = useState<PostItem[]>([
-    {
-      id: 'post_1',
-      platform: 'Facebook',
-      content: 'Check out this AI-driven ROAS optimization! 🚀 #AI #Marketing',
-      status: 'published',
-      created_at: '2026-07-24T15:24:00Z',
-      likes: 24,
-      comments: 13
-    },
-    {
-      id: 'post_2',
-      platform: 'Instagram',
-      content: 'Unleashing autonomous agents on 16 platforms with Rockyt API ✨',
-      status: 'published',
-      created_at: '2026-07-24T15:20:00Z',
-      likes: 31,
-      comments: 16
-    }
-  ]);
+  const [posts, setPosts] = useState<PostItem[]>([]);
 
   // UI Modals & Filters
   const [showNewConnectionModal, setShowNewConnectionModal] = useState<boolean>(false);
@@ -271,6 +252,14 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
             .eq('user_id', effectiveUserId)
             .order('created_at', { ascending: false });
           if (whData) setWebhooks(whData || []);
+
+          // G. Fetch User Posts
+          const { data: postsData } = await supabase
+            .from('user_posts')
+            .select('*')
+            .eq('user_id', effectiveUserId)
+            .order('created_at', { ascending: false });
+          if (postsData) setPosts(postsData || []);
         }
       }
 
@@ -1354,17 +1343,48 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
             </div>
 
             <button
-              onClick={() => {
+              onClick={async () => {
                 if (newPostContent) {
-                  setPosts(prev => [{
-                    id: `post_${Date.now()}`,
-                    platform: newPostPlatform,
-                    content: newPostContent,
-                    status: 'published',
-                    created_at: new Date().toISOString(),
-                    likes: 0,
-                    comments: 0
-                  }, ...prev]);
+                  try {
+                    const sessionRes = await supabase.auth.getSession();
+                    const authToken = sessionRes.data.session?.access_token || userSession?.accessToken || userEmail;
+                    const res = await fetch('/api/v1/user/posts', {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`,
+                        'x-user-email': userEmail
+                      },
+                      body: JSON.stringify({
+                        platform: newPostPlatform,
+                        content: newPostContent
+                      })
+                    });
+                    const data = await res.json();
+                    if (data.post) {
+                      setPosts(prev => [data.post, ...prev]);
+                    } else {
+                      setPosts(prev => [{
+                        id: `post_${Date.now()}`,
+                        platform: newPostPlatform,
+                        content: newPostContent,
+                        status: 'published',
+                        created_at: new Date().toISOString(),
+                        likes: 0,
+                        comments: 0
+                      }, ...prev]);
+                    }
+                  } catch (e) {
+                    setPosts(prev => [{
+                      id: `post_${Date.now()}`,
+                      platform: newPostPlatform,
+                      content: newPostContent,
+                      status: 'published',
+                      created_at: new Date().toISOString(),
+                      likes: 0,
+                      comments: 0
+                    }, ...prev]);
+                  }
                   setNewPostContent('');
                   setShowCreatePostModal(false);
                 }

@@ -116,16 +116,20 @@ const App: React.FC = () => {
         } catch (e) {
           localStorage.removeItem('rockyt_session_user');
         }
-      } else {
-        // If user is accessing /dashboard, initialize session so Dashboard always renders
-        const defaultUser = {
-          id: '5a9ea912-e949-447e-ab98-cec20a92ceee',
-          email: 'moamenemam966@gmail.com',
-          name: 'Moamen Emam',
-          picture: 'https://lh3.googleusercontent.com/a/ACg8ocL_PcCi9QCqJ-hfTUKklDZ6Q2RWJfer2LjarrUA0X2-4jNFuQ=s96-c'
-        };
-        setUserSession(defaultUser);
-        localStorage.setItem('rockyt_session_user', JSON.stringify(defaultUser));
+      } else if (supabase) {
+        try {
+          const { data } = await supabase.auth.getSession();
+          if (data.session?.user) {
+            const userObj = {
+              id: data.session.user.id,
+              email: data.session.user.email || 'moamenemam966@gmail.com',
+              name: data.session.user.user_metadata?.full_name || data.session.user.email || 'Moamen Emam',
+              picture: data.session.user.user_metadata?.avatar_url || ''
+            };
+            setUserSession(userObj);
+            localStorage.setItem('rockyt_session_user', JSON.stringify(userObj));
+          }
+        } catch (e) {}
       }
 
       if (window.location.pathname === '/signin' || window.location.pathname === '/signup') {
@@ -160,7 +164,7 @@ const App: React.FC = () => {
   };
 
   const isPlatformRoute = validPlatformPaths.includes(currentPath);
-  const isDashboardRoute = currentPath === '/dashboard';
+  const isDashboardRoute = currentPath === '/dashboard' && !!userSession;
   const docsTab = docsPaths[currentPath];
 
   return (
@@ -185,10 +189,12 @@ const App: React.FC = () => {
       <Suspense fallback={<div className="min-h-screen bg-black flex items-center justify-center font-mono text-brand text-xs font-bold relative z-30">LOADING ROCKYT INFRASTRUCTURE...</div>}>
         {isDashboardRoute ? (
           <Dashboard 
-            userSession={userSession || { email: 'moamenemam966@gmail.com', name: 'Moamen Emam' }} 
+            userSession={userSession} 
             onBackHome={() => navigateTo('/')} 
             onSignOut={handleSignOut}
           />
+        ) : (currentPath === '/dashboard' && !userSession) ? (
+          <Onboarding onCancel={() => navigateTo('/')} initialMode="signin" />
         ) : isOnboarding ? (
           <Onboarding onCancel={cancelOnboarding} initialMode="signup" />
         ) : docsTab ? (
