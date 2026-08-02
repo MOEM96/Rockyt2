@@ -1013,11 +1013,12 @@ async function startServer() {
           const { data: dbAccs } = await supabase
             .from('connected_accounts')
             .select('*')
-            .eq('user_id', req.user.id);
+            .eq('user_id', req.user.id)
+            .eq('status', 'connected');
 
           if (dbAccs && dbAccs.length > 0) {
             dbAccs.forEach((a: any) => {
-              if (!accounts.some((existing: any) => existing.id === a.id)) {
+              if (!accounts.some((existing: any) => existing.id === a.id || existing.platform.toLowerCase() === a.platform.toLowerCase())) {
                 accounts.push({
                   id: a.id,
                   platform: a.platform ? (a.platform.charAt(0).toUpperCase() + a.platform.slice(1)) : 'Facebook',
@@ -1123,52 +1124,76 @@ async function startServer() {
   }));
 
   // ---------------------------------------------------------------------------
-  // Connected Accounts Toggle & Disconnect Endpoints
+  // Connected Accounts Disconnect Helper
   // ---------------------------------------------------------------------------
-  app.post('/api/v1/accounts/toggle', supabaseAuth, asyncHandler(async (req: any, res: any) => {
-    const { id, platform, status } = req.body;
-    const userId = req.user?.id;
+  const disconnectSocialAccount = async (userId: string, accountId?: string, platform?: string) => {
+    const cleanPlatform = platform ? platform.trim().toLowerCase() : undefined;
+    const formattedPlatform = cleanPlatform ? cleanPlatform.charAt(0).toUpperCase() + cleanPlatform.slice(1) : undefined;
 
-    if (supabase && userId) {
+    // 1. Attempt Zernio API account deletion if accountId is provided
+    if (accountId && !accountId.startsWith('acc_')) {
       try {
-        if (id) {
-          const { data: targetAcc } = await supabase.from('connected_accounts').select('status').eq('id', id).single();
-          const nextStatus = status || (targetAcc?.status === 'connected' ? 'disconnected' : 'connected');
-          await supabase.from('connected_accounts').update({ status: nextStatus }).eq('id', id);
-          return res.json({ success: true, status: nextStatus });
-        } else if (platform) {
-          const formattedPlatform = platform.charAt(0).toUpperCase() + platform.slice(1);
-          const { data: targetAcc } = await supabase
-            .from('connected_accounts')
-            .select('id, status')
-            .eq('user_id', userId)
-            .eq('platform', formattedPlatform)
-            .maybeSingle();
-
-          if (targetAcc) {
-            const nextStatus = status || (targetAcc.status === 'connected' ? 'disconnected' : 'connected');
-            await supabase.from('connected_accounts').update({ status: nextStatus }).eq('id', targetAcc.id);
-            return res.json({ success: true, status: nextStatus });
-          }
-        }
+        const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+        await fetch(`https://zernio.com/api/v1/accounts/${encodeURIComponent(accountId)}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
       } catch (err: any) {
-        console.error('[POST /api/v1/accounts/toggle] Error:', err);
+        console.warn(`[disconnectSocialAccount] Zernio delete error for account ${accountId}:`, err.message);
       }
     }
+
+    // 2. Remove / disconnect from Supabase connected_accounts
+    if (supabase && userId) {
+      try {
+        if (accountId) {
+          await supabase.from('connected_accounts').delete().eq('id', accountId).eq('user_id', userId);
+        }
+        if (formattedPlatform) {
+          await supabase.from('connected_accounts').delete().eq('user_id', userId).eq('platform', formattedPlatform);
+        }
+        if (cleanPlatform) {
+          await supabase.from('connected_accounts').delete().eq('user_id', userId).eq('platform', cleanPlatform);
+        }
+
+        // Recalculate remaining active connected accounts count
+        const { data: remaining } = await supabase
+          .from('connected_accounts')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('status', 'connected');
+
+        const newCount = remaining ? remaining.length : 0;
+        await supabase
+          .from('profiles')
+          .update({ connected_accounts_count: newCount })
+          .eq('id', userId);
+      } catch (dbErr: any) {
+        console.error('[disconnectSocialAccount] Supabase delete error:', dbErr);
+      }
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Connected Accounts Toggle & Disconnect Endpoints
+  // ---------------------------------------------------------------------------
+  app.post(['/api/v1/accounts/toggle', '/api/v1/accounts/disconnect'], supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { id, platform, status } = req.body;
+    const userId = req.user?.id || '00000000-0000-0000-0000-000000000000';
+
+    if (status === 'disconnected' || !status) {
+      await disconnectSocialAccount(userId, id, platform);
+      return res.json({ success: true, status: 'disconnected', message: 'Account disconnected successfully' });
+    }
+
     res.json({ success: true, status: status || 'connected' });
   }));
 
   app.delete(['/api/v1/accounts/:id', '/api/v1/accounts/disconnect'], supabaseAuth, asyncHandler(async (req: any, res: any) => {
     const targetId = req.params.id || req.body?.id;
-    const userId = req.user?.id;
+    const userId = req.user?.id || '00000000-0000-0000-0000-000000000000';
 
-    if (supabase && targetId && userId) {
-      try {
-        await supabase.from('connected_accounts').delete().eq('id', targetId).eq('user_id', userId);
-      } catch (err: any) {
-        console.error('[DELETE /api/v1/accounts] Error:', err);
-      }
-    }
+    await disconnectSocialAccount(userId, targetId, req.query?.platform as string || req.body?.platform);
     res.json({ success: true, message: 'Account disconnected successfully' });
   }));
 

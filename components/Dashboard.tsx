@@ -298,16 +298,15 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
       };
 
       if (existingAccount && existingAccount.status === 'connected') {
-        // Disconnect
-        const nextStatus = 'disconnected';
-        setAccounts(prev => prev.map(a => a.id === existingAccount.id ? { ...a, status: nextStatus } : a));
+        // Disconnect account from Zernio and DB
+        setAccounts(prev => prev.filter(a => a.id !== existingAccount.id && a.platform.toLowerCase() !== platformName.toLowerCase()));
 
         await fetch('/api/v1/accounts/toggle', {
           method: 'POST',
           headers,
-          body: JSON.stringify({ id: existingAccount.id, platform: platformName, status: nextStatus })
+          body: JSON.stringify({ id: existingAccount.id, platform: platformName, status: 'disconnected' })
         });
-        setCheckoutSuccessMsg(`${platformName} channel disconnected.`);
+        setCheckoutSuccessMsg(`${platformName} channel disconnected successfully.`);
       } else {
         // Connect via Zernio OAuth
         const res = await fetch('/api/v1/accounts/connect', {
