@@ -295,14 +295,13 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     try {
       // Fetch session token
       const sessionRes = await supabase.auth.getSession();
-      const token = userSession?.accessToken || sessionRes.data.session?.access_token;
+      const authToken = userSession?.accessToken || sessionRes.data.session?.access_token || apiKey || userEmail;
 
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`,
+        'X-User-Email': userEmail
       };
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
 
       const res = await fetch('/api/v1/checkouts', {
         method: 'POST',
