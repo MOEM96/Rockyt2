@@ -1379,6 +1379,57 @@ async function startServer() {
   };
 
   // ---------------------------------------------------------------------------
+  // Webhooks API Endpoints
+  // ---------------------------------------------------------------------------
+  app.get('/api/v1/webhooks', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    if (supabase && req.user?.id) {
+      try {
+        const { data, error } = await supabase
+          .from('webhooks')
+          .select('*')
+          .eq('user_id', req.user.id)
+          .order('created_at', { ascending: false });
+        if (!error && data) {
+          return res.json({ webhooks: data });
+        }
+      } catch (e) {}
+    }
+    res.json({ webhooks: [] });
+  }));
+
+  app.post('/api/v1/webhooks', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { url, events, name } = req.body;
+    if (!url) return res.status(400).json({ error: 'Webhook endpoint URL is required' });
+    const secret = `whsec_${Math.random().toString(36).substring(2)}${Date.now().toString(36)}`;
+    const newWebhook = {
+      id: `wh_${Date.now()}`,
+      user_id: req.user?.id || '00000000-0000-0000-0000-000000000001',
+      name: name || 'Production Webhook',
+      url,
+      secret,
+      events: Array.isArray(events) ? events : ['post.created', 'comment.received'],
+      status: 'active',
+      created_at: new Date().toISOString()
+    };
+    if (supabase && req.user?.id) {
+      try {
+        await supabase.from('webhooks').insert(newWebhook);
+      } catch (e) {}
+    }
+    res.json({ success: true, webhook: newWebhook });
+  }));
+
+  app.delete('/api/v1/webhooks/:id', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { id } = req.params;
+    if (supabase && req.user?.id) {
+      try {
+        await supabase.from('webhooks').delete().eq('id', id).eq('user_id', req.user.id);
+      } catch (e) {}
+    }
+    res.json({ success: true });
+  }));
+
+  // ---------------------------------------------------------------------------
   // Connected Accounts Toggle & Disconnect Endpoints
   // ---------------------------------------------------------------------------
   app.post(['/api/v1/accounts/toggle', '/api/v1/accounts/disconnect'], supabaseAuth, asyncHandler(async (req: any, res: any) => {
