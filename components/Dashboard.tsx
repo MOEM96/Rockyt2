@@ -5,6 +5,7 @@ import {
   CheckCircle2, AlertTriangle, ArrowUpRight, Sparkles, Loader2 
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
+import OverlayCheckoutModal from './OverlayCheckoutModal';
 
 interface DashboardProps {
   userSession?: {
@@ -107,6 +108,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const [isCheckoutLoading, setIsCheckoutLoading] = useState<boolean>(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [checkoutSuccessMsg, setCheckoutSuccessMsg] = useState<string | null>(null);
+  const [overlayCheckoutUrl, setOverlayCheckoutUrl] = useState<string | null>(null);
 
   // User Profile metadata
   const userEmail = userSession?.email || profile?.email || 'moamenemam966@gmail.com';
@@ -319,8 +321,8 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
       }
 
       if (responseData.checkout_url) {
-        // Secure redirect to Dodo Payments hosted checkout
-        window.location.href = responseData.checkout_url;
+        // Open Dodo Payments Overlay Checkout modal directly on the website
+        setOverlayCheckoutUrl(responseData.checkout_url);
       } else {
         throw new Error('No checkout URL received from Dodo Payments backend');
       }
@@ -878,14 +880,12 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                           </td>
                           <td className="py-3">
                             {sess.checkout_url && sess.status === 'pending' ? (
-                              <a
-                                href={sess.checkout_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
+                              <button
+                                onClick={() => setOverlayCheckoutUrl(sess.checkout_url)}
                                 className="text-brand hover:underline flex items-center gap-1 font-bold text-[11px]"
                               >
                                 Resume <ExternalLink size={12} />
-                              </a>
+                              </button>
                             ) : (
                               <span className="text-white/40 text-[10px]">-</span>
                             )}
@@ -948,6 +948,13 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
           </div>
         )}
       </main>
+
+      {/* Dodo Payments Overlay Checkout Modal */}
+      <OverlayCheckoutModal 
+        checkoutUrl={overlayCheckoutUrl}
+        onClose={() => setOverlayCheckoutUrl(null)}
+        onSuccess={fetchLiveData}
+      />
     </div>
   );
 };
