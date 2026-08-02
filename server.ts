@@ -1130,26 +1130,82 @@ async function startServer() {
   }));
 
   // ---------------------------------------------------------------------------
-  // Connected Accounts Creation & Connect Initiator Endpoint
+  // Connected Accounts Creation & OAuth Connect Initiator Endpoint
   // ---------------------------------------------------------------------------
   app.post(['/api/v1/accounts/connect', '/api/v1/accounts'], supabaseAuth, asyncHandler(async (req: any, res: any) => {
     const { platform, redirectUrl } = req.body;
     if (!platform) {
-      return res.status(400).json({ error: 'Platform name is required (e.g. instagram, linkedin, x, whatsapp)' });
+      return res.status(400).json({ error: 'Platform name is required (e.g. instagram, linkedin, x, whatsapp, tiktok)' });
     }
 
     const cleanPlatform = String(platform).trim().toLowerCase();
     const formattedPlatform = cleanPlatform.charAt(0).toUpperCase() + cleanPlatform.slice(1);
+    
+    // Resolve user's Zernio profile ID
+    let zernioProfileId: string | null = req.zernioProfileId || null;
+    try {
+      if (req.user) {
+        const profile = await ensureUserProfile(req.user);
+        if (profile?.zernio_profile_id) {
+          zernioProfileId = profile.zernio_profile_id;
+        }
+      }
+    } catch (profErr: any) {
+      console.warn('[POST /api/v1/accounts/connect] ensureUserProfile warning:', profErr.message);
+    }
 
     const appBaseUrl = process.env.APP_BASE_URL || (req.headers.origin || `https://${req.headers.host}`);
-    const rockytConnectUrl = `${appBaseUrl}/connect/${encodeURIComponent(cleanPlatform)}${redirectUrl ? `?redirectUrl=${encodeURIComponent(redirectUrl)}` : ''}`;
+    const clientRedirectUrl = redirectUrl || `${appBaseUrl}/dashboard?account_connected=true&platform=${encodeURIComponent(cleanPlatform)}`;
+    const callbackUrl = `${appBaseUrl}/oauth/callback?platform=${encodeURIComponent(cleanPlatform)}&returnTo=${encodeURIComponent(clientRedirectUrl)}`;
 
-    // Return the Rockyt Branded Connect Route
+    let targetOAuthUrl: string | null = null;
+
+    // 1. Attempt Zernio SDK connect URL generation
+    try {
+      if (zernioProfileId && typeof zernio?.connect?.getConnectUrl === 'function') {
+        const connectRes = await zernio.connect.getConnectUrl({
+          path: { platform: cleanPlatform as any },
+          query: {
+            profileId: zernioProfileId,
+            redirect_url: callbackUrl
+          }
+        });
+        targetOAuthUrl = (connectRes?.data as any)?.authUrl || (connectRes?.data as any)?.url || null;
+      }
+    } catch (err: any) {
+      console.warn(`[POST /api/v1/accounts/connect] Zernio SDK connect warning for ${cleanPlatform}:`, err.message);
+    }
+
+    // 2. Direct HTTP fallback to Zernio API if SDK returned null
+    if (!targetOAuthUrl && zernioProfileId) {
+      try {
+        const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+        const zernioRes = await fetch(`https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId)}&redirectUrl=${encodeURIComponent(callbackUrl)}`, {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`
+          }
+        });
+        if (zernioRes.ok) {
+          const zernioData = await zernioRes.json();
+          targetOAuthUrl = zernioData.authUrl || zernioData.url || null;
+        }
+      } catch (httpErr: any) {
+        console.warn(`[POST /api/v1/accounts/connect] Zernio HTTP fetch warning for ${cleanPlatform}:`, httpErr.message);
+      }
+    }
+
+    // 3. Fallback URL
+    if (!targetOAuthUrl) {
+      targetOAuthUrl = `https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId || 'default')}&redirectUrl=${encodeURIComponent(callbackUrl)}`;
+    }
+
+    // Return the actual targetOAuthUrl to client so browser navigates directly to OAuth consent screen
     res.json({
       success: true,
-      connectUrl: rockytConnectUrl,
-      authUrl: rockytConnectUrl,
-      platform: formattedPlatform
+      authUrl: targetOAuthUrl,
+      connectUrl: targetOAuthUrl,
+      platform: formattedPlatform,
+      profileId: zernioProfileId
     });
   }));
 
