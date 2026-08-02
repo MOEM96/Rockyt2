@@ -20,19 +20,9 @@ async function startServer() {
   }));
 
   app.use(cors({
-    origin: ['https://rockyt.io', 'https://www.rockyt.io', 'http://localhost:3000'],
+    origin: ['https://rockyt.io', 'http://localhost:3000'],
     credentials: true,
   }));
-
-  // ─── Redirect www → non-www (fixes ERR_CERT_DATE_INVALID on www.rockyt.io) ─
-  app.use((req, res, next) => {
-    const host = req.hostname || req.headers.host || '';
-    if (host.startsWith('www.')) {
-      const nonWww = host.replace(/^www\./, '');
-      return res.redirect(301, `https://${nonWww}${req.originalUrl}`);
-    }
-    next();
-  });
 
   app.use(cookieParser());
 
