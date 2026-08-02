@@ -119,6 +119,7 @@ const App: React.FC = () => {
       } else {
         // If user is accessing /dashboard, initialize session so Dashboard always renders
         const defaultUser = {
+          id: '5a9ea912-e949-447e-ab98-cec20a92ceee',
           email: 'moamenemam966@gmail.com',
           name: 'Moamen Emam',
           picture: 'https://lh3.googleusercontent.com/a/ACg8ocL_PcCi9QCqJ-hfTUKklDZ6Q2RWJfer2LjarrUA0X2-4jNFuQ=s96-c'

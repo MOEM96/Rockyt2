@@ -261,11 +261,15 @@ async function startServer() {
     const userEmail = reqUser.email || reqUser.user_metadata?.email || `user_${reqUser.id.substring(0, 8)}@rockyt.io`;
 
     try {
-      let { data: profile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', reqUser.id)
-        .maybeSingle();
+      let profile = null;
+      if (reqUser.id) {
+        const { data: p1 } = await supabase.from('profiles').select('*').eq('id', reqUser.id).maybeSingle();
+        profile = p1;
+      }
+      if (!profile && userEmail) {
+        const { data: p2 } = await supabase.from('profiles').select('*').eq('email', userEmail).maybeSingle();
+        profile = p2;
+      }
 
       if (!profile) {
         console.log(`[ensureUserProfile] Creating profile row for user: ${reqUser.id} (${userEmail})`);

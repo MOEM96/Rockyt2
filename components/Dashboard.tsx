@@ -213,60 +213,73 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
         }
       } catch (e) {}
 
-      // B. Fetch Profile info & Wallet Balance
-      if (supabase && userId) {
-        const { data: profData } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', userId)
-          .maybeSingle();
+      // B. Fetch Profile info & Wallet Balance by ID or Email
+      if (supabase) {
+        let profData = null;
+        if (userId) {
+          const { data: p1 } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', userId)
+            .maybeSingle();
+          profData = p1;
+        }
+        if (!profData && userEmail) {
+          const { data: p2 } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('email', userEmail)
+            .maybeSingle();
+          profData = p2;
+        }
 
         if (profData) {
           setProfile(profData);
+          const effectiveUserId = profData.id;
+
+          // C. Fetch API Keys
+          const { data: keyData } = await supabase
+            .from('user_api_keys')
+            .select('*')
+            .eq('user_id', effectiveUserId)
+            .order('created_at', { ascending: false });
+          if (keyData) setApiKeys(keyData);
+
+          // D. Fetch API Logs
+          const { data: logData } = await supabase
+            .from('api_logs')
+            .select('*')
+            .eq('user_id', effectiveUserId)
+            .order('created_at', { ascending: false })
+            .limit(50);
+          if (logData && logData.length > 0) {
+            setLogs(logData);
+          }
+
+          // E. Fetch Wallet Transactions
+          const { data: txnData } = await supabase
+            .from('wallet_transactions')
+            .select('*')
+            .eq('user_id', effectiveUserId)
+            .order('created_at', { ascending: false });
+          if (txnData) setWalletTxns(txnData || []);
+
+          // F. Fetch Webhooks
+          const { data: whData } = await supabase
+            .from('webhooks')
+            .select('*')
+            .eq('user_id', effectiveUserId)
+            .order('created_at', { ascending: false });
+          if (whData) setWebhooks(whData || []);
         }
-
-        // C. Fetch API Keys
-        const { data: keyData } = await supabase
-          .from('user_api_keys')
-          .select('*')
-          .eq('user_id', userId)
-          .order('created_at', { ascending: false });
-        if (keyData) setApiKeys(keyData);
-
-        // D. Fetch API Logs
-        const { data: logData } = await supabase
-          .from('api_logs')
-          .select('*')
-          .eq('user_id', userId)
-          .order('created_at', { ascending: false })
-          .limit(50);
-        if (logData && logData.length > 0) {
-          setLogs(logData);
-        } else {
-          // Provide realistic logs if empty
-          setLogs([
-            { id: 'log_1', user_id: userId, activity: 'GET /api/v1/accounts', platform: 'System', status_code: 200, duration_ms: 45, created_at: new Date().toISOString() },
-            { id: 'log_2', user_id: userId, activity: 'POST /api/v1/posts/publish', platform: 'Instagram', status_code: 200, duration_ms: 320, created_at: new Date(Date.now() - 3600000).toISOString() },
-            { id: 'log_3', user_id: userId, activity: 'GET /api/v1/analytics', platform: 'LinkedIn', status_code: 200, duration_ms: 110, created_at: new Date(Date.now() - 7200000).toISOString() },
-            { id: 'log_4', user_id: userId, activity: 'POST /api/v1/connect/x', platform: 'Twitter / X', status_code: 402, duration_ms: 85, created_at: new Date(Date.now() - 14400000).toISOString() }
-          ]);
-        }
-
-        // E. Fetch Wallet Transactions
-        const { data: txnData } = await supabase
-          .from('wallet_transactions')
-          .select('*')
-          .eq('user_id', userId)
-          .order('created_at', { ascending: false });
-        if (txnData) setWalletTxns(txnData);
       }
 
-      // F. Fetch Webhooks
+      // G. Fetch Webhooks fallback
       try {
         const whRes = await fetch('/api/v1/webhooks', { headers });
         if (whRes.ok) {
           const whData = await whRes.json();
-          if (whData.webhooks) setWebhooks(whData.webhooks);
+          if (whData.webhooks && whData.webhooks.length > 0) setWebhooks(whData.webhooks);
         }
       } catch (e) {}
 
@@ -434,7 +447,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
         },
         body: JSON.stringify({
           url: newWebhookUrl,
-          name: newWebhookName || 'Production Endpoint',
+          name: newWebhookName || 'Production Webhook',
           events: ['post.created', 'comment.received', 'message.incoming']
         })
       });
@@ -472,7 +485,9 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     setTimeout(() => setCopiedKey(false), 2000);
   };
 
-  const walletBalance = profile?.wallet_balance ?? 11.60;
+  const walletBalance = profile?.wallet_balance !== undefined && profile?.wallet_balance !== null 
+    ? Number(profile.wallet_balance) 
+    : 0.00;
   const connectedCount = accounts.filter(a => a.status === 'connected').length;
 
   // Filtered Logs
