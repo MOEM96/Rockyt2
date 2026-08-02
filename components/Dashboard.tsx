@@ -256,33 +256,45 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
 
   const toggleAccountStatus = async (platformName: string, existingAccount?: ConnectedAccount) => {
     try {
+      const sessionRes = await supabase.auth.getSession();
+      const authToken = userSession?.accessToken || sessionRes.data.session?.access_token || apiKey || userEmail;
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`,
+        'X-User-Email': userEmail
+      };
+
       if (existingAccount) {
         const nextStatus = existingAccount.status === 'connected' ? 'disconnected' : 'connected';
-        await supabase
-          .from('connected_accounts')
-          .update({ status: nextStatus })
-          .eq('id', existingAccount.id);
-
         setAccounts(prev => prev.map(a => a.id === existingAccount.id ? { ...a, status: nextStatus } : a));
+
+        await fetch('/api/v1/accounts/toggle', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ id: existingAccount.id, platform: platformName, status: nextStatus })
+        });
       } else {
-        const newAcc = {
-          user_id: userId || '00000000-0000-0000-0000-000000000000',
-          platform: platformName,
-          username: `@${platformName.toLowerCase().replace(/[^a-z0-9]/g, '')}_user`,
-          profile_name: `${platformName} Profile`,
-          status: 'connected' as const
-        };
+        const res = await fetch('/api/v1/accounts/connect', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            platform: platformName,
+            username: `@${platformName.toLowerCase().replace(/[^a-z0-9]/g, '')}_user`,
+            profileName: `${platformName} Profile`
+          })
+        });
 
-        const { data: inserted } = await supabase
-          .from('connected_accounts')
-          .insert([newAcc])
-          .select()
-          .single();
+        const data = await res.json();
+        if (data.authUrl) {
+          window.open(data.authUrl, '_blank');
+        }
 
-        if (inserted) {
-          setAccounts(prev => [inserted as ConnectedAccount, ...prev]);
+        if (data.account) {
+          setAccounts(prev => [data.account as ConnectedAccount, ...prev.filter(a => a.platform !== data.account.platform)]);
         }
       }
+      fetchLiveData();
     } catch (err) {
       console.error('Error toggling account:', err);
     }

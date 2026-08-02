@@ -141,6 +141,54 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ['commentId', 'replyMessage'],
         },
       },
+      {
+        name: 'rockyt_list_accounts',
+        description: 'List all connected social media and messaging accounts (Instagram, LinkedIn, X/Twitter, WhatsApp, TikTok, YouTube, etc.).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            platform: {
+              type: 'string',
+              description: 'Optional platform filter (e.g. instagram, linkedin, x, whatsapp)',
+            },
+          },
+        },
+      },
+      {
+        name: 'rockyt_connect_account',
+        description: 'Connect a new social media or messaging account (Instagram, LinkedIn, X/Twitter, WhatsApp, TikTok, etc.) and return OAuth link or connection object.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            platform: {
+              type: 'string',
+              description: 'Target platform name (e.g. instagram, linkedin, x, whatsapp, tiktok)',
+            },
+            username: {
+              type: 'string',
+              description: 'Optional username handle or account identifier',
+            },
+          },
+          required: ['platform'],
+        },
+      },
+      {
+        name: 'rockyt_disconnect_account',
+        description: 'Disconnect or toggle status for a connected social media account.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            accountId: {
+              type: 'string',
+              description: 'ID of the connected account to disconnect',
+            },
+            platform: {
+              type: 'string',
+              description: 'Platform name to disconnect if accountId is not provided',
+            },
+          },
+        },
+      },
     ],
   };
 });
@@ -235,6 +283,38 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { commentId, replyMessage } = args as any;
       const res = await callRockytApi(`/api/v1/comments/${encodeURIComponent(commentId)}/reply`, 'POST', {
         message: replyMessage,
+      });
+      return {
+        content: [{ type: 'text', text: JSON.stringify(res, null, 2) }],
+      };
+    }
+
+    if (name === 'rockyt_list_accounts') {
+      const { platform } = (args || {}) as any;
+      const endpoint = platform ? `/api/v1/accounts?platform=${encodeURIComponent(platform)}` : '/api/v1/accounts';
+      const res = await callRockytApi(endpoint);
+      return {
+        content: [{ type: 'text', text: JSON.stringify(res, null, 2) }],
+      };
+    }
+
+    if (name === 'rockyt_connect_account') {
+      const { platform, username } = args as any;
+      const res = await callRockytApi('/api/v1/accounts/connect', 'POST', {
+        platform,
+        username,
+      });
+      return {
+        content: [{ type: 'text', text: JSON.stringify(res, null, 2) }],
+      };
+    }
+
+    if (name === 'rockyt_disconnect_account') {
+      const { accountId, platform } = (args || {}) as any;
+      const res = await callRockytApi('/api/v1/accounts/toggle', 'POST', {
+        id: accountId,
+        platform,
+        status: 'disconnected',
       });
       return {
         content: [{ type: 'text', text: JSON.stringify(res, null, 2) }],
