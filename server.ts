@@ -1048,125 +1048,77 @@ async function startServer() {
   // Connected Accounts Creation & OAuth Connection Endpoint
   // ---------------------------------------------------------------------------
   app.post(['/api/v1/accounts/connect', '/api/v1/accounts'], supabaseAuth, asyncHandler(async (req: any, res: any) => {
-    const { platform, username, profileName, redirectUrl } = req.body;
+    const { platform, redirectUrl } = req.body;
     if (!platform) {
       return res.status(400).json({ error: 'Platform name is required (e.g. instagram, linkedin, x, whatsapp)' });
     }
 
-    const userId = req.user?.id || '00000000-0000-0000-0000-000000000000';
-    const userEmail = req.user?.email || 'user@rockyt.io';
     const cleanPlatform = String(platform).trim().toLowerCase();
     const formattedPlatform = cleanPlatform.charAt(0).toUpperCase() + cleanPlatform.slice(1);
-    const defaultUsername = username || `@${cleanPlatform.replace(/[^a-z0-9]/g, '')}_user`;
-    const defaultProfileName = profileName || `${formattedPlatform} Profile`;
+    
+    // Resolve user's Zernio profile ID
+    let zernioProfileId: string | null = req.zernioProfileId || null;
+    try {
+      if (req.user) {
+        const profile = await ensureUserProfile(req.user);
+        if (profile?.zernio_profile_id) {
+          zernioProfileId = profile.zernio_profile_id;
+        }
+      }
+    } catch (profErr: any) {
+      console.warn('[POST /api/v1/accounts/connect] ensureUserProfile warning:', profErr.message);
+    }
+
+    const appBaseUrl = process.env.APP_BASE_URL || (req.headers.origin || `https://${req.headers.host}`);
+    const targetRedirectUrl = redirectUrl || `${appBaseUrl}/oauth/callback?platform=${encodeURIComponent(cleanPlatform)}`;
 
     let authUrl: string | null = null;
-    let newAccountRecord: any = null;
 
-    // Attempt Zernio connect URL generation for official OAuth platforms
+    // 1. Attempt Zernio SDK connect URL generation
     try {
-      const profile = await ensureUserProfile(req.user);
-      if (profile?.zernio_profile_id && typeof (zernio.accounts as any)?.connectAccount === 'function') {
-        const connectRes = await (zernio.accounts as any).connectAccount({
-          body: {
-            profileId: profile.zernio_profile_id,
-            platform: cleanPlatform,
-            redirectUrl: redirectUrl || `${process.env.APP_BASE_URL || 'https://rockyt.io'}/dashboard`
+      if (zernioProfileId && typeof zernio?.connect?.getConnectUrl === 'function') {
+        const connectRes = await zernio.connect.getConnectUrl({
+          path: { platform: cleanPlatform as any },
+          query: {
+            profileId: zernioProfileId,
+            redirect_url: targetRedirectUrl
           }
         });
-        authUrl = connectRes?.data?.url || connectRes?.url || null;
+        authUrl = (connectRes?.data as any)?.authUrl || (connectRes?.data as any)?.url || null;
       }
     } catch (err: any) {
-      console.warn(`[POST /api/v1/accounts/connect] Zernio OAuth URL warning for ${cleanPlatform}:`, err.message);
+      console.warn(`[POST /api/v1/accounts/connect] Zernio SDK connect warning for ${cleanPlatform}:`, err.message);
     }
 
-    // Persist in Supabase using server client (Service Role / Admin privileges - bypasses 401 RLS error)
-    if (supabase) {
+    // 2. Direct HTTP fallback to Zernio API if SDK returned null
+    if (!authUrl && zernioProfileId) {
       try {
-        // Check if account already exists for user
-        const { data: existing } = await supabase
-          .from('connected_accounts')
-          .select('*')
-          .eq('user_id', userId)
-          .eq('platform', formattedPlatform)
-          .maybeSingle();
-
-        if (existing) {
-          const { data: updated } = await supabase
-            .from('connected_accounts')
-            .update({
-              status: 'connected',
-              username: defaultUsername,
-              profile_name: defaultProfileName,
-              email: userEmail
-            })
-            .eq('id', existing.id)
-            .select()
-            .single();
-          newAccountRecord = updated;
-        } else {
-          const { data: inserted, error: insertErr } = await supabase
-            .from('connected_accounts')
-            .insert({
-              user_id: userId,
-              platform: formattedPlatform,
-              username: defaultUsername,
-              email: userEmail,
-              profile_name: defaultProfileName,
-              status: 'connected'
-            })
-            .select()
-            .single();
-          
-          if (insertErr) {
-            console.error('[Supabase Insert Account Error]:', insertErr);
-          } else {
-            newAccountRecord = inserted;
+        const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+        const zernioRes = await fetch(`https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId)}&redirectUrl=${encodeURIComponent(targetRedirectUrl)}`, {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`
           }
+        });
+        if (zernioRes.ok) {
+          const zernioData = await zernioRes.json();
+          authUrl = zernioData.authUrl || zernioData.url || null;
         }
-
-        // Update connected_accounts_count in profiles
-        const { data: allAccs } = await supabase
-          .from('connected_accounts')
-          .select('id')
-          .eq('user_id', userId)
-          .eq('status', 'connected');
-
-        if (allAccs) {
-          await supabase
-            .from('profiles')
-            .update({ connected_accounts_count: allAccs.length })
-            .eq('id', userId);
-        }
-      } catch (dbErr: any) {
-        console.error('[POST /api/v1/accounts/connect] Database error:', dbErr);
+      } catch (httpErr: any) {
+        console.warn(`[POST /api/v1/accounts/connect] Zernio HTTP fetch warning for ${cleanPlatform}:`, httpErr.message);
       }
     }
 
-    if (!newAccountRecord) {
-      newAccountRecord = {
-        id: `acc_${cleanPlatform}_${Date.now()}`,
-        user_id: userId,
-        platform: formattedPlatform,
-        username: defaultUsername,
-        profile_name: defaultProfileName,
-        status: 'connected',
-        created_at: new Date().toISOString()
-      };
+    // 3. Fallback Zernio connect link
+    if (!authUrl) {
+      authUrl = `https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId || 'default')}&redirectUrl=${encodeURIComponent(targetRedirectUrl)}`;
     }
 
+    // Return real OAuth authUrl to client so browser navigates to social account auth screen
     res.json({
       success: true,
-      account: {
-        id: newAccountRecord.id,
-        platform: newAccountRecord.platform,
-        username: newAccountRecord.username,
-        name: newAccountRecord.username,
-        profileName: newAccountRecord.profile_name || 'Default Profile',
-        status: newAccountRecord.status,
-        connectedAt: newAccountRecord.created_at ? newAccountRecord.created_at.substring(0, 10) : new Date().toISOString().substring(0, 10)
-      },
-      authUrl
+      authUrl,
+      platform: formattedPlatform,
+      profileId: zernioProfileId
     });
   }));
 

@@ -217,14 +217,21 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   useEffect(() => {
     fetchLiveData();
 
-    // Check URL search parameters for Dodo checkout completion redirect
+    // Check URL search parameters for Dodo checkout completion or OAuth account connect redirect
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('checkout') === 'success') {
       setCheckoutSuccessMsg('Checkout completed successfully! Your plan or deposit has been processed.');
       setActiveTab('billing');
-      // Clean query params
       const cleanUrl = window.location.pathname;
       window.history.replaceState({}, document.title, cleanUrl);
+    } else if (urlParams.get('account_connected') === 'true' || urlParams.get('connected') === '1') {
+      const connPlatform = urlParams.get('platform');
+      const platformNameStr = connPlatform ? connPlatform.charAt(0).toUpperCase() + connPlatform.slice(1) : 'Social Media';
+      setCheckoutSuccessMsg(`Successfully authenticated and connected your ${platformNameStr} account!`);
+      setActiveTab('accounts');
+      const cleanUrl = window.location.pathname;
+      window.history.replaceState({}, document.title, cleanUrl);
+      fetchLiveData();
     }
 
     // Subscribe to real-time database updates from Supabase
@@ -302,42 +309,30 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
         });
         setCheckoutSuccessMsg(`${platformName} channel disconnected.`);
       } else {
-        // Connect
+        // Connect via Zernio OAuth
         const res = await fetch('/api/v1/accounts/connect', {
           method: 'POST',
           headers,
           body: JSON.stringify({
             platform: platformName,
-            username: `@${platformName.toLowerCase().replace(/[^a-z0-9]/g, '')}_user`,
-            profileName: `${platformName} Profile`
+            redirectUrl: `${window.location.origin}/dashboard?account_connected=true&platform=${encodeURIComponent(platformName)}`
           })
         });
 
         const data = await res.json();
 
         if (!res.ok) {
-          throw new Error(data.error || `Failed to connect ${platformName}`);
+          throw new Error(data.error || `Failed to initiate ${platformName} connection`);
         }
 
         if (data.authUrl) {
-          window.open(data.authUrl, '_blank');
+          // Redirect the browser window to Zernio / social network OAuth login screen to authenticate
+          window.location.href = data.authUrl;
+          return;
         }
 
-        if (data.account) {
-          const newAcc: ConnectedAccount = {
-            id: data.account.id,
-            user_id: userId || '00000000-0000-0000-0000-000000000000',
-            platform: data.account.platform,
-            username: data.account.username || `@${platformName.toLowerCase()}_user`,
-            profile_name: data.account.profileName || data.account.profile_name || `${platformName} Profile`,
-            status: 'connected',
-            created_at: new Date().toISOString()
-          };
-          setAccounts(prev => [newAcc, ...prev.filter(a => a.platform.toLowerCase() !== platformName.toLowerCase())]);
-          setCheckoutSuccessMsg(`Successfully connected ${platformName} account!`);
-        }
+        fetchLiveData();
       }
-      fetchLiveData();
     } catch (err: any) {
       console.error('[Connect Account Error]:', err);
       setCheckoutError(err.message || `Failed to connect ${platformName} account.`);
