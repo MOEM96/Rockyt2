@@ -109,6 +109,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [checkoutSuccessMsg, setCheckoutSuccessMsg] = useState<string | null>(null);
   const [overlayCheckoutUrl, setOverlayCheckoutUrl] = useState<string | null>(null);
+  const [connectingPlatform, setConnectingPlatform] = useState<string | null>(null);
 
   // User Profile metadata
   const userEmail = userSession?.email || profile?.email || 'moamenemam966@gmail.com';
@@ -120,14 +121,34 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const fetchLiveData = async () => {
     setIsLoading(true);
     try {
-      // A. Fetch Connected Accounts
-      const { data: dbAccounts, error: accErr } = await supabase
-        .from('connected_accounts')
-        .select('*')
-        .order('created_at', { ascending: false });
+      // A. Fetch Connected Accounts via Backend API
+      const sessionRes = await supabase.auth.getSession();
+      const authToken = userSession?.accessToken || sessionRes.data.session?.access_token || apiKey || userEmail;
 
-      if (!accErr && dbAccounts) {
-        setAccounts(dbAccounts as ConnectedAccount[]);
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`,
+        'X-User-Email': userEmail
+      };
+
+      try {
+        const accRes = await fetch('/api/v1/accounts', { headers });
+        if (accRes.ok) {
+          const accData = await accRes.json();
+          if (Array.isArray(accData.accounts) && accData.accounts.length > 0) {
+            setAccounts(accData.accounts.map((a: any) => ({
+              id: a.id,
+              user_id: userId || '00000000-0000-0000-0000-000000000000',
+              platform: a.platform,
+              username: a.username || a.name || `@${a.platform.toLowerCase()}_user`,
+              profile_name: a.profile_name || a.profileName || `${a.platform} Profile`,
+              status: a.status === 'disconnected' ? 'disconnected' : 'connected',
+              created_at: a.connectedAt || a.created_at
+            })));
+          }
+        }
+      } catch (err) {
+        console.warn('[fetchLiveData] /api/v1/accounts warning:', err);
       }
 
       // B. Fetch User API Keys
@@ -255,6 +276,10 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   };
 
   const toggleAccountStatus = async (platformName: string, existingAccount?: ConnectedAccount) => {
+    setConnectingPlatform(platformName);
+    setCheckoutError(null);
+    setCheckoutSuccessMsg(null);
+
     try {
       const sessionRes = await supabase.auth.getSession();
       const authToken = userSession?.accessToken || sessionRes.data.session?.access_token || apiKey || userEmail;
@@ -265,8 +290,9 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
         'X-User-Email': userEmail
       };
 
-      if (existingAccount) {
-        const nextStatus = existingAccount.status === 'connected' ? 'disconnected' : 'connected';
+      if (existingAccount && existingAccount.status === 'connected') {
+        // Disconnect
+        const nextStatus = 'disconnected';
         setAccounts(prev => prev.map(a => a.id === existingAccount.id ? { ...a, status: nextStatus } : a));
 
         await fetch('/api/v1/accounts/toggle', {
@@ -274,7 +300,9 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
           headers,
           body: JSON.stringify({ id: existingAccount.id, platform: platformName, status: nextStatus })
         });
+        setCheckoutSuccessMsg(`${platformName} channel disconnected.`);
       } else {
+        // Connect
         const res = await fetch('/api/v1/accounts/connect', {
           method: 'POST',
           headers,
@@ -286,17 +314,35 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
         });
 
         const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || `Failed to connect ${platformName}`);
+        }
+
         if (data.authUrl) {
           window.open(data.authUrl, '_blank');
         }
 
         if (data.account) {
-          setAccounts(prev => [data.account as ConnectedAccount, ...prev.filter(a => a.platform !== data.account.platform)]);
+          const newAcc: ConnectedAccount = {
+            id: data.account.id,
+            user_id: userId || '00000000-0000-0000-0000-000000000000',
+            platform: data.account.platform,
+            username: data.account.username || `@${platformName.toLowerCase()}_user`,
+            profile_name: data.account.profileName || data.account.profile_name || `${platformName} Profile`,
+            status: 'connected',
+            created_at: new Date().toISOString()
+          };
+          setAccounts(prev => [newAcc, ...prev.filter(a => a.platform.toLowerCase() !== platformName.toLowerCase())]);
+          setCheckoutSuccessMsg(`Successfully connected ${platformName} account!`);
         }
       }
       fetchLiveData();
-    } catch (err) {
-      console.error('Error toggling account:', err);
+    } catch (err: any) {
+      console.error('[Connect Account Error]:', err);
+      setCheckoutError(err.message || `Failed to connect ${platformName} account.`);
+    } finally {
+      setConnectingPlatform(null);
     }
   };
 
@@ -513,13 +559,18 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
 
                     <button
                       onClick={() => toggleAccountStatus(platformName, matched)}
+                      disabled={connectingPlatform === platformName}
                       className={`w-full py-2 text-xs font-bold uppercase tracking-wider border transition-colors flex items-center justify-center gap-1.5 ${
-                        isConn
+                        connectingPlatform === platformName
+                          ? 'bg-zinc-800 text-white/50 border-white/20 cursor-wait'
+                          : isConn
                           ? 'bg-zinc-900 border-white/20 text-white/80 hover:bg-red-950/50 hover:text-red-400 hover:border-red-500/40'
                           : 'bg-brand text-white border-brand hover:bg-white hover:text-ink'
                       }`}
                     >
-                      {isConn ? (
+                      {connectingPlatform === platformName ? (
+                        <><Loader2 size={14} className="animate-spin text-brand" /> Connecting...</>
+                      ) : isConn ? (
                         <>Disconnect Channel</>
                       ) : (
                         <><Plus size={14} /> Connect Account</>
