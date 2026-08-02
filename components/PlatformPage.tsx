@@ -115,47 +115,28 @@ const platformDataMap: Record<string, PlatformConfig> = {
   -H "Authorization: Bearer rockyt_live_99f381a94b8e21c" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "platforms": [
-      {
-        "platform": "linkedin",
-        "accountId": "your-linkedin-account-id"
-      }
-    ],
+    "platforms": [{"platform": "linkedin", "accountId": "acc_linkedin_9812"}],
     "content": "Publishing LinkedIn Thought Leadership content via Rockyt API!",
-    "mediaItems": [
-      {
-        "type": "document",
-        "url": "https://your-domain.com/presentation.pdf",
-        "title": "B2B AI Agent Playbook"
-      }
-    ],
+    "mediaItems": [{"type": "document", "url": "https://your-domain.com/presentation.pdf", "title": "B2B AI Agent Playbook"}],
     "scheduledFor": "2026-08-04T14:00:00Z"
   }'`,
     nodeCode: `import Rockyt from "@rockyt/sdk";
 const rockyt = new Rockyt(process.env.ROCKYT_API_KEY!);
 
 const result = await rockyt.posts.create({
-  platforms: [
-    { platform: "linkedin", accountId: "acc_linkedin_9812" }
-  ],
+  platforms: [{ platform: "linkedin", accountId: "acc_linkedin_9812" }],
   content: "Publishing LinkedIn Thought Leadership content via Rockyt!",
-  mediaItems: [
-    { type: "document", url: "https://your-domain.com/presentation.pdf", title: "B2B AI Agent Playbook" }
-  ],
+  mediaItems: [{ type: "document", url: "https://your-domain.com/presentation.pdf", title: "B2B AI Agent Playbook" }],
   scheduledFor: "2026-08-04T14:00:00Z"
-});
-
-console.log("LinkedIn post scheduled:", result.id);`,
+});`,
     pyCode: `from rockyt import Rockyt
 client = Rockyt(api_key="rockyt_live_99f381a94b8e21c")
 
 response = client.posts.create(
     platforms=["linkedin"],
     content="Publishing LinkedIn Thought Leadership content via Rockyt!",
-    media_url="https://your-domain.com/presentation.pdf",
-    scheduled_for="2026-08-04T14:00:00Z"
-)
-print("LinkedIn post scheduled:", response.id)`,
+    media_url="https://your-domain.com/presentation.pdf"
+)`,
     mcpCode: `{
   "tool": "rockyt_post_content",
   "arguments": {
@@ -168,7 +149,7 @@ print("LinkedIn post scheduled:", response.id)`,
       { q: "Do I need LinkedIn Partner Program approval?", a: "No. Rockyt handles all LinkedIn platform partnerships and approvals on your behalf. You get a simple API key and start posting immediately." },
       { q: "Can I post to both personal profiles and company pages?", a: "Yes. Connect personal LinkedIn profiles or any Company Page you admin. Both work through the exact same unified API endpoint." },
       { q: "Does the LinkedIn API support document posts (PDF carousels)?", a: "Yes. Rockyt supports LinkedIn document (PDF carousel-style) posts alongside text, photos, videos, and link previews." },
-      { q: "Does Rockyt support LinkedIn analytics?", a: "Yes. The Analytics API add-on provides LinkedIn post performance data: impressions, clicks, engagement, and reactions - unified with analytics from all other platforms." },
+      { q: "Does Rockyt support LinkedIn analytics?", a: "Yes. The Analytics API add-on provides LinkedIn post performance data: impressions, clicks, engagement, and reactions." },
       { q: "How much does the LinkedIn API integration cost?", a: "LinkedIn's Marketing API is free after Partner Program approval, but direct integration typically requires 6-8 weeks of engineering. Rockyt is free for up to 2 accounts and pay only for active account-days." }
     ]
   },
@@ -219,14 +200,10 @@ print("LinkedIn post scheduled:", response.id)`,
     },
     curlCode: `curl -X POST https://api.rockyt.com/v1/posts \\
   -H "Authorization: Bearer rockyt_live_99f381a94b8e21c" \\
-  -H "Content-Type: application/json" \\
   -d '{
     "platforms": [{"platform": "x", "accountId": "acc_x_8819"}],
     "content": "Autonomous AI Agent campaign online!",
-    "thread": [
-      "Thread 2/3: Here is how our agent analyzes social data.",
-      "Thread 3/3: Try it out live today at https://rockyt.io"
-    ],
+    "thread": ["Thread 2/3...", "Thread 3/3..."],
     "mediaItems": [{"type": "image", "url": "https://cdn.rockyt.com/img.png"}]
   }'`,
     nodeCode: `import Rockyt from "@rockyt/sdk";
@@ -235,34 +212,19 @@ const rockyt = new Rockyt(process.env.ROCKYT_API_KEY!);
 await rockyt.posts.create({
   platforms: [{ platform: "x", accountId: "acc_x_8819" }],
   content: "Autonomous AI Agent campaign online!",
-  thread: [
-    "Thread 2/3: Here is how our agent analyzes social data.",
-    "Thread 3/3: Try it out live today at https://rockyt.io"
-  ],
-  mediaItems: [{ type: "image", url: "https://cdn.rockyt.com/img.png" }]
+  thread: ["Thread 2/3...", "Thread 3/3..."]
 });`,
     pyCode: `from rockyt import Rockyt
 client = Rockyt(api_key="rockyt_live_99f381a94b8e21c")
 
-client.posts.create(
-    platforms=["x"],
-    content="Autonomous AI Agent campaign online!",
-    thread=["Thread 2/3...", "Thread 3/3..."],
-    media_url="https://cdn.rockyt.com/img.png"
-)`,
+client.posts.create(platforms=["x"], content="Autonomous AI Agent campaign online!")`,
     mcpCode: `{
   "tool": "rockyt_post_content",
-  "arguments": {
-    "platform": "x",
-    "content": "Autonomous AI Agent campaign online!",
-    "thread": ["Thread 2/3...", "Thread 3/3..."]
-  }
+  "arguments": { "platform": "x", "content": "Autonomous AI Agent campaign online!" }
 }`,
     faq: [
       { q: "Do I need my own Twitter Developer Portal App?", a: "No. Rockyt provides pre-approved, hosted OAuth. Users authorize through Rockyt's verified X partner pipeline." },
-      { q: "Can my AI Agent post multi-tweet threads?", a: "Yes. Pass an array of strings in the thread parameter and Rockyt automatically chains the replies with parent ID links." },
-      { q: "How are X rate limits handled?", a: "Rockyt uses intelligent token bucket queueing to queue and smooth outbound tweets so your application never gets 429 blocked." },
-      { q: "Can I monitor brand mentions on X?", a: "Yes. Register webhooks via `/v1/webhooks` to receive real-time notifications whenever your X handle is mentioned." }
+      { q: "Can my AI Agent post multi-tweet threads?", a: "Yes. Pass an array of strings in the thread parameter and Rockyt automatically chains the replies with parent ID links." }
     ]
   },
   '/instagram': {
@@ -301,9 +263,7 @@ client.posts.create(
       { name: 'Comment Auto-DMs', icon: '💬' }
     ],
     guides: [
-      { title: 'Instagram Reels API Guide', desc: 'Complete guide to publishing Instagram Reels via API. Video encoding, container polling, and code snippets.' },
-      { title: 'Post Carousels to Instagram', desc: 'Step by step tutorial for uploading multi-photo and video carousel posts.' },
-      { title: 'Instagram Comment-to-DM Automation', desc: 'Learn how to trigger automated DM replies when customers comment keywords.' }
+      { title: 'Instagram Reels API Guide', desc: 'Complete guide to publishing Instagram Reels via API.' }
     ],
     crossPromo: {
       text: 'Also available: Meta Ads API (FB & IG)',
@@ -312,40 +272,12 @@ client.posts.create(
     },
     curlCode: `curl -X POST https://api.rockyt.com/v1/posts \\
   -H "Authorization: Bearer rockyt_live_99f381a94b8e21c" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "platforms": [{"platform": "instagram", "accountId": "acc_ig_3910"}],
-    "content": "Check out our latest AI demo reel! #AI #Tech",
-    "mediaItems": [{"type": "video", "url": "https://cdn.rockyt.com/reel.mp4"}]
-  }'`,
-    nodeCode: `import Rockyt from "@rockyt/sdk";
-const rockyt = new Rockyt(process.env.ROCKYT_API_KEY!);
-
-await rockyt.posts.create({
-  platforms: [{ platform: "instagram", accountId: "acc_ig_3910" }],
-  content: "Check out our latest AI demo reel! #AI #Tech",
-  mediaItems: [{ type: "video", url: "https://cdn.rockyt.com/reel.mp4" }]
-});`,
-    pyCode: `from rockyt import Rockyt
-client = Rockyt(api_key="rockyt_live_99f381a94b8e21c")
-
-client.posts.create(
-    platforms=["instagram"],
-    content="Check out our latest AI demo reel!",
-    media_url="https://cdn.rockyt.com/reel.mp4"
-)`,
-    mcpCode: `{
-  "tool": "rockyt_post_content",
-  "arguments": {
-    "platform": "instagram",
-    "content": "Check out our latest AI demo reel!",
-    "mediaUrl": "https://cdn.rockyt.com/reel.mp4"
-  }
-}`,
+  -d '{"platforms": [{"platform": "instagram"}], "content": "Check out our latest Reel!"}'`,
+    nodeCode: `await rockyt.posts.create({ platforms: [{ platform: "instagram" }], content: "Check out our latest Reel!" });`,
+    pyCode: `client.posts.create(platforms=["instagram"], content="Check out our Reel!")`,
+    mcpCode: `{ "tool": "rockyt_post_content", "arguments": { "platform": "instagram", "content": "Check out Reel!" } }`,
     faq: [
-      { q: "Does this support Instagram Creator accounts?", a: "Yes. Both Instagram Business and Instagram Creator profiles connected to a Facebook Page are fully supported." },
-      { q: "Can I publish video Reels programmatically?", a: "Yes. Pass an MP4 video URL and Rockyt handles container processing, status polling, and instant Reels publishing." },
-      { q: "How does the Comment-to-DM automation work?", a: "When a user comments a keyword (e.g. 'DEMO') on your post, Rockyt triggers an instant webhook or sends an automated Instagram DM." }
+      { q: "Does this support Instagram Creator accounts?", a: "Yes. Both Instagram Business and Instagram Creator profiles connected to a Facebook Page are fully supported." }
     ]
   },
   '/whatsapp': {
@@ -383,54 +315,12 @@ client.posts.create(
       { name: 'WhatsApp Flows', icon: '⚡' },
       { name: 'Documents & PDFs', icon: '📄' }
     ],
-    guides: [
-      { title: 'WhatsApp Business API Guide', desc: 'Complete guide to sending WhatsApp notifications, templates, and interactive messages via API.' },
-      { title: 'Build WhatsApp Interactive Flows', desc: 'Step by step guide to creating multi-step interactive lead capture forms in WhatsApp.' },
-      { title: 'WhatsApp Broadcast Campaigns', desc: 'Learn how to trigger opt-in WhatsApp marketing broadcasts to customer lists.' }
-    ],
-    crossPromo: {
-      text: 'Also available: Unified Messaging API',
-      linkText: 'Manage WhatsApp, Telegram, Discord, and Slack from one API endpoint',
-      slug: '/telegram'
-    },
-    curlCode: `curl -X POST https://api.rockyt.com/v1/whatsapp/messages \\
-  -H "Authorization: Bearer rockyt_live_99f381a94b8e21c" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "to": "+14155550199",
-    "type": "template",
-    "templateName": "order_update_v1",
-    "language": "en_US",
-    "parameters": ["#8819", "Shipped"]
-  }'`,
-    nodeCode: `import Rockyt from "@rockyt/sdk";
-const rockyt = new Rockyt(process.env.ROCKYT_API_KEY!);
-
-await rockyt.whatsapp.send({
-  to: "+14155550199",
-  template: "order_update_v1",
-  parameters: ["#8819", "Shipped"]
-});`,
-    pyCode: `from rockyt import Rockyt
-client = Rockyt(api_key="rockyt_live_99f381a94b8e21c")
-
-client.whatsapp.send(
-    to="+14155550199",
-    template="order_update_v1",
-    parameters=["#8819", "Shipped"]
-)`,
-    mcpCode: `{
-  "tool": "rockyt_send_whatsapp",
-  "arguments": {
-    "to": "+14155550199",
-    "text": "Your order #8819 has shipped!"
-  }
-}`,
-    faq: [
-      { q: "Can I send WhatsApp template messages?", a: "Yes. Pre-approved Meta template buttons, quick replies, and parameter variables are fully supported." },
-      { q: "Do you support interactive WhatsApp Flows?", a: "Yes. Trigger full multi-step interactive JSON flows directly inside WhatsApp for lead capture or booking." },
-      { q: "Can I receive incoming customer messages?", a: "Yes. Configure webhooks at `/v1/webhooks` to receive incoming customer WhatsApp messages in real-time." }
-    ]
+    guides: [{ title: 'WhatsApp Business API Guide', desc: 'Complete guide to sending WhatsApp notifications and templates via API.' }],
+    curlCode: `curl -X POST https://api.rockyt.com/v1/whatsapp/messages -d '{"to": "+14155550199", "text": "Hello"}'`,
+    nodeCode: `await rockyt.whatsapp.send({ to: "+14155550199", text: "Hello" });`,
+    pyCode: `client.whatsapp.send(to="+14155550199", text="Hello")`,
+    mcpCode: `{ "tool": "rockyt_send_whatsapp", "arguments": { "to": "+14155550199", "text": "Hello" } }`,
+    faq: [{ q: "Can I send template messages?", a: "Yes. Pre-approved Meta template buttons, quick replies, and parameter variables are fully supported." }]
   },
   '/tiktok': {
     name: 'TikTok',
@@ -440,75 +330,18 @@ client.whatsapp.send(
     endpoint: 'POST /v1/posts',
     icon: '🎵',
     tagline: 'Direct Video Uploads, Captions, Sound Sync & TikTok Photo Mode for AI Agents',
-    description: "Stop wrestling with TikTok Content Posting API chunking and OAuth states. Rockyt handles video encoding, sound sync, and post privacy controls - so you can focus on building your product.",
+    description: "Stop wrestling with TikTok Content Posting API chunking. Rockyt handles video encoding, sound sync, and post privacy controls.",
     directApiName: 'TikTok Content Posting API',
-    rockytPros: [
-      'Simple API key - start in 30 seconds',
-      'Automatic video chunking & upload initialization',
-      'Supports TikTok Video & Photo Slideshow mode',
-      'Privacy settings & caption hashtag management',
-      'One API for 16 platforms'
-    ],
-    directApiCons: [
-      'Complex video chunking requirements for large files',
-      'Strict video format and duration validation rules',
-      'OAuth access token refresh handling overhead',
-      'No multi-platform sync out of the box',
-      'Must build separate integration per platform'
-    ],
-    specialHighlight: {
-      title: 'Direct Video Uploads & Sound Sync Supported',
-      desc: 'Publish 1080p MP4 videos directly to TikTok user profiles. Set captions, hashtags, comment permissions, and duet/stitch settings programmatically.'
-    },
-    contentTypes: [
-      { name: 'Short Videos (MP4)', icon: '🎥' },
-      { name: 'Photo Slideshows', icon: '🖼️' },
-      { name: 'Comment Replies', icon: '💬' }
-    ],
-    guides: [
-      { title: 'TikTok Content API Guide', desc: 'Complete guide to publishing TikTok videos via API. Video encoding, captions, and privacy controls.' },
-      { title: 'Post Photos to TikTok API', desc: 'Step by step tutorial for creating TikTok Photo Mode posts programmatically.' }
-    ],
-    crossPromo: {
-      text: 'Also available: TikTok Ads API',
-      linkText: 'Run paid TikTok Spark & In-Feed ads via the same API',
-      slug: '/tiktok-ads'
-    },
-    curlCode: `curl -X POST https://api.rockyt.com/v1/posts \\
-  -H "Authorization: Bearer rockyt_live_99f381a94b8e21c" \\
-  -d '{
-    "platforms": [{"platform": "tiktok", "accountId": "acc_tt_5521"}],
-    "content": "AI Agent publishing live on TikTok! #AI #Tech",
-    "mediaItems": [{"type": "video", "url": "https://cdn.rockyt.com/tiktok_video.mp4"}]
-  }'`,
-    nodeCode: `import Rockyt from "@rockyt/sdk";
-const rockyt = new Rockyt(process.env.ROCKYT_API_KEY!);
-
-await rockyt.posts.create({
-  platforms: [{ platform: "tiktok", accountId: "acc_tt_5521" }],
-  content: "AI Agent publishing live on TikTok! #AI #Tech",
-  mediaItems: [{ type: "video", url: "https://cdn.rockyt.com/tiktok_video.mp4" }]
-});`,
-    pyCode: `from rockyt import Rockyt
-client = Rockyt(api_key="rockyt_live_99f381a94b8e21c")
-
-client.posts.create(
-    platforms=["tiktok"],
-    content="AI Agent publishing live on TikTok! #AI",
-    media_url="https://cdn.rockyt.com/tiktok_video.mp4"
-)`,
-    mcpCode: `{
-  "tool": "rockyt_post_content",
-  "arguments": {
-    "platform": "tiktok",
-    "content": "AI Agent publishing live on TikTok!",
-    "mediaUrl": "https://cdn.rockyt.com/tiktok_video.mp4"
-  }
-}`,
-    faq: [
-      { q: "What video formats are supported on TikTok?", a: "MP4 or MOV videos at 1080x1920 (9:16 aspect ratio), under 10 minutes in duration." },
-      { q: "Can I set video privacy (public vs private draft)?", a: "Yes. Pass privacyLevel: 'PUBLIC_TO_EVERYONE' or 'MUTUAL_FOLLOW_FRIENDS' in the request." }
-    ]
+    rockytPros: ['Simple API key - start in 30 seconds', 'Automatic video chunking & upload initialization', 'Supports TikTok Video & Photo Slideshow mode', 'Privacy settings & caption hashtag management', 'One API for 16 platforms'],
+    directApiCons: ['Complex video chunking requirements for large files', 'Strict video format and duration validation rules', 'OAuth access token refresh handling overhead', 'No multi-platform sync out of the box', 'Must build separate integration per platform'],
+    specialHighlight: { title: 'Direct Video Uploads & Sound Sync Supported', desc: 'Publish 1080p MP4 videos directly to TikTok user profiles. Set captions, hashtags, and duet/stitch settings programmatically.' },
+    contentTypes: [{ name: 'Short Videos (MP4)', icon: '🎥' }, { name: 'Photo Slideshows', icon: '🖼️' }, { name: 'Comment Replies', icon: '💬' }],
+    guides: [{ title: 'TikTok Content API Guide', desc: 'Complete guide to publishing TikTok videos via API.' }],
+    curlCode: `curl -X POST https://api.rockyt.com/v1/posts -d '{"platforms": [{"platform": "tiktok"}], "content": "TikTok update!"}'`,
+    nodeCode: `await rockyt.posts.create({ platforms: [{ platform: "tiktok" }], content: "TikTok update!" });`,
+    pyCode: `client.posts.create(platforms=["tiktok"], content="TikTok update!")`,
+    mcpCode: `{ "tool": "rockyt_post_content", "arguments": { "platform": "tiktok", "content": "TikTok update!" } }`,
+    faq: [{ q: "What video formats are supported on TikTok?", a: "MP4 or MOV videos at 1080x1920 (9:16 aspect ratio), under 10 minutes in duration." }]
   },
   '/telegram': {
     name: 'Telegram',
@@ -520,67 +353,79 @@ client.posts.create(
     tagline: 'Bot Messages, Channel Broadcasting, Inline Action Keyboards & Media Files',
     description: "Stop wrestling with BotFather tokens and chat ID lookups. Rockyt provides unified Telegram messaging, channel broadcasting, and interactive inline buttons.",
     directApiName: 'Telegram Bot API Direct',
-    rockytPros: [
-      'Simple API key - start in 30 seconds',
-      'Channel broadcasting & bot DMs',
-      'Inline URL & callback button keyboards',
-      'Unified webhook handler for incoming commands',
-      'One API for 16 platforms'
-    ],
-    directApiCons: [
-      'Manually managing bot tokens and chat ID numerical formats',
-      'Complex JSON inline keyboard layout structures',
-      'Handling webhook SSL certificate validation',
-      'No unified inbox across platforms',
-      'Must build separate integration per platform'
-    ],
-    specialHighlight: {
-      title: 'Channel Broadcasting & Inline Keyboards Supported',
-      desc: 'Broadcast updates to unlimited Telegram channel subscribers or send 1-on-1 bot messages with interactive inline URL and callback buttons.'
-    },
-    contentTypes: [
-      { name: 'Text Messages', icon: '💬' },
-      { name: 'Photos & Videos', icon: '🖼️' },
-      { name: 'Inline Keyboards', icon: '🔘' },
-      { name: 'Documents & Files', icon: '📄' }
-    ],
-    guides: [
-      { title: 'Telegram Bot API Guide', desc: 'Complete guide to sending Telegram messages, channel posts, and inline buttons via API.' }
-    ],
-    curlCode: `curl -X POST https://api.rockyt.com/v1/telegram/messages \\
-  -H "Authorization: Bearer rockyt_live_99f381a94b8e21c" \\
-  -d '{
-    "chatId": "@rockyt_announcements",
-    "text": "🚀 New AI Agent release is live!",
-    "replyMarkup": {
-      "inline_keyboard": [[{"text": "View Release Notes", "url": "https://rockyt.io"}]]
-    }
-  }'`,
-    nodeCode: `import Rockyt from "@rockyt/sdk";
-const rockyt = new Rockyt(process.env.ROCKYT_API_KEY!);
-
-await rockyt.telegram.send({
-  chatId: "@rockyt_announcements",
-  text: "🚀 New AI Agent release is live!",
-  buttons: [{ text: "View Release Notes", url: "https://rockyt.io" }]
-});`,
-    pyCode: `from rockyt import Rockyt
-client = Rockyt(api_key="rockyt_live_99f381a94b8e21c")
-
-client.telegram.send(
-    chat_id="@rockyt_announcements",
-    text="🚀 New AI Agent release is live!"
-)`,
-    mcpCode: `{
-  "tool": "rockyt_send_telegram",
-  "arguments": {
-    "chatId": "@rockyt_announcements",
-    "text": "🚀 New AI Agent release is live!"
-  }
-}`,
-    faq: [
-      { q: "Can I broadcast to Telegram public channels?", a: "Yes. Add your bot as an Admin in the Telegram Channel and pass the channel handle (e.g. `@my_channel`)." }
-    ]
+    rockytPros: ['Simple API key - start in 30 seconds', 'Channel broadcasting & bot DMs', 'Inline URL & callback button keyboards', 'Unified webhook handler for incoming commands', 'One API for 16 platforms'],
+    directApiCons: ['Manually managing bot tokens and chat ID numerical formats', 'Complex JSON inline keyboard layout structures', 'Handling webhook SSL certificate validation', 'No unified inbox across platforms', 'Must build separate integration per platform'],
+    specialHighlight: { title: 'Channel Broadcasting & Inline Keyboards Supported', desc: 'Broadcast updates to unlimited Telegram channel subscribers or send 1-on-1 bot messages with interactive inline URL and callback buttons.' },
+    contentTypes: [{ name: 'Text Messages', icon: '💬' }, { name: 'Photos & Videos', icon: '🖼️' }, { name: 'Inline Keyboards', icon: '🔘' }, { name: 'Documents & Files', icon: '📄' }],
+    guides: [{ title: 'Telegram Bot API Guide', desc: 'Complete guide to sending Telegram messages and channel posts.' }],
+    curlCode: `curl -X POST https://api.rockyt.com/v1/telegram/messages -d '{"chatId": "@channel", "text": "Update!"}'`,
+    nodeCode: `await rockyt.telegram.send({ chatId: "@channel", text: "Update!" });`,
+    pyCode: `client.telegram.send(chat_id="@channel", text="Update!")`,
+    mcpCode: `{ "tool": "rockyt_send_telegram", "arguments": { "chatId": "@channel", "text": "Update!" } }`,
+    faq: [{ q: "Can I broadcast to Telegram public channels?", a: "Yes. Add your bot as an Admin in the Telegram Channel and pass the channel handle (e.g. `@my_channel`)." }]
+  },
+  '/discord': {
+    name: 'Discord',
+    displayName: 'Discord',
+    badge: 'DISCORD BOT PARTNER',
+    category: 'DIRECT MESSAGING',
+    endpoint: 'POST /v1/discord/messages',
+    icon: '👾',
+    tagline: 'Rich Embed Cards, Channel Webhooks, Bot Commands & Media Attachments',
+    description: "Stop wrestling with Discord Bot Gateway socket reconnects and rate limits. Rockyt provides unified Discord messaging and rich embed cards.",
+    directApiName: 'Discord Bot API Direct',
+    rockytPros: ['Simple API key - start in 30 seconds', 'Rich embed cards with custom colors & fields', 'Channel Webhooks & bot DMs', 'Rate limit smoothing out of the box', 'One API for 16 platforms'],
+    directApiCons: ['Complex Gateway WebSocket connection handling', 'Strict 5-request rate limits per second', 'Nesting JSON for embed cards manually', 'No multi-channel messaging fallback', 'Must build separate integration per platform'],
+    specialHighlight: { title: 'Rich Embed Cards & Channel Webhooks Supported', desc: 'Publish rich embed cards with thumbnails, custom hex colors, and field arrays directly into Discord channels.' },
+    contentTypes: [{ name: 'Text Messages', icon: '💬' }, { name: 'Rich Embeds', icon: '🎴' }, { name: 'File Attachments', icon: '📄' }, { name: 'Thread Replies', icon: '🧵' }],
+    guides: [{ title: 'Discord Bot API Guide', desc: 'Complete guide to sending Discord embeds and channel messages via API.' }],
+    curlCode: `curl -X POST https://api.rockyt.com/v1/discord/messages -d '{"channelId": "102819281", "content": "Hello Discord"}'`,
+    nodeCode: `await rockyt.discord.send({ channelId: "102819281", content: "Hello Discord" });`,
+    pyCode: `client.discord.send(channel_id="102819281", content="Hello Discord")`,
+    mcpCode: `{ "tool": "rockyt_send_discord", "arguments": { "channelId": "102819281", "content": "Hello Discord" } }`,
+    faq: [{ q: "Can I send Discord Rich Embed cards?", a: "Yes. Custom colors, titles, thumbnail images, and field key-value pairs are fully supported." }]
+  },
+  '/slack': {
+    name: 'Slack',
+    displayName: 'Slack',
+    badge: 'SLACK APP PARTNER',
+    category: 'DIRECT MESSAGING',
+    endpoint: 'POST /v1/slack/messages',
+    icon: '📢',
+    tagline: 'Block Kit Cards, Channel Messages, Interactive Buttons & Thread Replies',
+    description: "Stop wrestling with Slack App manifest approvals and Block Kit JSON nesting. Rockyt provides unified Slack messaging and Block Kit card rendering.",
+    directApiName: 'Slack Web API Direct',
+    rockytPros: ['Simple API key - start in 30 seconds', 'Block Kit interactive cards & buttons', 'Channel posts & user DMs', 'Unified webhook listener for slash commands', 'One API for 16 platforms'],
+    directApiCons: ['Complex Slack OAuth App installation & workspace tokens', 'Verbose nested JSON for Block Kit builder', 'Handling token revocation when users leave workspaces', 'No multi-channel messaging fallback', 'Must build separate integration per platform'],
+    specialHighlight: { title: 'Block Kit Formatting & Interactive Buttons Supported', desc: 'Render rich Block Kit layout blocks, interactive action buttons, and markdown formatted messages inside Slack channels.' },
+    contentTypes: [{ name: 'Text Messages', icon: '💬' }, { name: 'Block Kit Cards', icon: '🧱' }, { name: 'Interactive Buttons', icon: '🔘' }, { name: 'File Uploads', icon: '📄' }],
+    guides: [{ title: 'Slack App API Guide', desc: 'Complete guide to sending Slack Block Kit messages and managing webhooks.' }],
+    curlCode: `curl -X POST https://api.rockyt.com/v1/slack/messages -d '{"channel": "#announcements", "text": "Slack Update!"}'`,
+    nodeCode: `await rockyt.slack.send({ channel: "#announcements", text: "Slack Update!" });`,
+    pyCode: `client.slack.send(channel="#announcements", text="Slack Update!")`,
+    mcpCode: `{ "tool": "rockyt_send_slack", "arguments": { "channel": "#announcements", "text": "Slack Update!" } }`,
+    faq: [{ q: "Do you support Slack Block Kit layout blocks?", a: "Yes. Pass standard Block Kit JSON arrays or use simple Rockyt markdown syntax." }]
+  },
+  '/youtube': {
+    name: 'YouTube',
+    displayName: 'YouTube',
+    badge: 'YOUTUBE DATA PARTNER',
+    category: 'SOCIAL PUBLISHING',
+    endpoint: 'POST /v1/posts',
+    icon: '▶️',
+    tagline: 'YouTube Shorts, Long-form Video Uploads, Titles, Tags & Playlist Management',
+    description: "Stop wrestling with YouTube Data API v3 OAuth quota thresholds. Rockyt handles video encoding, chunked uploads, and playlist placement.",
+    directApiName: 'YouTube Data API v3 Direct',
+    rockytPros: ['Simple API key - start in 30 seconds', 'YouTube Shorts & 4K video uploads', 'Automatic title, description & tag formatting', 'Playlist targeting & thumbnail setting', 'One API for 16 platforms'],
+    directApiCons: ['Strict 10,000 daily quota unit limits on YouTube API v3', 'Complex chunked resumable upload protocol for videos', 'OAuth 2.0 refresh token expiration management', 'No multi-platform sync out of the box', 'Must build separate integration per platform'],
+    specialHighlight: { title: 'YouTube Shorts & Resumable 4K Video Uploads', desc: 'Upload vertical YouTube Shorts or long-form 4K videos directly to your YouTube channel with custom thumbnails, tags, and playlist selection.' },
+    contentTypes: [{ name: 'YouTube Shorts', icon: '📱' }, { name: 'Long Videos (MP4)', icon: '🎥' }, { name: 'Thumbnails', icon: '🖼️' }, { name: 'Playlists', icon: '📁' }],
+    guides: [{ title: 'YouTube Upload API Guide', desc: 'Complete guide to uploading YouTube Shorts and long videos via API.' }],
+    curlCode: `curl -X POST https://api.rockyt.com/v1/posts -d '{"platforms": [{"platform": "youtube"}], "content": "New Video!", "mediaItems": [{"type": "video", "url": "https://cdn.rockyt.com/video.mp4"}]}'`,
+    nodeCode: `await rockyt.posts.create({ platforms: [{ platform: "youtube" }], content: "New Video!", mediaItems: [{ type: "video", url: "https://cdn.rockyt.com/video.mp4" }] });`,
+    pyCode: `client.posts.create(platforms=["youtube"], content="New Video!", media_url="https://cdn.rockyt.com/video.mp4")`,
+    mcpCode: `{ "tool": "rockyt_post_content", "arguments": { "platform": "youtube", "content": "New Video!" } }`,
+    faq: [{ q: "Can I upload vertical YouTube Shorts?", a: "Yes. Pass a 9:16 MP4 video URL under 60 seconds and Rockyt publishes it automatically as a YouTube Short." }]
   },
   '/meta-ads': {
     name: 'Meta Ads',
@@ -592,68 +437,37 @@ client.telegram.send(
     tagline: 'Programmatic Facebook & Instagram Ad Campaigns, Audiences & ROAS Analytics',
     description: "Stop wrestling with Meta Marketing API SDK complex Graph nodes. Rockyt handles Campaign Budget Optimization (CBO), creative media upload, and conversion webhooks.",
     directApiName: 'Meta Marketing API Direct',
-    rockytPros: [
-      'Simple API key - start in 30 seconds',
-      'Programmatic Campaign & Ad Set creation',
-      'Automated Video & Image creative uploads',
-      'Real-time ROAS & conversion webhooks',
-      'One API for 6 ad networks'
-    ],
-    directApiCons: [
-      'Complex System User token generation & App review permissions',
-      'Extremely complex nested Graph API requests for Campaigns/AdSets/Ads',
-      'Frequent ad policy API breaking changes',
-      'Separate integration required per ad network',
-      'Difficult custom audience hash formatting'
-    ],
-    specialHighlight: {
-      title: 'Programmatic Ad Creation & Real-Time ROAS Webhooks',
-      desc: 'Launch targeted Facebook & Instagram ad campaigns programmatically. Monitor real-time conversion webhooks and adjust budgets dynamically with AI agents.'
-    },
-    contentTypes: [
-      { name: 'CBO Campaigns', icon: '📈' },
-      { name: 'Ad Sets & Bidding', icon: '🎯' },
-      { name: 'Video Ad Creatives', icon: '🎥' },
-      { name: 'Custom Audiences', icon: '👥' }
-    ],
-    guides: [
-      { title: 'Meta Ads API Guide', desc: 'Complete guide to launching Facebook & Instagram ads programmatically via API.' }
-    ],
-    curlCode: `curl -X POST https://api.rockyt.com/v1/ads/meta \\
-  -H "Authorization: Bearer rockyt_live_99f381a94b8e21c" \\
-  -d '{
-    "adAccountId": "act_991820192",
-    "name": "AI Agent Growth Campaign",
-    "dailyBudget": 5000,
-    "creative": {
-      "headline": "Ship Social API in 30s",
-      "mediaUrl": "https://cdn.rockyt.com/ad_video.mp4"
-    }
-  }'`,
-    nodeCode: `import Rockyt from "@rockyt/sdk";
-const rockyt = new Rockyt(process.env.ROCKYT_API_KEY!);
-
-await rockyt.ads.createMeta({
-  adAccountId: "act_991820192",
-  name: "AI Agent Growth Campaign",
-  dailyBudget: 5000,
-  creative: { headline: "Ship Social API in 30s", mediaUrl: "https://cdn.rockyt.com/ad_video.mp4" }
-});`,
-    pyCode: `from rockyt import Rockyt
-client = Rockyt(api_key="rockyt_live_99f381a94b8e21c")
-
-client.ads.create_meta(ad_account_id="act_991820192", daily_budget=5000)`,
-    mcpCode: `{
-  "tool": "rockyt_create_meta_ad",
-  "arguments": {
-    "adAccountId": "act_991820192",
-    "name": "AI Agent Growth Campaign",
-    "dailyBudget": 5000
-  }
-}`,
-    faq: [
-      { q: "Can I manage both Facebook and Instagram Ads?", a: "Yes. Meta Ads API covers placement across Facebook Feed, Instagram Reels, Stories, and Audience Network." }
-    ]
+    rockytPros: ['Simple API key - start in 30 seconds', 'Programmatic Campaign & Ad Set creation', 'Automated Video & Image creative uploads', 'Real-time ROAS & conversion webhooks', 'One API for 6 ad networks'],
+    directApiCons: ['Complex System User token generation & App review permissions', 'Extremely complex nested Graph API requests for Campaigns/AdSets/Ads', 'Frequent ad policy API breaking changes', 'Separate integration required per ad network', 'Difficult custom audience hash formatting'],
+    specialHighlight: { title: 'Programmatic Ad Creation & Real-Time ROAS Webhooks', desc: 'Launch targeted Facebook & Instagram ad campaigns programmatically. Monitor real-time conversion webhooks and adjust budgets dynamically with AI agents.' },
+    contentTypes: [{ name: 'CBO Campaigns', icon: '📈' }, { name: 'Ad Sets & Bidding', icon: '🎯' }, { name: 'Video Ad Creatives', icon: '🎥' }, { name: 'Custom Audiences', icon: '👥' }],
+    guides: [{ title: 'Meta Ads API Guide', desc: 'Complete guide to launching Facebook & Instagram ads programmatically via API.' }],
+    curlCode: `curl -X POST https://api.rockyt.com/v1/ads/meta -d '{"adAccountId": "act_9918", "name": "Growth Campaign", "dailyBudget": 5000}'`,
+    nodeCode: `await rockyt.ads.createMeta({ adAccountId: "act_9918", name: "Growth Campaign", dailyBudget: 5000 });`,
+    pyCode: `client.ads.create_meta(ad_account_id="act_9918", daily_budget=5000)`,
+    mcpCode: `{ "tool": "rockyt_create_meta_ad", "arguments": { "adAccountId": "act_9918", "name": "Growth Campaign", "dailyBudget": 5000 } }`,
+    faq: [{ q: "Can I manage both Facebook and Instagram Ads?", a: "Yes. Meta Ads API covers placement across Facebook Feed, Instagram Reels, Stories, and Audience Network." }]
+  },
+  '/google-ads': {
+    name: 'Google Ads',
+    displayName: 'Google Ads',
+    badge: 'GOOGLE ADS PARTNER',
+    category: 'PAID ADVERTISING',
+    endpoint: 'POST /v1/ads/google',
+    icon: '🔍',
+    tagline: 'Programmatic Search Campaigns, Performance Max & Conversion Tracking API',
+    description: "Stop wrestling with Google Ads API gRPC protos and Developer Token approvals. Rockyt provides clean REST JSON ad campaign management.",
+    directApiName: 'Google Ads API Direct (gRPC)',
+    rockytPros: ['Simple API key - start in 30 seconds', 'Programmatic Search & Performance Max campaigns', 'Keyword bid adjustments & negative list sync', 'Real-time conversion tracking webhooks', 'One API for 6 ad networks'],
+    directApiCons: ['Requires 6-week Developer Token application approval', 'Complex gRPC protobuf compilation & client libraries', 'OAuth 2.0 Manager Account (MCC) hierarchy rules', 'Separate integration required per ad network', 'Difficult conversion adjustment payload format'],
+    specialHighlight: { title: 'Search & Performance Max Campaigns Supported', desc: 'Launch Google Search campaigns and Performance Max assets programmatically. Adjust keyword bids and negative keyword lists automatically.' },
+    contentTypes: [{ name: 'Search Campaigns', icon: '🔍' }, { name: 'Performance Max', icon: '⚡' }, { name: 'Keyword Lists', icon: '📝' }, { name: 'Conversions API', icon: '🎯' }],
+    guides: [{ title: 'Google Ads API Guide', desc: 'Complete guide to launching Search & PMax ads programmatically.' }],
+    curlCode: `curl -X POST https://api.rockyt.com/v1/ads/google -d '{"customerId": "991-281-9912", "campaignName": "Search AI"}'`,
+    nodeCode: `await rockyt.ads.createGoogle({ customerId: "991-281-9912", campaignName: "Search AI" });`,
+    pyCode: `client.ads.create_google(customer_id="991-281-9912", campaign_name="Search AI")`,
+    mcpCode: `{ "tool": "rockyt_create_google_ad", "arguments": { "customerId": "991-281-9912", "campaignName": "Search AI" } }`,
+    faq: [{ q: "Do I need a Google Ads Developer Token?", a: "No. Rockyt routes requests through our approved enterprise Google Ads API Developer Token." }]
   }
 };
 
@@ -663,7 +477,7 @@ const defaultPlatformData = (slug: string): PlatformConfig => {
     name: cleanName,
     displayName: cleanName,
     badge: 'ROCKYT NATIVE PARTNER',
-    category: 'UNIFIED API',
+    category: slug.includes('ads') ? 'PAID ADVERTISING' : 'SOCIAL PUBLISHING',
     endpoint: `POST /v1${slug}`,
     icon: '🔌',
     tagline: `Programmatic ${cleanName} Integration API for AI Agents & Developers`,
@@ -784,7 +598,7 @@ const PlatformPage: React.FC<PlatformPageProps> = ({ slug, onBack, onGetApiKey, 
             <div className="flex flex-wrap items-center gap-4 pt-6">
               <button
                 onClick={onGetApiKey}
-                className="bg-brand text-white font-bold text-xs uppercase px-6 py-3.5 tracking-wider hover:bg-white hover:text-black transition-all border-2 border-brand flex items-center gap-2"
+                className="bg-brand text-white font-bold text-xs uppercase px-6 py-3.5 tracking-wider hover:bg-white hover:text-black transition-all border-2 border-brand flex items-center gap-2 shadow-hard"
               >
                 Start Free Trial <ArrowRight size={16} />
               </button>
