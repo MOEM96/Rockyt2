@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Layers, Key, CreditCard, LogOut, ArrowLeft, Check, Copy, Eye, EyeOff, 
   RefreshCw, Plus, Radio, ShieldCheck, Zap, DollarSign, ExternalLink, 
-  CheckCircle2, AlertTriangle, ArrowUpRight, Sparkles, Loader2 
+  CheckCircle2, AlertTriangle, ArrowUpRight, Sparkles, Loader2, AlertCircle, X
 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import OverlayCheckoutModal from './OverlayCheckoutModal';
@@ -110,6 +110,8 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const [checkoutSuccessMsg, setCheckoutSuccessMsg] = useState<string | null>(null);
   const [overlayCheckoutUrl, setOverlayCheckoutUrl] = useState<string | null>(null);
   const [connectingPlatform, setConnectingPlatform] = useState<string | null>(null);
+  const [showTopUpModal, setShowTopUpModal] = useState<boolean>(false);
+  const [topUpModalData, setTopUpModalData] = useState<{ platform: string; requiredBalance: number; currentBalance: number } | null>(null);
 
   // User Profile metadata
   const userEmail = userSession?.email || profile?.email || 'moamenemam966@gmail.com';
@@ -319,6 +321,17 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
         });
 
         const data = await res.json();
+
+        if (res.status === 402 || data.code === 'PAYMENT_REQUIRED' || data.reason === 'twitter_passthrough' || data.requiresDeposit) {
+          setTopUpModalData({
+            platform: platformName,
+            requiredBalance: data.requiredBalance || 1.00,
+            currentBalance: data.currentBalance ?? profile?.wallet_balance ?? 0
+          });
+          setShowTopUpModal(true);
+          setConnectingPlatform(null);
+          return;
+        }
 
         if (!res.ok) {
           throw new Error(data.error || `Failed to initiate ${platformName} connection`);
@@ -1005,6 +1018,74 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
           </div>
         )}
       </main>
+
+      {/* Wallet Top-Up Required Modal for X (Twitter) & Paid APIs */}
+      {showTopUpModal && topUpModalData && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-zinc-950 border border-brand/40 shadow-glow rounded-xl max-w-md w-full p-6 relative overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="absolute top-3 right-3">
+              <button
+                onClick={() => setShowTopUpModal(false)}
+                className="p-1 text-white/60 hover:text-white transition-colors rounded-lg hover:bg-white/10"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-brand/20 border border-brand/40 flex items-center justify-center text-brand flex-shrink-0">
+                <AlertCircle size={22} />
+              </div>
+              <div>
+                <h3 className="font-mono text-sm font-bold text-white uppercase tracking-wider">
+                  Wallet Top-Up Required
+                </h3>
+                <p className="text-[11px] text-brand font-mono uppercase tracking-widest">
+                  {topUpModalData.platform} API Pass-Through Integration
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-zinc-900/90 border border-white/10 rounded-lg p-4 mb-5 space-y-3">
+              <p className="text-xs text-white/80 leading-relaxed">
+                Connecting <strong className="text-white">{topUpModalData.platform}</strong> requires a minimum wallet balance due to official API pass-through costs. Please top up your Rockyt wallet to proceed.
+              </p>
+
+              <div className="grid grid-cols-2 gap-2.5 pt-2 border-t border-white/10 text-xs font-mono">
+                <div className="bg-black/50 p-2.5 rounded border border-white/5">
+                  <span className="block text-[10px] text-white/40 uppercase">Required Balance</span>
+                  <span className="text-emerald-400 font-bold text-sm">${topUpModalData.requiredBalance.toFixed(2)}</span>
+                </div>
+                <div className="bg-black/50 p-2.5 rounded border border-white/5">
+                  <span className="block text-[10px] text-white/40 uppercase">Your Current Wallet</span>
+                  <span className="text-white font-bold text-sm">${topUpModalData.currentBalance.toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2.5">
+              <button
+                onClick={() => {
+                  setShowTopUpModal(false);
+                  setActiveTab('billing');
+                }}
+                className="w-full bg-brand hover:bg-brand-light text-white font-mono font-bold text-xs py-3 uppercase tracking-wider shadow-glow transition-all flex items-center justify-center gap-2"
+              >
+                <CreditCard size={15} /> Top Up Wallet Now
+              </button>
+
+              <a
+                href="/docs"
+                target="_blank"
+                rel="noreferrer"
+                className="w-full bg-zinc-900 hover:bg-zinc-800 border border-white/15 text-white/70 hover:text-white font-mono text-xs py-2.5 flex items-center justify-center gap-2 uppercase tracking-wider transition-colors"
+              >
+                <ExternalLink size={14} /> View Pricing &amp; API Specs
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Dodo Payments Overlay Checkout Modal */}
       <OverlayCheckoutModal 

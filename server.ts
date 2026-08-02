@@ -1180,6 +1180,38 @@ async function startServer() {
       console.warn('[POST /api/v1/accounts/connect] ensureUserProfile warning:', profErr.message);
     }
 
+    // Check user's wallet balance for paid platform integrations (e.g. X/Twitter API pass-through costs)
+    let currentBalance = 0;
+    if (supabase && req.user?.id) {
+      try {
+        const { data: profRow } = await supabase
+          .from('profiles')
+          .select('wallet_balance')
+          .eq('id', req.user.id)
+          .maybeSingle();
+        if (profRow && typeof profRow.wallet_balance === 'number') {
+          currentBalance = profRow.wallet_balance;
+        }
+      } catch (balErr: any) {
+        console.warn('[POST /api/v1/accounts/connect] wallet_balance lookup warning:', balErr.message);
+      }
+    }
+
+    const isPaidPlatform = cleanPlatform === 'twitter' || cleanPlatform === 'x';
+    const requiredPassThroughFee = 1.00;
+
+    // Check if user has sufficient funds in Rockyt wallet
+    if (isPaidPlatform && currentBalance < requiredPassThroughFee) {
+      return res.status(402).json({
+        error: 'X (Twitter) requires an active wallet balance ($1.00 minimum) due to API pass-through costs. Please top up your Rockyt wallet to connect an X account.',
+        code: 'PAYMENT_REQUIRED',
+        reason: 'twitter_passthrough',
+        requiredBalance: requiredPassThroughFee,
+        currentBalance: currentBalance,
+        requiresDeposit: true
+      });
+    }
+
     const appBaseUrl = process.env.APP_BASE_URL || (req.headers.origin || `https://${req.headers.host}`);
     const clientRedirectUrl = redirectUrl || `${appBaseUrl}/dashboard?account_connected=true&platform=${encodeURIComponent(cleanPlatform)}`;
     const callbackUrl = `${appBaseUrl}/oauth/callback?platform=${encodeURIComponent(cleanPlatform)}&returnTo=${encodeURIComponent(clientRedirectUrl)}`;
@@ -1214,7 +1246,20 @@ async function startServer() {
             'Authorization': `Bearer ${apiKey}`
           }
         });
-        if (zernioRes.ok) {
+        
+        if (!zernioRes.ok) {
+          const errData = await zernioRes.json().catch(() => ({}));
+          if (zernioRes.status === 402 || errData.code === 'PAYMENT_REQUIRED' || errData.reason === 'twitter_passthrough') {
+            return res.status(402).json({
+              error: errData.error || 'X (Twitter) requires an active wallet balance due to API pass-through costs. Please top up your Rockyt wallet.',
+              code: 'PAYMENT_REQUIRED',
+              reason: 'twitter_passthrough',
+              requiredBalance: requiredPassThroughFee,
+              currentBalance: currentBalance,
+              requiresDeposit: true
+            });
+          }
+        } else {
           const zernioData = await zernioRes.json();
           targetOAuthUrl = zernioData.authUrl || zernioData.url || null;
         }
@@ -1226,6 +1271,29 @@ async function startServer() {
     // 3. Fallback URL
     if (!targetOAuthUrl) {
       targetOAuthUrl = `https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId || 'default')}&redirectUrl=${encodeURIComponent(callbackUrl)}&reconnect=true&prompt=consent&force_reconnect=true`;
+    }
+
+    // If user has balance for paid platform, charge pass-through fee from wallet on successful URL generation
+    if (isPaidPlatform && currentBalance >= requiredPassThroughFee && supabase && req.user?.id) {
+      try {
+        const newBalance = currentBalance - requiredPassThroughFee;
+        await supabase
+          .from('profiles')
+          .update({ wallet_balance: newBalance })
+          .eq('id', req.user.id);
+
+        await supabase
+          .from('wallet_transactions')
+          .insert({
+            user_id: req.user.id,
+            amount: -requiredPassThroughFee,
+            type: 'debit',
+            description: 'X (Twitter) API Pass-Through Connection Fee',
+            balance_after: newBalance
+          });
+      } catch (debitErr: any) {
+        console.warn('[POST /api/v1/accounts/connect] Wallet debit warning:', debitErr.message);
+      }
     }
 
     // Return the actual targetOAuthUrl to client so browser navigates directly to OAuth consent screen
