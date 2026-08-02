@@ -113,10 +113,12 @@ async function startServer() {
   });
 
   // ─── Auth & OAuth routes ───
-  app.get('/api/auth/google', (_req, res) => {
-    const supabaseUrl = process.env.VITE_SUPABASE_URL;
+  app.get('/api/auth/google', (req: any, res: any) => {
+    const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
     if (!supabaseUrl) return res.status(500).json({ error: 'Supabase not configured on server' });
-    const appBase = process.env.APP_BASE_URL || 'http://localhost:3000';
+    const host = req.headers.host || 'rockyt.io';
+    const protocol = req.headers['x-forwarded-proto'] || (host.includes('localhost') ? 'http' : 'https');
+    const appBase = process.env.APP_BASE_URL || `${protocol}://${host}`;
     const redirectTo = encodeURIComponent(`${appBase}/api/auth/callback`);
     return res.redirect(`${supabaseUrl}/auth/v1/authorize?provider=google&redirect_to=${redirectTo}`);
   });

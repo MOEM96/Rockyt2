@@ -1,0 +1,38 @@
+{
+  "redirects": [
+    {
+      "source": "/:path(.*)",
+      "has": [{ "type": "host", "value": "www.rockyt.io" }],
+      "destination": "https://rockyt.io/:path",
+      "permanent": true
+    }
+  ],
+  "builds": [
+    { "src": "server.ts", "use": "@vercel/node", "config": { "excludeFiles": "{cloned_site/**,public/**}" } },
+    { "src": "package.json", "use": "@vercel/static-build", "config": { "distDir": "dist" } }
+  ],
+  "routes": [
+    { "src": "/api/(.*)", "dest": "server.ts" },
+    { "src": "/oauth/callback", "dest": "server.ts" },
+    { "src": "/monitoring(.*)", "dest": "server.ts" },
+    { "src": "/health", "dest": "server.ts" },
+    { "src": "/ph-data(.*)", "dest": "server.ts" },
+    { "src": "/js/script.js", "dest": "server.ts" },
+    { "src": "/149e9513-01fa-4fb0-aad4-566afd725d1b(.*)", "dest": "server.ts" },
+    { "src": "/_next/image(.*)", "dest": "server.ts" },
+    { "src": "/image(.*)", "dest": "server.ts" },
+    { "src": "/llms-full.txt", "dest": "/llms-full.txt" },
+    { "src": "/mcp-agent.md", "dest": "/mcp-agent.md" },
+    { "src": "/agent-quickstart.md", "dest": "/agent-quickstart.md" },
+    { "src": "/auth.md", "dest": "/auth.md" },
+    { "src": "/openapi.yaml", "dest": "/openapi.yaml" },
+    { "src": "/sitemap.xml", "dest": "/sitemap.xml" },
+    { "src": "/robots.txt", "dest": "/robots.txt" },
+    { "src": "/assets/(.*)", "dest": "/assets/$1" },
+    { "src": "/_next/(.*)", "dest": "/_next/$1" },
+    { "src": "/images/(.*)", "dest": "/images/$1" },
+    { "src": "/brand/(.*)", "dest": "/brand/$1" },
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/index.html" }
+  ]
+}
