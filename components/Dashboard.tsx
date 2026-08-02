@@ -487,7 +487,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   });
 
   return (
-    <div className="min-h-screen bg-black text-white font-mono flex flex-col md:flex-row">
+    <div className="relative z-20 w-full min-h-screen bg-black text-white font-mono flex flex-col md:flex-row">
       
       {/* LEFT SIDEBAR NAVIGATION */}
       <aside className="w-full md:w-64 bg-zinc-950 border-r border-white/10 p-4 flex flex-col justify-between shrink-0">

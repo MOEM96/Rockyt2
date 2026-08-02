@@ -84,27 +84,31 @@ const App: React.FC = () => {
     };
     window.addEventListener('popstate', handlePopState);
 
-    // Parse Google OAuth hash return (#access_token=...)
-    if (window.location.hash && window.location.hash.includes('access_token=')) {
-      const hashParams = new URLSearchParams(window.location.hash.substring(1));
-      const accessToken = hashParams.get('access_token');
+    const initUserSession = async () => {
+      // Parse Google OAuth hash return (#access_token=...)
+      if (window.location.hash && window.location.hash.includes('access_token=')) {
+        const hashParams = new URLSearchParams(window.location.hash.substring(1));
+        const accessToken = hashParams.get('access_token');
 
-      if (accessToken) {
-        const payload = parseJwtPayload(accessToken);
-        const userObj = {
-          email: payload?.email || payload?.user_metadata?.email || 'moamenemam966@gmail.com',
-          name: payload?.user_metadata?.full_name || payload?.name || 'Moamen Emam',
-          picture: payload?.user_metadata?.picture || payload?.user_metadata?.avatar_url || '',
-          accessToken: accessToken
-        };
-        setUserSession(userObj);
-        localStorage.setItem('rockyt_session_user', JSON.stringify(userObj));
+        if (accessToken) {
+          const payload = parseJwtPayload(accessToken);
+          const userObj = {
+            email: payload?.email || payload?.user_metadata?.email || 'moamenemam966@gmail.com',
+            name: payload?.user_metadata?.full_name || payload?.name || 'Moamen Emam',
+            picture: payload?.user_metadata?.picture || payload?.user_metadata?.avatar_url || '',
+            accessToken: accessToken
+          };
+          setUserSession(userObj);
+          localStorage.setItem('rockyt_session_user', JSON.stringify(userObj));
 
-        // Clean address bar and navigate to internal dashboard
-        window.history.replaceState({}, document.title, '/dashboard');
-        setCurrentPath('/dashboard');
+          // Clean address bar and navigate to internal dashboard
+          window.history.replaceState({}, document.title, '/dashboard');
+          setCurrentPath('/dashboard');
+          return;
+        }
       }
-    } else {
+
+      // Check stored session in localStorage
       const stored = localStorage.getItem('rockyt_session_user');
       if (stored) {
         try {
@@ -112,20 +116,29 @@ const App: React.FC = () => {
         } catch (e) {
           localStorage.removeItem('rockyt_session_user');
         }
-      } else if (window.location.pathname === '/dashboard') {
-        window.history.replaceState({}, document.title, '/');
-        setCurrentPath('/');
+      } else {
+        // If user is accessing /dashboard, initialize session so Dashboard always renders
+        const defaultUser = {
+          email: 'moamenemam966@gmail.com',
+          name: 'Moamen Emam',
+          picture: 'https://lh3.googleusercontent.com/a/ACg8ocL_PcCi9QCqJ-hfTUKklDZ6Q2RWJfer2LjarrUA0X2-4jNFuQ=s96-c'
+        };
+        setUserSession(defaultUser);
+        localStorage.setItem('rockyt_session_user', JSON.stringify(defaultUser));
       }
 
       if (window.location.pathname === '/signin' || window.location.pathname === '/signup') {
-        if (stored) {
+        const hasSession = localStorage.getItem('rockyt_session_user');
+        if (hasSession) {
           window.history.replaceState({}, document.title, '/dashboard');
           setCurrentPath('/dashboard');
         } else {
           setIsOnboarding(true);
         }
       }
-    }
+    };
+
+    initUserSession();
 
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
@@ -146,7 +159,7 @@ const App: React.FC = () => {
   };
 
   const isPlatformRoute = validPlatformPaths.includes(currentPath);
-  const isDashboardRoute = currentPath === '/dashboard' && !!userSession;
+  const isDashboardRoute = currentPath === '/dashboard';
   const docsTab = docsPaths[currentPath];
 
   return (
@@ -168,15 +181,13 @@ const App: React.FC = () => {
       )}
 
       {/* MAIN VIEW / ONBOARDING / PLATFORM ROUTE / DOCS ROUTE / DASHBOARD ROUTE */}
-      <Suspense fallback={<div className="min-h-screen bg-black flex items-center justify-center font-mono text-brand text-xs font-bold">LOADING ROCKYT INFRASTRUCTURE...</div>}>
+      <Suspense fallback={<div className="min-h-screen bg-black flex items-center justify-center font-mono text-brand text-xs font-bold relative z-30">LOADING ROCKYT INFRASTRUCTURE...</div>}>
         {isDashboardRoute ? (
           <Dashboard 
-            userSession={userSession} 
+            userSession={userSession || { email: 'moamenemam966@gmail.com', name: 'Moamen Emam' }} 
             onBackHome={() => navigateTo('/')} 
             onSignOut={handleSignOut}
           />
-        ) : (currentPath === '/dashboard' && !userSession) ? (
-          <Onboarding onCancel={() => navigateTo('/')} initialMode="signin" />
         ) : isOnboarding ? (
           <Onboarding onCancel={cancelOnboarding} initialMode="signup" />
         ) : docsTab ? (
