@@ -41,15 +41,15 @@ const Navbar: React.FC<NavbarProps> = ({ onNavigateHome, onOpenAgentSetup, onNav
 
   return (
     <nav className="fixed top-0 left-0 w-full z-50 bg-black/85 backdrop-blur-md border-b border-white/10 text-white">
-      <div className="max-w-[1400px] mx-auto px-4 py-3 flex justify-between items-center">
+      <div className="max-w-[1400px] mx-auto px-4 py-3 flex items-center justify-between">
         
-        {/* LOGO & BRANDING */}
+        {/* LEFT: LOGO & BRANDING */}
         <div 
           onClick={() => {
             if (onNavigateHome) onNavigateHome();
             window.scrollTo({ top: 0, behavior: 'smooth' });
           }}
-          className="flex flex-col cursor-pointer group shrink-0"
+          className="flex flex-col cursor-pointer group shrink-0 min-w-[220px]"
         >
           <div className="flex items-center gap-2">
             <div className="bg-white text-ink px-2.5 py-1 font-display font-bold text-xl tracking-tighter shadow-hard group-hover:bg-brand group-hover:text-white transition-all">
@@ -64,8 +64,8 @@ const Navbar: React.FC<NavbarProps> = ({ onNavigateHome, onOpenAgentSetup, onNav
           </span>
         </div>
         
-        {/* DESKTOP NAV LINKS WITH HOVER DROPDOWNS */}
-        <div className="hidden md:flex items-center gap-2">
+        {/* CENTER: DESKTOP NAV TABS [01] to [04] (+ [05] DASHBOARD IF SIGNED IN) */}
+        <div className="hidden md:flex items-center justify-center gap-2.5 flex-1 mx-4">
           
           {/* TAB 01: CHANNELS (WITH SEGMENTED DROPDOWN) */}
           <div className="relative group">
@@ -78,7 +78,7 @@ const Navbar: React.FC<NavbarProps> = ({ onNavigateHome, onOpenAgentSetup, onNav
             </a>
 
             {/* CHANNELS HOVER DROPDOWN MENU */}
-            <div className="absolute top-full left-0 mt-1.5 w-[680px] bg-zinc-950/95 border-2 border-white/20 p-6 backdrop-blur-xl shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-all duration-200 z-50 rounded-sm">
+            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 w-[680px] bg-zinc-950/95 border-2 border-white/20 p-6 backdrop-blur-xl shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-all duration-200 z-50 rounded-sm">
               <div className="grid grid-cols-3 gap-6">
                 
                 {/* SOCIAL SEGMENT */}
@@ -86,7 +86,7 @@ const Navbar: React.FC<NavbarProps> = ({ onNavigateHome, onOpenAgentSetup, onNav
                   <div className="flex items-center gap-1.5 font-mono text-[10px] text-brand font-bold uppercase tracking-wider mb-3 pb-1 border-b border-white/10">
                     <Share2 size={12} /> SOCIAL NETWORKS
                   </div>
-                  <div className="space-y-1 font-mono text-xs">
+                  <div className="space-y-1 font-mono text-xs text-left">
                     <a href="/x" onClick={(e) => handleRouteClick(e, '/x')} className="block p-1.5 rounded hover:bg-white/10 hover:text-brand transition-colors text-white/80">X / Twitter API</a>
                     <a href="/instagram" onClick={(e) => handleRouteClick(e, '/instagram')} className="block p-1.5 rounded hover:bg-white/10 hover:text-brand transition-colors text-white/80">Instagram API</a>
                     <a href="/tiktok" onClick={(e) => handleRouteClick(e, '/tiktok')} className="block p-1.5 rounded hover:bg-white/10 hover:text-brand transition-colors text-white/80">TikTok API</a>
@@ -100,34 +100,29 @@ const Navbar: React.FC<NavbarProps> = ({ onNavigateHome, onOpenAgentSetup, onNav
                 {/* MESSAGING SEGMENT */}
                 <div>
                   <div className="flex items-center gap-1.5 font-mono text-[10px] text-cyan-400 font-bold uppercase tracking-wider mb-3 pb-1 border-b border-white/10">
-                    <MessageSquare size={12} /> MESSAGING CHANNELS
+                    <MessageSquare size={12} /> MESSAGING &amp; BOTS
                   </div>
-                  <div className="space-y-1 font-mono text-xs">
+                  <div className="space-y-1 font-mono text-xs text-left">
                     <a href="/whatsapp" onClick={(e) => handleRouteClick(e, '/whatsapp')} className="block p-1.5 rounded hover:bg-white/10 hover:text-cyan-300 transition-colors text-white/80">WhatsApp Business API</a>
-                    <a href="/telegram" onClick={(e) => handleRouteClick(e, '/telegram')} className="block p-1.5 rounded hover:bg-white/10 hover:text-cyan-300 transition-colors text-white/80">Telegram API</a>
-                    <a href="/discord" onClick={(e) => handleRouteClick(e, '/discord')} className="block p-1.5 rounded hover:bg-white/10 hover:text-cyan-300 transition-colors text-white/80">Discord API</a>
-                    <a href="/slack" onClick={(e) => handleRouteClick(e, '/slack')} className="block p-1.5 rounded hover:bg-white/10 hover:text-cyan-300 transition-colors text-white/80">Slack API</a>
-                    <a href="/snapchat" onClick={(e) => handleRouteClick(e, '/snapchat')} className="block p-1.5 rounded hover:bg-white/10 hover:text-cyan-300 transition-colors text-white/80">Snapchat API</a>
+                    <a href="/telegram" onClick={(e) => handleRouteClick(e, '/telegram')} className="block p-1.5 rounded hover:bg-white/10 hover:text-cyan-300 transition-colors text-white/80">Telegram Bot API</a>
+                    <a href="/discord" onClick={(e) => handleRouteClick(e, '/discord')} className="block p-1.5 rounded hover:bg-white/10 hover:text-cyan-300 transition-colors text-white/80">Discord Webhooks API</a>
+                    <a href="/slack" onClick={(e) => handleRouteClick(e, '/slack')} className="block p-1.5 rounded hover:bg-white/10 hover:text-cyan-300 transition-colors text-white/80">Slack App API</a>
                   </div>
                 </div>
 
                 {/* ADS SEGMENT */}
                 <div>
                   <div className="flex items-center gap-1.5 font-mono text-[10px] text-emerald-400 font-bold uppercase tracking-wider mb-3 pb-1 border-b border-white/10">
-                    <Megaphone size={12} /> ADS &amp; ENTERPRISE
+                    <Megaphone size={12} /> AD CAMPAIGNS
                   </div>
-                  <div className="space-y-1 font-mono text-xs">
+                  <div className="space-y-1 font-mono text-xs text-left">
                     <a href="/meta-ads" onClick={(e) => handleRouteClick(e, '/meta-ads')} className="block p-1.5 rounded hover:bg-white/10 hover:text-emerald-300 transition-colors text-white/80">Meta Ads API</a>
                     <a href="/google-ads" onClick={(e) => handleRouteClick(e, '/google-ads')} className="block p-1.5 rounded hover:bg-white/10 hover:text-emerald-300 transition-colors text-white/80">Google Ads API</a>
-                    <a href="/googlebusiness" onClick={(e) => handleRouteClick(e, '/googlebusiness')} className="block p-1.5 rounded hover:bg-white/10 hover:text-emerald-300 transition-colors text-white/80">Google Business API</a>
+                    <a href="/linkedin-ads" onClick={(e) => handleRouteClick(e, '/linkedin-ads')} className="block p-1.5 rounded hover:bg-white/10 hover:text-emerald-300 transition-colors text-white/80">LinkedIn Ads API</a>
+                    <a href="/tiktok-ads" onClick={(e) => handleRouteClick(e, '/tiktok-ads')} className="block p-1.5 rounded hover:bg-white/10 hover:text-emerald-300 transition-colors text-white/80">TikTok Ads API</a>
                   </div>
                 </div>
 
-              </div>
-              <div className="mt-4 pt-3 border-t border-white/10 text-right">
-                <a href="#channels" onClick={(e) => handleNavClick(e, 'channels')} className="font-mono text-[10px] text-brand hover:underline font-bold uppercase">
-                  VIEW ALL 16 CHANNELS &rarr;
-                </a>
               </div>
             </div>
           </div>
@@ -135,55 +130,51 @@ const Navbar: React.FC<NavbarProps> = ({ onNavigateHome, onOpenAgentSetup, onNav
           {/* TAB 02: SOLUTIONS */}
           <div className="relative group">
             <a 
-              href="#mcp-skills" 
-              onClick={(e) => handleNavClick(e, 'mcp-skills')}
+              href="#why-rockyt" 
+              onClick={(e) => handleNavClick(e, 'why-rockyt')}
               className="border border-white/20 bg-black/60 backdrop-blur-sm px-3.5 py-1.5 font-mono text-[11px] hover:bg-brand hover:text-white hover:border-brand transition-colors rounded-sm flex items-center gap-1.5 font-semibold"
             >
               [02] SOLUTIONS <ChevronDown size={12} className="opacity-70 group-hover:rotate-180 transition-transform" />
             </a>
 
             {/* SOLUTIONS HOVER DROPDOWN MENU */}
-            <div className="absolute top-full left-0 mt-1.5 w-[560px] bg-zinc-950/95 border-2 border-white/20 p-6 backdrop-blur-xl shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-all duration-200 z-50 rounded-sm">
-              <div className="grid grid-cols-2 gap-6">
+            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 w-[520px] bg-zinc-950/95 border-2 border-white/20 p-5 backdrop-blur-xl shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-all duration-200 z-50 rounded-sm">
+              <div className="grid grid-cols-2 gap-4">
                 
-                {/* SEGMENT 1: FOR AI AGENTS */}
+                {/* FOR AI AGENTS */}
                 <div>
-                  <div className="flex items-center gap-1.5 font-mono text-[10px] text-brand font-bold uppercase tracking-wider mb-3 pb-1 border-b border-white/10">
-                    <Bot size={12} /> FOR AI AGENTS &amp; LLMS
+                  <div className="flex items-center gap-1.5 font-mono text-[10px] text-brand font-bold uppercase tracking-wider mb-2 pb-1 border-b border-white/10">
+                    <Cpu size={12} /> FOR AI AGENTS
                   </div>
-                  <div className="space-y-2 font-mono text-xs">
+                  <div className="space-y-1.5 font-mono text-xs text-left">
                     <a href="#mcp-skills" onClick={(e) => handleNavClick(e, 'mcp-skills')} className="block p-2 rounded bg-white/5 hover:bg-brand hover:text-white transition-colors">
-                      <div className="font-bold">Autonomous Dispatcher</div>
-                      <div className="text-[10px] opacity-70">Cross-platform content generation &amp; posting</div>
+                      <div className="font-bold">Claude &amp; Cursor MCP</div>
+                      <div className="text-[10px] opacity-70">Native Model Context Protocol Server</div>
+                    </a>
+                    <a href="#mcp-skills" onClick={(e) => handleNavClick(e, 'mcp-skills')} className="block p-2 rounded bg-white/5 hover:bg-brand hover:text-white transition-colors">
+                      <div className="font-bold font-mono">Autonomous Posting</div>
+                      <div className="text-[10px] opacity-70">Schedule &amp; publish without human intervention</div>
                     </a>
                     <a href="#mcp-skills" onClick={(e) => handleNavClick(e, 'mcp-skills')} className="block p-2 rounded bg-white/5 hover:bg-brand hover:text-white transition-colors">
                       <div className="font-bold">Comment-to-DM Funnel</div>
-                      <div className="text-[10px] opacity-70">Instant WhatsApp lead capture &amp; response</div>
-                    </a>
-                    <a href="#mcp-skills" onClick={(e) => handleNavClick(e, 'mcp-skills')} className="block p-2 rounded bg-white/5 hover:bg-brand hover:text-white transition-colors">
-                      <div className="font-bold">Native MCP Tool Server</div>
-                      <div className="text-[10px] opacity-70">@rockyt/mcp-server for Claude &amp; Cursor</div>
+                      <div className="text-[10px] opacity-70">Auto-reply &amp; DM users on Instagram &amp; X</div>
                     </a>
                   </div>
                 </div>
 
-                {/* SEGMENT 2: FOR AGENCIES & DEVELOPERS */}
+                {/* FOR DEVELOPERS & AGENCIES */}
                 <div>
-                  <div className="flex items-center gap-1.5 font-mono text-[10px] text-cyan-400 font-bold uppercase tracking-wider mb-3 pb-1 border-b border-white/10">
+                  <div className="flex items-center gap-1.5 font-mono text-[10px] text-cyan-400 font-bold uppercase tracking-wider mb-2 pb-1 border-b border-white/10">
                     <Zap size={12} /> FOR AGENCIES &amp; DEVS
                   </div>
-                  <div className="space-y-2 font-mono text-xs">
+                  <div className="space-y-1.5 font-mono text-xs text-left">
                     <a href="#why-rockyt" onClick={(e) => handleNavClick(e, 'why-rockyt')} className="block p-2 rounded bg-white/5 hover:bg-cyan-600 hover:text-white transition-colors">
-                      <div className="font-bold">n8n, Make &amp; Zapier Connectors</div>
-                      <div className="text-[10px] opacity-70">Connect 16 channels to no-code workflows</div>
+                      <div className="font-bold">n8n, Make &amp; Zapier</div>
+                      <div className="text-[10px] opacity-70">No-code workflow automation nodes</div>
                     </a>
                     <a href="#why-rockyt" onClick={(e) => handleNavClick(e, 'why-rockyt')} className="block p-2 rounded bg-white/5 hover:bg-cyan-600 hover:text-white transition-colors">
                       <div className="font-bold">Agency Multi-Client Vault</div>
                       <div className="text-[10px] opacity-70">Single key for 100+ social client accounts</div>
-                    </a>
-                    <a href="#why-rockyt" onClick={(e) => handleNavClick(e, 'why-rockyt')} className="block p-2 rounded bg-white/5 hover:bg-cyan-600 hover:text-white transition-colors">
-                      <div className="font-bold">Custom Agentic Skills</div>
-                      <div className="text-[10px] opacity-70">Extend Rockyt SDK for specialized tools</div>
                     </a>
                   </div>
                 </div>
@@ -203,7 +194,7 @@ const Navbar: React.FC<NavbarProps> = ({ onNavigateHome, onOpenAgentSetup, onNav
             </a>
 
             {/* DOCS HOVER DROPDOWN MENU */}
-            <div className="absolute top-full left-0 mt-1.5 w-[420px] bg-zinc-950/95 border-2 border-white/20 p-5 backdrop-blur-xl shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-all duration-200 z-50 rounded-sm">
+            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 w-[420px] bg-zinc-950/95 border-2 border-white/20 p-5 backdrop-blur-xl shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-all duration-200 z-50 rounded-sm">
               <div className="grid grid-cols-2 gap-4">
                 
                 {/* API DOCS */}
@@ -211,7 +202,7 @@ const Navbar: React.FC<NavbarProps> = ({ onNavigateHome, onOpenAgentSetup, onNav
                   <div className="flex items-center gap-1.5 font-mono text-[10px] text-brand font-bold uppercase tracking-wider mb-3 pb-1 border-b border-white/10">
                     <FileText size={12} /> API DOCS
                   </div>
-                  <div className="space-y-1 font-mono text-xs">
+                  <div className="space-y-1 font-mono text-xs text-left">
                     <a href="/docs" onClick={(e) => handleRouteClick(e, '/docs')} className="block p-1.5 rounded hover:bg-white/10 hover:text-brand transition-colors text-white/80">REST API Reference</a>
                     <a href="/mcp" onClick={(e) => handleRouteClick(e, '/mcp')} className="block p-1.5 rounded hover:bg-white/10 hover:text-brand transition-colors text-white/80">MCP Protocol Spec</a>
                     <a href="/agent-quickstart" onClick={(e) => handleRouteClick(e, '/agent-quickstart')} className="block p-1.5 rounded hover:bg-white/10 hover:text-brand transition-colors text-white/80">Agent Quickstart</a>
@@ -223,7 +214,7 @@ const Navbar: React.FC<NavbarProps> = ({ onNavigateHome, onOpenAgentSetup, onNav
                   <div className="flex items-center gap-1.5 font-mono text-[10px] text-emerald-400 font-bold uppercase tracking-wider mb-3 pb-1 border-b border-white/10">
                     <ShieldCheck size={12} /> SECURITY
                   </div>
-                  <div className="space-y-1 font-mono text-xs">
+                  <div className="space-y-1 font-mono text-xs text-left">
                     <a href="#sandbox" onClick={(e) => handleNavClick(e, 'sandbox')} className="block p-1.5 rounded hover:bg-white/10 hover:text-emerald-300 transition-colors text-white/80">Hosted OAuth Vault</a>
                     <a href="#sandbox" onClick={(e) => handleNavClick(e, 'sandbox')} className="block p-1.5 rounded hover:bg-white/10 hover:text-emerald-300 transition-colors text-white/80">Data Encryption</a>
                     <a href="#sandbox" onClick={(e) => handleNavClick(e, 'sandbox')} className="block p-1.5 rounded hover:bg-white/10 hover:text-emerald-300 transition-colors text-white/80">Rate Limits &amp; SLA</a>
@@ -253,26 +244,28 @@ const Navbar: React.FC<NavbarProps> = ({ onNavigateHome, onOpenAgentSetup, onNav
               [05] DASHBOARD
             </a>
           )}
+        </div>
 
-          {/* CTA BUTTON */}
+        {/* RIGHT: CTA BUTTON & MOBILE TOGGLE */}
+        <div className="flex items-center justify-end gap-2 shrink-0 min-w-[220px]">
           <button
             onClick={() => {
               if (onOpenAgentSetup) onOpenAgentSetup();
             }}
-            className="ml-2 border border-brand text-brand bg-brand/10 backdrop-blur-sm px-4 py-1.5 font-mono text-[11px] hover:bg-brand hover:text-white transition-colors rounded-sm font-bold flex items-center gap-1.5 shadow-glow"
+            className="hidden md:flex border border-brand text-brand bg-brand/10 backdrop-blur-sm px-4 py-1.5 font-mono text-[11px] hover:bg-brand hover:text-white transition-colors rounded-sm font-bold items-center gap-1.5 shadow-glow"
           >
             <Terminal size={12} /> GET API KEY
           </button>
-        </div>
 
-        {/* MOBILE MENU TOGGLE */}
-        <button 
-          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          className="md:hidden p-2 text-white/80 hover:text-white border border-white/20 bg-black/50"
-          aria-label="Toggle Navigation"
-        >
-          {mobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
-        </button>
+          {/* MOBILE MENU TOGGLE */}
+          <button 
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="md:hidden p-2 text-white/80 hover:text-white border border-white/20 bg-black/50"
+            aria-label="Toggle Navigation"
+          >
+            {mobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
+          </button>
+        </div>
       </div>
 
       {/* MOBILE DROPDOWN */}
