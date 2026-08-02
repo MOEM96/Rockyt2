@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 120" width="500" height="120" fill="none">
+  <defs>
+    <linearGradient id="rockytGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF8DAA" />
+      <stop offset="100%" stop-color="#D35D88" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Rocket Cyber Node Icon -->
+  <g transform="translate(10, 10)">
+    <!-- Outer Orbital Ring -->
+    <circle cx="50" cy="50" r="44" stroke="#D35D88" stroke-width="3" stroke-dasharray="8 6" opacity="0.6" />
+    
+    <!-- Cyber Rocket Icon -->
+    <path d="M 50 15 C 65 30 72 50 68 75 L 50 68 L 32 75 C 28 50 35 30 50 15 Z" fill="url(#rockytGrad)" filter="url(#glow)" />
+    <path d="M 45 42 L 55 42 L 50 30 Z" fill="#FFFFFF" />
+    <circle cx="50" cy="52" r="5" fill="#050505" />
+    <circle cx="50" cy="52" r="2.5" fill="#38BDF8" />
+
+    <!-- Thruster Glow Nodes -->
+    <path d="M 42 74 L 50 90 L 58 74 Z" fill="#38BDF8" opacity="0.8" />
+  </g>
+
+  <!-- Brand Typography -->
+  <text x="125" y="72" font-family="'Oswald', sans-serif" font-weight="700" font-size="58" fill="#FFFFFF" letter-spacing="4">ROCKYT</text>
+  <text x="350" y="72" font-family="'Oswald', sans-serif" font-weight="700" font-size="58" fill="#D35D88" letter-spacing="4">.IO</text>
+  <text x="127" y="96" font-family="'IBM Plex Mono', monospace" font-size="12" fill="rgba(255,255,255,0.6)" letter-spacing="3">UNIFIED API // SOCIAL · MESSAGING · ADS</text>
+</svg>
