@@ -58,6 +58,18 @@ const App: React.FC = () => {
   const [isOnboarding, setIsOnboarding] = useState(false);
   const [userSession, setUserSession] = useState<any>(null);
 
+  const handleSignOut = async () => {
+    setUserSession(null);
+    localStorage.removeItem('rockyt_session_user');
+    sessionStorage.clear();
+    try {
+      await fetch('/api/auth/signout', { method: 'POST' });
+    } catch (e) {}
+    window.history.replaceState({}, document.title, '/');
+    setCurrentPath('/');
+    setIsOnboarding(true);
+  };
+
   useEffect(() => {
     const handlePopState = () => {
       setCurrentPath(window.location.pathname);
@@ -89,7 +101,13 @@ const App: React.FC = () => {
       if (stored) {
         try {
           setUserSession(JSON.parse(stored));
-        } catch (e) {}
+        } catch (e) {
+          localStorage.removeItem('rockyt_session_user');
+        }
+      } else if (window.location.pathname === '/dashboard') {
+        window.history.replaceState({}, document.title, '/');
+        setCurrentPath('/');
+        setIsOnboarding(true);
       }
 
       if (window.location.pathname === '/signin' || window.location.pathname === '/signup') {
@@ -121,7 +139,7 @@ const App: React.FC = () => {
   };
 
   const isPlatformRoute = validPlatformPaths.includes(currentPath);
-  const isDashboardRoute = currentPath === '/dashboard';
+  const isDashboardRoute = currentPath === '/dashboard' && !!userSession;
   const docsTab = docsPaths[currentPath];
 
   return (
@@ -147,12 +165,10 @@ const App: React.FC = () => {
           <Dashboard 
             userSession={userSession} 
             onBackHome={() => navigateTo('/')} 
-            onSignOut={() => {
-              setUserSession(null);
-              localStorage.removeItem('rockyt_session_user');
-              navigateTo('/');
-            }}
+            onSignOut={handleSignOut}
           />
+        ) : (currentPath === '/dashboard' && !userSession) ? (
+          <Onboarding onCancel={() => navigateTo('/')} />
         ) : isOnboarding ? (
           <Onboarding onCancel={cancelOnboarding} />
         ) : docsTab ? (
