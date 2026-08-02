@@ -90,6 +90,15 @@ const App: React.FC = () => {
           setUserSession(JSON.parse(stored));
         } catch (e) {}
       }
+
+      if (window.location.pathname === '/signin' || window.location.pathname === '/signup') {
+        if (stored) {
+          window.history.replaceState({}, document.title, '/dashboard');
+          setCurrentPath('/dashboard');
+        } else {
+          setIsOnboarding(true);
+        }
+      }
     }
 
     return () => window.removeEventListener('popstate', handlePopState);
