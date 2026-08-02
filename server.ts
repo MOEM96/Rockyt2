@@ -1045,6 +1045,29 @@ async function startServer() {
     }
   }));
 
+  // Helper: map user-facing platform names & display labels to canonical Zernio API platform slugs
+  function getCanonicalZernioPlatform(platformName: string): string {
+    const p = String(platformName || '').trim().toLowerCase();
+    
+    if (p.includes('instagram')) return 'instagram';
+    if (p.includes('linkedin')) return 'linkedin';
+    if (p.includes('tiktok')) return 'tiktok';
+    if (p.includes('twitter') || p.includes('x') || p === 'x') return 'twitter';
+    if (p.includes('whatsapp')) return 'whatsapp';
+    if (p.includes('meta') || p.includes('facebook') || p.includes('fb')) return 'facebook';
+    if (p.includes('google') || p.includes('gmb') || p.includes('business')) return 'googlebusiness';
+    if (p.includes('youtube')) return 'youtube';
+    if (p.includes('pinterest')) return 'pinterest';
+    if (p.includes('threads')) return 'threads';
+    if (p.includes('snapchat')) return 'snapchat';
+    if (p.includes('bluesky')) return 'bluesky';
+    if (p.includes('telegram')) return 'telegram';
+    if (p.includes('discord')) return 'discord';
+    if (p.includes('slack')) return 'slack';
+
+    return p.replace(/[^a-z0-9]/g, '') || 'facebook';
+  }
+
   // ---------------------------------------------------------------------------
   // Rockyt Branded Connect Flow & Gateway Route
   // ---------------------------------------------------------------------------
@@ -1054,7 +1077,7 @@ async function startServer() {
       return res.status(400).json({ error: 'Platform name is required (e.g. instagram, linkedin, twitter, whatsapp)' });
     }
 
-    const cleanPlatform = String(rawPlatform).trim().toLowerCase();
+    const cleanPlatform = getCanonicalZernioPlatform(rawPlatform);
     const formattedPlatform = cleanPlatform.charAt(0).toUpperCase() + cleanPlatform.slice(1);
     
     // Resolve user's Zernio profile ID
@@ -1076,15 +1099,18 @@ async function startServer() {
 
     let targetOAuthUrl: string | null = null;
 
-    // 1. Generate underlying OAuth consent URL
+    // 1. Generate underlying OAuth consent URL with force re-auth parameters
     try {
       if (zernioProfileId && typeof zernio?.connect?.getConnectUrl === 'function') {
         const connectRes = await zernio.connect.getConnectUrl({
           path: { platform: cleanPlatform as any },
           query: {
             profileId: zernioProfileId,
-            redirect_url: callbackUrl
-          }
+            redirect_url: callbackUrl,
+            reconnect: 'true',
+            prompt: 'consent',
+            force_reconnect: 'true'
+          } as any
         });
         targetOAuthUrl = (connectRes?.data as any)?.authUrl || (connectRes?.data as any)?.url || null;
       }
@@ -1096,7 +1122,7 @@ async function startServer() {
     if (!targetOAuthUrl && zernioProfileId) {
       try {
         const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
-        const zernioRes = await fetch(`https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId)}&redirectUrl=${encodeURIComponent(callbackUrl)}`, {
+        const zernioRes = await fetch(`https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId)}&redirectUrl=${encodeURIComponent(callbackUrl)}&reconnect=true&prompt=consent&force_reconnect=true&_ts=${Date.now()}`, {
           headers: {
             'Authorization': `Bearer ${apiKey}`
           }
@@ -1112,7 +1138,7 @@ async function startServer() {
 
     // 3. Fallback URL
     if (!targetOAuthUrl) {
-      targetOAuthUrl = `https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId || 'default')}&redirectUrl=${encodeURIComponent(callbackUrl)}`;
+      targetOAuthUrl = `https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId || 'default')}&redirectUrl=${encodeURIComponent(callbackUrl)}&reconnect=true&prompt=consent&force_reconnect=true`;
     }
 
     // If client requested JSON response
@@ -1138,7 +1164,7 @@ async function startServer() {
       return res.status(400).json({ error: 'Platform name is required (e.g. instagram, linkedin, x, whatsapp, tiktok)' });
     }
 
-    const cleanPlatform = String(platform).trim().toLowerCase();
+    const cleanPlatform = getCanonicalZernioPlatform(platform);
     const formattedPlatform = cleanPlatform.charAt(0).toUpperCase() + cleanPlatform.slice(1);
     
     // Resolve user's Zernio profile ID
@@ -1167,8 +1193,11 @@ async function startServer() {
           path: { platform: cleanPlatform as any },
           query: {
             profileId: zernioProfileId,
-            redirect_url: callbackUrl
-          }
+            redirect_url: callbackUrl,
+            reconnect: 'true',
+            prompt: 'consent',
+            force_reconnect: 'true'
+          } as any
         });
         targetOAuthUrl = (connectRes?.data as any)?.authUrl || (connectRes?.data as any)?.url || null;
       }
@@ -1180,7 +1209,7 @@ async function startServer() {
     if (!targetOAuthUrl && zernioProfileId) {
       try {
         const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
-        const zernioRes = await fetch(`https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId)}&redirectUrl=${encodeURIComponent(callbackUrl)}`, {
+        const zernioRes = await fetch(`https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId)}&redirectUrl=${encodeURIComponent(callbackUrl)}&reconnect=true&prompt=consent&force_reconnect=true&_ts=${Date.now()}`, {
           headers: {
             'Authorization': `Bearer ${apiKey}`
           }
@@ -1196,7 +1225,7 @@ async function startServer() {
 
     // 3. Fallback URL
     if (!targetOAuthUrl) {
-      targetOAuthUrl = `https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId || 'default')}&redirectUrl=${encodeURIComponent(callbackUrl)}`;
+      targetOAuthUrl = `https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId || 'default')}&redirectUrl=${encodeURIComponent(callbackUrl)}&reconnect=true&prompt=consent&force_reconnect=true`;
     }
 
     // Return the actual targetOAuthUrl to client so browser navigates directly to OAuth consent screen
