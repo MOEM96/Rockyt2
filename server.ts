@@ -779,12 +779,104 @@ async function startServer() {
             .from('profiles')
             .update({ connected_accounts_count: p.connected_accounts_count + 1 })
             .eq('zernio_profile_id', profileId);
+
+          // Persist in connected_accounts table
+          await supabase
+            .from('connected_accounts')
+            .insert({
+              user_id: p.id,
+              platform: req.query.platform || 'Social Channel',
+              username: accountId ? `@acc_${String(accountId).substring(0, 8)}` : '@user',
+              profile_name: 'Default Profile',
+              status: 'connected'
+            });
         }
       } else {
         mockConnectedCount++;
       }
     }
     res.redirect('/dashboard?connected=1');
+  }));
+
+  // ─── Connected Accounts Database API ───
+  app.get('/api/user/connected-accounts', authenticate, asyncHandler(async (req: any, res: any) => {
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('connected_accounts')
+        .select('*')
+        .eq('user_id', req.user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('[connected-accounts] Supabase fetch error:', error.message);
+        return res.json({ success: true, accounts: [] });
+      }
+      return res.json({ success: true, accounts: data || [] });
+    }
+    return res.json({ success: true, accounts: [] });
+  }));
+
+  app.post('/api/user/connected-accounts/toggle', authenticate, asyncHandler(async (req: any, res: any) => {
+    const { platform, status, username, profile_name } = req.body || {};
+    if (!platform) return res.status(400).json({ error: 'Platform is required' });
+
+    if (supabase) {
+      const { data: existing } = await supabase
+        .from('connected_accounts')
+        .select('*')
+        .eq('user_id', req.user.id)
+        .eq('platform', platform)
+        .maybeSingle();
+
+      if (existing) {
+        const nextStatus = status || (existing.status === 'connected' ? 'disconnected' : 'connected');
+        const { data: updated, error: updErr } = await supabase
+          .from('connected_accounts')
+          .update({ status: nextStatus })
+          .eq('id', existing.id)
+          .select()
+          .single();
+
+        if (updErr) return res.status(500).json({ error: updErr.message });
+        return res.json({ success: true, account: updated });
+      } else {
+        const { data: inserted, error: insErr } = await supabase
+          .from('connected_accounts')
+          .insert({
+            user_id: req.user.id,
+            platform,
+            username: username || `@${platform.toLowerCase().replace(/[^a-z0-9]/g, '')}_user`,
+            profile_name: profile_name || `${platform} Profile`,
+            status: 'connected'
+          })
+          .select()
+          .single();
+
+        if (insErr) return res.status(500).json({ error: insErr.message });
+        return res.json({ success: true, account: inserted });
+      }
+    }
+
+    return res.json({ success: true });
+  }));
+
+  // ─── Usage Logs Database API ───
+  app.get('/api/user/usage-logs', authenticate, asyncHandler(async (req: any, res: any) => {
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('usage_logs')
+        .select('*')
+        .eq('user_id', req.user.id)
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (error) {
+        console.error('[usage-logs] Supabase fetch error:', error.message);
+        return res.json({ success: true, logs: [] });
+      }
+      return res.json({ success: true, logs: data || [] });
+    }
+    return res.json({ success: true, logs: [] });
   }));
 
   // ---------------------------------------------------------------------------
