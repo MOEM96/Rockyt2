@@ -1,5 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Layers, Key, CreditCard, LogOut, ArrowLeft, Check, Copy, Eye, EyeOff, RefreshCw, Plus, Radio, ShieldCheck } from 'lucide-react';
+import { 
+  Layers, Key, CreditCard, LogOut, ArrowLeft, Check, Copy, Eye, EyeOff, 
+  RefreshCw, Plus, Radio, ShieldCheck, Zap, DollarSign, ExternalLink, 
+  CheckCircle2, AlertTriangle, ArrowUpRight, Sparkles, Loader2 
+} from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 
 interface DashboardProps {
@@ -42,6 +46,40 @@ interface ApiLogRow {
   created_at: string;
 }
 
+interface UserProfile {
+  id?: string;
+  email?: string;
+  plan?: string;
+  subscription_status?: string;
+  wallet_balance?: number;
+  max_accounts?: number;
+  dodo_customer_id?: string;
+  plan_product_id?: string;
+  is_trial?: boolean;
+}
+
+interface CheckoutSessionRow {
+  id: string;
+  user_id: string;
+  dodo_session_id: string;
+  product_id: string;
+  plan: string;
+  status: string;
+  checkout_url: string;
+  created_at: string;
+  completed_at?: string;
+}
+
+interface WalletTransactionRow {
+  id: string;
+  user_id: string;
+  amount: number;
+  type: string;
+  description: string;
+  balance_after?: number;
+  created_at: string;
+}
+
 const defaultPlatforms = [
   'Twitter / X', 'Instagram', 'WhatsApp Business', 'LinkedIn', 'TikTok',
   'Meta Ads Manager', 'Google Ads', 'Telegram Bot', 'Discord Webhook', 'Slack App'
@@ -52,6 +90,10 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const [accounts, setAccounts] = useState<ConnectedAccount[]>([]);
   const [apiKeys, setApiKeys] = useState<ApiKeyRow[]>([]);
   const [logs, setLogs] = useState<ApiLogRow[]>([]);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [checkoutSessions, setCheckoutSessions] = useState<CheckoutSessionRow[]>([]);
+  const [walletTxns, setWalletTxns] = useState<WalletTransactionRow[]>([]);
+
   const [apiKey, setApiKey] = useState<string>('rockyt_live_99f381a94b8e21c890192847a');
   const [showKey, setShowKey] = useState<boolean>(false);
   const [copiedKey, setCopiedKey] = useState<boolean>(false);
@@ -59,8 +101,15 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const [isRealtimeActive, setIsRealtimeActive] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // User Profile
-  const userEmail = userSession?.email || 'moamenemam966@gmail.com';
+  // Payment Checkout state
+  const [depositAmount, setDepositAmount] = useState<number>(25);
+  const [customDeposit, setCustomDeposit] = useState<string>('');
+  const [isCheckoutLoading, setIsCheckoutLoading] = useState<boolean>(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [checkoutSuccessMsg, setCheckoutSuccessMsg] = useState<string | null>(null);
+
+  // User Profile metadata
+  const userEmail = userSession?.email || profile?.email || 'moamenemam966@gmail.com';
   const userName = userSession?.name || 'Moamen Emam';
   const userAvatar = userSession?.picture || 'https://lh3.googleusercontent.com/a/ACg8ocL_PcCi9QCqJ-hfTUKklDZ6Q2RWJfer2LjarrUA0X2-4jNFuQ=s96-c';
   const userId = userSession?.id;
@@ -69,7 +118,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const fetchLiveData = async () => {
     setIsLoading(true);
     try {
-      // A. Fetch Real Connected Accounts from Supabase
+      // A. Fetch Connected Accounts
       const { data: dbAccounts, error: accErr } = await supabase
         .from('connected_accounts')
         .select('*')
@@ -79,7 +128,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
         setAccounts(dbAccounts as ConnectedAccount[]);
       }
 
-      // B. Fetch Real User API Keys from Supabase
+      // B. Fetch User API Keys
       const { data: dbKeys, error: keyErr } = await supabase
         .from('user_api_keys')
         .select('id, user_id, key_prefix, revoked, created_at')
@@ -91,7 +140,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
         setApiKey(`${dbKeys[0].key_prefix}••••••••••••••••••••`);
       }
 
-      // C. Fetch Real API Logs from Supabase
+      // C. Fetch API Logs
       const { data: dbLogs } = await supabase
         .from('api_logs')
         .select('*')
@@ -101,6 +150,39 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
       if (dbLogs) {
         setLogs(dbLogs as ApiLogRow[]);
       }
+
+      // D. Fetch User Profile
+      const { data: dbProfile } = await supabase
+        .from('profiles')
+        .select('*')
+        .maybeSingle();
+
+      if (dbProfile) {
+        setProfile(dbProfile as UserProfile);
+      }
+
+      // E. Fetch Checkout Sessions
+      const { data: dbSessions } = await supabase
+        .from('checkout_sessions')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      if (dbSessions) {
+        setCheckoutSessions(dbSessions as CheckoutSessionRow[]);
+      }
+
+      // F. Fetch Wallet Ledger Transactions
+      const { data: dbTxns } = await supabase
+        .from('wallet_transactions')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      if (dbTxns) {
+        setWalletTxns(dbTxns as WalletTransactionRow[]);
+      }
+
     } catch (err) {
       console.warn('[Dashboard] Supabase live fetch notice:', err);
     } finally {
@@ -108,19 +190,28 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     }
   };
 
-  // 2. Setup Realtime Channel Listener
+  // 2. Setup Realtime Channel Listener & URL param check
   useEffect(() => {
     fetchLiveData();
 
-    // Subscribe to real-time database updates from Supabase for connected_accounts table
+    // Check URL search parameters for Dodo checkout completion redirect
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('checkout') === 'success') {
+      setCheckoutSuccessMsg('Checkout completed successfully! Your plan or deposit has been processed.');
+      setActiveTab('billing');
+      // Clean query params
+      const cleanUrl = window.location.pathname;
+      window.history.replaceState({}, document.title, cleanUrl);
+    }
+
+    // Subscribe to real-time database updates from Supabase
     const realtimeChannel = supabase
-      .channel('public:connected_accounts')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'connected_accounts' }, () => {
-        fetchLiveData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'user_api_keys' }, () => {
-        fetchLiveData();
-      })
+      .channel('public:dashboard_sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'connected_accounts' }, () => fetchLiveData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'user_api_keys' }, () => fetchLiveData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => fetchLiveData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'checkout_sessions' }, () => fetchLiveData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'wallet_transactions' }, () => fetchLiveData())
       .subscribe((status) => {
         setIsRealtimeActive(status === 'SUBSCRIBED');
       });
@@ -195,7 +286,57 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     }
   };
 
+  // Dodo Payments Checkout Initiator
+  const handleInitiateCheckout = async (productId?: string, amountVal?: number) => {
+    setIsCheckoutLoading(true);
+    setCheckoutError(null);
+    setCheckoutSuccessMsg(null);
+
+    try {
+      // Fetch session token
+      const sessionRes = await supabase.auth.getSession();
+      const token = userSession?.accessToken || sessionRes.data.session?.access_token;
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const res = await fetch('/api/v1/checkouts', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          productId: productId || 'pdt_0NWDjeAeatQKryEvRe4eb',
+          amount: amountVal || 0
+        })
+      });
+
+      const responseData = await res.json();
+
+      if (!res.ok) {
+        throw new Error(responseData.error || 'Failed to create checkout session');
+      }
+
+      if (responseData.checkout_url) {
+        // Secure redirect to Dodo Payments hosted checkout
+        window.location.href = responseData.checkout_url;
+      } else {
+        throw new Error('No checkout URL received from Dodo Payments backend');
+      }
+    } catch (err: any) {
+      console.error('[Checkout Error]:', err);
+      setCheckoutError(err.message || 'Payment checkout initialization failed.');
+    } finally {
+      setIsCheckoutLoading(false);
+    }
+  };
+
   const connectedCount = accounts.filter(a => a.status === 'connected').length;
+  const currentWalletBal = profile?.wallet_balance ? Number(profile.wallet_balance) : 0.00;
+  const currentPlan = profile?.plan || 'Growth';
+  const subStatus = profile?.subscription_status || 'active';
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col md:flex-row font-mono relative z-20">
@@ -279,7 +420,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                 <CreditCard size={16} /> Account &amp; Billing
               </span>
               <span className="text-[10px] bg-brand/20 text-brand border border-brand/40 px-1.5 py-0.5">
-                PRORATED
+                DODO PAY
               </span>
             </button>
           </nav>
@@ -473,35 +614,338 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
           </div>
         )}
 
-        {/* TAB 3: ACCOUNT & BILLING */}
+        {/* TAB 3: ACCOUNT & BILLING (DODO PAYMENTS & SUPABASE) */}
         {activeTab === 'billing' && (
-          <div className="space-y-8 max-w-5xl">
-            <div className="border-b border-white/15 pb-6">
-              <span className="text-[10px] text-brand uppercase font-bold tracking-widest">// DAILY METERED INVOICING</span>
-              <h1 className="font-display font-bold text-3xl sm:text-4xl text-white uppercase">ACCOUNT &amp; BILLING MATH</h1>
+          <div className="space-y-8 max-w-6xl">
+            <div className="border-b border-white/15 pb-6 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+              <div>
+                <span className="text-[10px] text-brand uppercase font-bold tracking-widest">// DODO PAYMENTS &amp; SUPABASE BILLING ENGINE</span>
+                <h1 className="font-display font-bold text-3xl sm:text-4xl text-white uppercase">ACCOUNT &amp; BILLING MATH</h1>
+              </div>
+
+              {/* Status Pills */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs bg-zinc-900 border border-white/15 px-3 py-1 text-white/80">
+                  Plan: <strong className="text-brand uppercase">{currentPlan}</strong>
+                </span>
+                <span className={`text-xs px-3 py-1 border font-bold uppercase ${
+                  subStatus === 'active' 
+                    ? 'bg-emerald-500/10 border-emerald-400 text-emerald-400' 
+                    : 'bg-yellow-500/10 border-yellow-400 text-yellow-400'
+                }`}>
+                  Status: {subStatus}
+                </span>
+              </div>
             </div>
 
+            {/* Notification Banners */}
+            {checkoutSuccessMsg && (
+              <div className="bg-emerald-950/60 border-2 border-emerald-400 p-4 text-emerald-300 text-xs font-mono flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 size={18} className="text-emerald-400 shrink-0" />
+                  <span>{checkoutSuccessMsg}</span>
+                </div>
+                <button onClick={() => setCheckoutSuccessMsg(null)} className="text-emerald-400 hover:text-white text-xs font-bold uppercase">
+                  Dismiss
+                </button>
+              </div>
+            )}
+
+            {checkoutError && (
+              <div className="bg-red-950/60 border-2 border-red-500 p-4 text-red-300 text-xs font-mono flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle size={18} className="text-red-400 shrink-0" />
+                  <span>{checkoutError}</span>
+                </div>
+                <button onClick={() => setCheckoutError(null)} className="text-red-400 hover:text-white text-xs font-bold uppercase">
+                  Dismiss
+                </button>
+              </div>
+            )}
+
+            {/* 3 Metric Cards */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="bg-zinc-950 border border-white/20 p-5">
+              <div className="bg-zinc-950 border border-white/20 p-5 relative">
                 <span className="text-[10px] text-white/50 uppercase font-bold">Active Connected Accounts</span>
                 <div className="font-display font-bold text-4xl text-white mt-2">{connectedCount} Accounts</div>
                 <span className="text-[11px] text-brand font-bold mt-1 block">Tier 1 Rate ($6.00 / mo)</span>
               </div>
 
-              <div className="bg-zinc-950 border border-white/20 p-5">
-                <span className="text-[10px] text-white/50 uppercase font-bold">Monthly Free Credit</span>
-                <div className="font-display font-bold text-4xl text-emerald-400 mt-2">-$12.00</div>
-                <span className="text-[11px] text-emerald-400 font-bold mt-1 block">Covers 2 Accounts Free</span>
+              <div className="bg-zinc-950 border border-white/20 p-5 relative">
+                <span className="text-[10px] text-white/50 uppercase font-bold">Current Wallet Balance</span>
+                <div className="font-display font-bold text-4xl text-emerald-400 mt-2">
+                  ${currentWalletBal.toFixed(2)}
+                </div>
+                <span className="text-[11px] text-emerald-400/80 font-bold mt-1 block">Pay-As-You-Go API Credit</span>
               </div>
 
-              <div className="bg-zinc-950 border border-brand p-5 shadow-glow">
+              <div className="bg-zinc-950 border border-brand p-5 shadow-glow relative">
                 <span className="text-[10px] text-brand uppercase font-bold">Estimated Next Invoice</span>
                 <div className="font-display font-bold text-4xl text-white mt-2">
                   ${Math.max(0, connectedCount * 6 - 12).toFixed(2)}
                 </div>
-                <span className="text-[11px] text-white/70 mt-1 block">Live Supabase Database Metered</span>
+                <span className="text-[11px] text-white/70 mt-1 block">Includes $12.00 Free Credit</span>
               </div>
             </div>
+
+            {/* SECTION: PLAN SELECTION & CHECKOUT */}
+            <div className="bg-zinc-950 border-2 border-white/20 p-6 space-y-6">
+              <div className="flex items-center justify-between border-b border-white/10 pb-4">
+                <div>
+                  <h3 className="font-display font-bold text-xl text-white uppercase flex items-center gap-2">
+                    <Sparkles size={18} className="text-brand" /> SELECT &amp; UPGRADE SUBSCRIPTION PLAN
+                  </h3>
+                  <p className="text-xs text-white/60">Powered by Dodo Payments secure hosted checkout</p>
+                </div>
+                <span className="text-[10px] bg-brand/20 text-brand border border-brand/40 px-2 py-1 font-bold uppercase">
+                  DODO CHECKOUT API
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Growth Plan Card */}
+                <div className={`bg-zinc-900 border p-6 flex flex-col justify-between ${
+                  currentPlan.toLowerCase() === 'growth' ? 'border-brand shadow-glow' : 'border-white/15'
+                }`}>
+                  <div>
+                    <div className="flex justify-between items-center mb-3">
+                      <span className="text-xs font-bold uppercase tracking-wider text-brand">GROWTH PLAN</span>
+                      {currentPlan.toLowerCase() === 'growth' && (
+                        <span className="text-[9px] bg-brand text-white px-2 py-0.5 font-bold uppercase">CURRENT PLAN</span>
+                      )}
+                    </div>
+                    <div className="font-display font-bold text-3xl text-white mb-2">$49.00 <span className="text-xs font-mono text-white/60">/ month</span></div>
+                    <ul className="text-xs text-white/80 space-y-2 mb-6 font-mono border-t border-white/10 pt-4">
+                      <li className="flex items-center gap-2"><Check size={14} className="text-brand" /> 1 Active Connected Account</li>
+                      <li className="flex items-center gap-2"><Check size={14} className="text-brand" /> 16 Platforms REST API &amp; MCP</li>
+                      <li className="flex items-center gap-2"><Check size={14} className="text-brand" /> Unlimited Webhook Dispatches</li>
+                    </ul>
+                  </div>
+
+                  <button
+                    onClick={() => handleInitiateCheckout('pdt_0NWDjeAeatQKryEvRe4eb')}
+                    disabled={isCheckoutLoading}
+                    className="w-full bg-brand text-white font-mono text-xs py-3 uppercase tracking-wider font-bold hover:bg-white hover:text-ink transition-colors flex items-center justify-center gap-2 border border-brand disabled:opacity-50"
+                  >
+                    {isCheckoutLoading ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <>Subscribe Growth Plan ($49/mo) <ArrowUpRight size={14} /></>
+                    )}
+                  </button>
+                </div>
+
+                {/* Scale Plan Card */}
+                <div className={`bg-zinc-900 border p-6 flex flex-col justify-between ${
+                  currentPlan.toLowerCase() === 'scale' ? 'border-brand shadow-glow' : 'border-white/15'
+                }`}>
+                  <div>
+                    <div className="flex justify-between items-center mb-3">
+                      <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">SCALE PLAN</span>
+                      {currentPlan.toLowerCase() === 'scale' && (
+                        <span className="text-[9px] bg-emerald-500 text-black px-2 py-0.5 font-bold uppercase">CURRENT PLAN</span>
+                      )}
+                    </div>
+                    <div className="font-display font-bold text-3xl text-white mb-2">$99.00 <span className="text-xs font-mono text-white/60">/ month</span></div>
+                    <ul className="text-xs text-white/80 space-y-2 mb-6 font-mono border-t border-white/10 pt-4">
+                      <li className="flex items-center gap-2"><Check size={14} className="text-emerald-400" /> Up to 10 Connected Accounts</li>
+                      <li className="flex items-center gap-2"><Check size={14} className="text-emerald-400" /> Priority Multi-Agent Workspaces</li>
+                      <li className="flex items-center gap-2"><Check size={14} className="text-emerald-400" /> Dedicated MCP Infrastructure &amp; SLA</li>
+                    </ul>
+                  </div>
+
+                  <button
+                    onClick={() => handleInitiateCheckout('pdt_0NWDjzl0TS6LNFrVdFZYQ')}
+                    disabled={isCheckoutLoading}
+                    className="w-full bg-emerald-500 text-black font-mono text-xs py-3 uppercase tracking-wider font-bold hover:bg-white hover:text-ink transition-colors flex items-center justify-center gap-2 border border-emerald-500 disabled:opacity-50"
+                  >
+                    {isCheckoutLoading ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <>Upgrade to Scale ($99/mo) <ArrowUpRight size={14} /></>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* SECTION: WALLET TOP-UP / DEPOSIT */}
+            <div className="bg-zinc-950 border-2 border-white/20 p-6 space-y-6">
+              <div className="flex items-center justify-between border-b border-white/10 pb-4">
+                <div>
+                  <h3 className="font-display font-bold text-xl text-white uppercase flex items-center gap-2">
+                    <DollarSign size={18} className="text-emerald-400" /> WALLET DEPOSIT &amp; METERED TOP-UP
+                  </h3>
+                  <p className="text-xs text-white/60">Instantly credit your account wallet balance via Dodo Payments</p>
+                </div>
+                <span className="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-400/40 px-2 py-1 font-bold uppercase">
+                  PAY-AS-YOU-GO
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
+                {/* Deposit Amount Selector */}
+                <div className="md:col-span-8 space-y-4">
+                  <span className="text-xs text-white/70 uppercase font-bold block">Select Deposit Amount:</span>
+                  <div className="grid grid-cols-4 gap-3">
+                    {[10, 25, 50, 100].map((amt) => (
+                      <button
+                        key={amt}
+                        onClick={() => { setDepositAmount(amt); setCustomDeposit(''); }}
+                        className={`py-3 text-xs font-bold font-mono border transition-all ${
+                          depositAmount === amt && !customDeposit
+                            ? 'bg-emerald-500 text-black border-emerald-400 font-bold shadow-glow'
+                            : 'bg-zinc-900 text-white border-white/15 hover:border-white/40'
+                        }`}
+                      >
+                        ${amt}.00
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Custom Amount Input */}
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-white/60 font-mono">Custom Amount ($):</span>
+                    <input
+                      type="number"
+                      min="5"
+                      max="1000"
+                      placeholder="Enter custom deposit"
+                      value={customDeposit}
+                      onChange={(e) => {
+                        setCustomDeposit(e.target.value);
+                        const val = parseFloat(e.target.value);
+                        if (!isNaN(val) && val > 0) setDepositAmount(val);
+                      }}
+                      className="bg-black border border-white/20 px-4 py-2 font-mono text-xs text-emerald-400 focus:outline-none focus:border-emerald-400 w-48"
+                    />
+                  </div>
+                </div>
+
+                {/* Submit Deposit Action */}
+                <div className="md:col-span-4 bg-zinc-900 border border-white/15 p-5 text-center space-y-3">
+                  <span className="text-[10px] text-white/60 uppercase block">Selected Deposit Total</span>
+                  <div className="font-display font-bold text-3xl text-emerald-400">${depositAmount.toFixed(2)}</div>
+                  <button
+                    onClick={() => handleInitiateCheckout('pdt_0Nk1w4r59DXb7GepY1sqA', depositAmount)}
+                    disabled={isCheckoutLoading || depositAmount <= 0}
+                    className="w-full bg-emerald-500 text-black font-mono text-xs py-3 uppercase tracking-wider font-bold hover:bg-white transition-colors flex items-center justify-center gap-2 border border-emerald-500 disabled:opacity-50"
+                  >
+                    {isCheckoutLoading ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <>Deposit Funds <ArrowUpRight size={14} /></>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* SECTION: REALTIME SUPABASE CHECKOUT SESSIONS LOG */}
+            <div className="bg-zinc-950 border border-white/15 p-6">
+              <div className="flex items-center justify-between border-b border-white/10 pb-4 mb-4">
+                <h3 className="font-display font-bold text-xl text-white uppercase">DODO CHECKOUT SESSIONS (`public.checkout_sessions`)</h3>
+                <span className="text-xs text-emerald-400 font-bold uppercase">Realtime Supabase Sync</span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left font-mono text-xs">
+                  <thead>
+                    <tr className="border-b border-white/15 text-brand uppercase text-[10px] tracking-wider">
+                      <th className="pb-3">Created</th>
+                      <th className="pb-3">Plan / Item</th>
+                      <th className="pb-3">Session ID</th>
+                      <th className="pb-3">Status</th>
+                      <th className="pb-3">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {checkoutSessions.length > 0 ? (
+                      checkoutSessions.map((sess) => (
+                        <tr key={sess.id} className="hover:bg-white/5 transition-colors">
+                          <td className="py-3 text-white/60">{new Date(sess.created_at).toLocaleString()}</td>
+                          <td className="py-3 font-bold text-white">{sess.plan}</td>
+                          <td className="py-3 font-mono text-[11px] text-white/70">{sess.dodo_session_id.substring(0, 16)}...</td>
+                          <td className="py-3">
+                            <span className={`text-[10px] px-2 py-0.5 font-bold uppercase border ${
+                              sess.status === 'completed' 
+                                ? 'bg-emerald-500/10 border-emerald-400 text-emerald-400' 
+                                : sess.status === 'pending'
+                                ? 'bg-yellow-500/10 border-yellow-400 text-yellow-400'
+                                : 'bg-red-500/10 border-red-400 text-red-400'
+                            }`}>
+                              {sess.status}
+                            </span>
+                          </td>
+                          <td className="py-3">
+                            {sess.checkout_url && sess.status === 'pending' ? (
+                              <a
+                                href={sess.checkout_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-brand hover:underline flex items-center gap-1 font-bold text-[11px]"
+                              >
+                                Resume <ExternalLink size={12} />
+                              </a>
+                            ) : (
+                              <span className="text-white/40 text-[10px]">-</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={5} className="py-6 text-center text-white/40 italic">
+                          No checkout sessions logged in Supabase yet.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* SECTION: REALTIME SUPABASE WALLET LEDGER LOG */}
+            <div className="bg-zinc-950 border border-white/15 p-6">
+              <div className="flex items-center justify-between border-b border-white/10 pb-4 mb-4">
+                <h3 className="font-display font-bold text-xl text-white uppercase">WALLET LEDGER TRANSACTIONS (`public.wallet_transactions`)</h3>
+                <span className="text-xs text-emerald-400 font-bold uppercase">Realtime Audit Ledger</span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left font-mono text-xs">
+                  <thead>
+                    <tr className="border-b border-white/15 text-emerald-400 uppercase text-[10px] tracking-wider">
+                      <th className="pb-3">Timestamp</th>
+                      <th className="pb-3">Description</th>
+                      <th className="pb-3">Type</th>
+                      <th className="pb-3">Amount</th>
+                      <th className="pb-3">Balance After</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {walletTxns.length > 0 ? (
+                      walletTxns.map((txn) => (
+                        <tr key={txn.id} className="hover:bg-white/5 transition-colors">
+                          <td className="py-3 text-white/60">{new Date(txn.created_at).toLocaleString()}</td>
+                          <td className="py-3 font-bold text-white">{txn.description}</td>
+                          <td className="py-3 uppercase text-white/80">{txn.type}</td>
+                          <td className="py-3 text-emerald-400 font-bold">+${Number(txn.amount).toFixed(2)}</td>
+                          <td className="py-3 text-white/90">${txn.balance_after ? Number(txn.balance_after).toFixed(2) : '-'}</td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={5} className="py-6 text-center text-white/40 italic">
+                          No wallet transactions recorded yet in Supabase.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
           </div>
         )}
       </main>

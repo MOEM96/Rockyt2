@@ -25,6 +25,12 @@ async function startServer() {
   }));
 
   app.use(cookieParser());
+  app.use(express.json({
+    verify: (req: any, _res, buf) => {
+      req.rawBody = buf;
+    }
+  }));
+  app.use(express.urlencoded({ extended: true }));
 
   // Rate limiting for auth and API key creation
   const authLimiter = rateLimit({
@@ -771,7 +777,7 @@ async function startServer() {
       if (supabase) {
         const { data: p } = await supabase
           .from('profiles')
-          .select('connected_accounts_count')
+          .select('id, connected_accounts_count')
           .eq('zernio_profile_id', profileId)
           .single();
         if (p) {
@@ -1077,16 +1083,12 @@ async function startServer() {
         });
       }
 
-      let envMode: 'test_mode' | 'live_mode' = 'test_mode';
+      let envMode: 'test_mode' | 'live_mode' = 'live_mode';
       const explicitMode = process.env.DODO_PAYMENTS_ENVIRONMENT || process.env.DODO_MODE || process.env.VITE_DODO_MODE;
-      if (explicitMode === 'live' || explicitMode === 'live_mode') {
-        envMode = 'live_mode';
-      } else if (explicitMode === 'test' || explicitMode === 'test_mode') {
+      if (explicitMode === 'test' || explicitMode === 'test_mode' || apiKey.startsWith('test')) {
         envMode = 'test_mode';
-      } else if (apiKey.startsWith('live')) {
-        envMode = 'live_mode';
       } else {
-        envMode = 'test_mode';
+        envMode = 'live_mode';
       }
 
       const baseUrl = envMode === 'live_mode' ? 'https://live.dodopayments.com' : 'https://test.dodopayments.com';
@@ -1193,16 +1195,42 @@ async function startServer() {
         return res.status(401).json({ error: 'Missing webhook signature headers' });
       }
 
-      const rawBody = req.rawBody ? req.rawBody.toString() : (typeof req.body === 'string' ? req.body : JSON.stringify(req.body));
-      const signedPayload = `${webhookId}.${webhookTimestamp}.${rawBody}`;
-      const computedHex = crypto
-        .createHmac('sha256', dodoWebhookSecret)
-        .update(signedPayload)
-        .digest('hex');
+      const rawBodyStr = req.rawBody ? req.rawBody.toString('utf8') : (typeof req.body === 'string' ? req.body : JSON.stringify(req.body));
+      const signedPayload = `${webhookId}.${webhookTimestamp}.${rawBodyStr}`;
 
-      const sigA = Buffer.from(computedHex, 'utf8');
-      const sigB = Buffer.from(String(webhookSignature), 'utf8');
-      if (sigA.length !== sigB.length || !crypto.timingSafeEqual(sigA, sigB)) {
+      let secretKey: Buffer;
+      if (dodoWebhookSecret.startsWith('whsec_')) {
+        secretKey = Buffer.from(dodoWebhookSecret.slice(6), 'base64');
+      } else {
+        secretKey = Buffer.from(dodoWebhookSecret, 'utf8');
+      }
+
+      const computedBase64 = crypto.createHmac('sha256', secretKey).update(signedPayload).digest('base64');
+      const computedHex = crypto.createHmac('sha256', secretKey).update(signedPayload).digest('hex');
+
+      const sigHeader = String(webhookSignature || '');
+      const candidateSigs = sigHeader.split(/\s+/).flatMap(s => s.split(','));
+
+      let isValid = false;
+      for (const sig of candidateSigs) {
+        const cleanSig = sig.trim().replace(/^v1,/, '');
+        if (!cleanSig) continue;
+        if (cleanSig === computedBase64 || cleanSig === computedHex) {
+          isValid = true;
+          break;
+        }
+      }
+
+      if (!isValid) {
+        const sigA = Buffer.from(computedHex, 'utf8');
+        const sigB = Buffer.from(sigHeader, 'utf8');
+        if (sigA.length === sigB.length && crypto.timingSafeEqual(sigA, sigB)) {
+          isValid = true;
+        }
+      }
+
+      if (!isValid) {
+        console.error('[Dodo Webhook] Webhook signature verification failed');
         return res.status(401).json({ error: 'Invalid webhook signature' });
       }
     }
@@ -1353,7 +1381,7 @@ async function startServer() {
         } else if (isSuccess && !isDeposit) {
           let planName = 'Growth';
           let maxAccounts = 1;
-          if (productId === 'pdt_0NWDjzl0TS6LNFrVdFZYQ') {
+          if (productId === 'pdt_0NWDjzl0TS6LNFrVdFZYQ' || (productId && String(productId).toLowerCase().includes('scale'))) {
             planName = 'Scale';
             maxAccounts = 10;
           }

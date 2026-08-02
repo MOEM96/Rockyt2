@@ -30,7 +30,12 @@ serve(async (req: Request) => {
       if (webhookId && webhookSignature && webhookTimestamp) {
         const rawBody = await req.clone().text()
         const encoder = new TextEncoder()
-        const keyData = encoder.encode(dodoWebhookSecret)
+
+        let cleanSecret = dodoWebhookSecret
+        if (cleanSecret.startsWith('whsec_')) {
+          cleanSecret = cleanSecret.slice(6)
+        }
+        const keyData = encoder.encode(cleanSecret)
         const messageData = encoder.encode(`${webhookId}.${webhookTimestamp}.${rawBody}`)
 
         const key = await crypto.subtle.importKey(
@@ -47,11 +52,25 @@ serve(async (req: Request) => {
           messageData
         )
 
-        const computedSignature = Array.from(new Uint8Array(signatureBuffer))
+        const computedHex = Array.from(new Uint8Array(signatureBuffer))
           .map(b => b.toString(16).padStart(2, "0"))
           .join("")
 
-        if (computedSignature !== webhookSignature) {
+        // Base64 encoding
+        const computedBase64 = btoa(String.fromCharCode(...new Uint8Array(signatureBuffer)))
+
+        const candidateSigs = webhookSignature.split(/\s+/).flatMap(s => s.split(','))
+        let isValid = false
+        for (const sig of candidateSigs) {
+          const cleanSig = sig.trim().replace(/^v1,/, '')
+          if (!cleanSig) continue
+          if (cleanSig === computedHex || cleanSig === computedBase64 || cleanSig === webhookSignature) {
+            isValid = true
+            break
+          }
+        }
+
+        if (!isValid) {
           console.error('Dodo Webhook Signature verification failed')
           return new Response(JSON.stringify({ error: 'Invalid webhook signature' }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -208,13 +227,10 @@ serve(async (req: Request) => {
       }
 
       const productId = data.product_id || data.product_cart?.[0]?.product_id || data.items?.[0]?.product_id
-      let planName = null
+      let planName = 'Growth'
       let maxAccounts = 1
 
-      if (productId === 'pdt_0NWDjeAeatQKryEvRe4eb') {
-        planName = 'Growth'
-        maxAccounts = 1
-      } else if (productId === 'pdt_0NWDjzl0TS6LNFrVdFZYQ') {
+      if (productId === 'pdt_0NWDjzl0TS6LNFrVdFZYQ' || (productId && String(productId).toLowerCase().includes('scale'))) {
         planName = 'Scale'
         maxAccounts = 10
       }
