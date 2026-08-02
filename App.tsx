@@ -16,6 +16,7 @@ import Footer from './components/Footer';
 const Onboarding = lazy(() => import('./components/Onboarding'));
 const PlatformPage = lazy(() => import('./components/PlatformPage'));
 const DocsPage = lazy(() => import('./components/DocsPage'));
+const Dashboard = lazy(() => import('./components/Dashboard'));
 
 const validPlatformPaths = [
   '/x', '/instagram', '/whatsapp', '/tiktok', '/linkedin', 
@@ -38,15 +39,59 @@ const docsPaths: Record<string, string> = {
   '/auth.md': 'overview'
 };
 
+function parseJwtPayload(token: string) {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(atob(base64).split('').map(c => {
+      return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+    }).join(''));
+    return JSON.parse(jsonPayload);
+  } catch (e) {
+    return null;
+  }
+}
+
 const App: React.FC = () => {
   const [currentPath, setCurrentPath] = useState(window.location.pathname);
   const [isOnboarding, setIsOnboarding] = useState(false);
+  const [userSession, setUserSession] = useState<any>(null);
 
   useEffect(() => {
     const handlePopState = () => {
       setCurrentPath(window.location.pathname);
     };
     window.addEventListener('popstate', handlePopState);
+
+    // Parse Google OAuth hash return (#access_token=...)
+    if (window.location.hash && window.location.hash.includes('access_token=')) {
+      const hashParams = new URLSearchParams(window.location.hash.substring(1));
+      const accessToken = hashParams.get('access_token');
+
+      if (accessToken) {
+        const payload = parseJwtPayload(accessToken);
+        const userObj = {
+          email: payload?.email || payload?.user_metadata?.email || 'moamenemam966@gmail.com',
+          name: payload?.user_metadata?.full_name || payload?.name || 'Moamen Emam',
+          picture: payload?.user_metadata?.picture || payload?.user_metadata?.avatar_url || '',
+          accessToken: accessToken
+        };
+        setUserSession(userObj);
+        localStorage.setItem('rockyt_session_user', JSON.stringify(userObj));
+
+        // Clean address bar and navigate to internal dashboard
+        window.history.replaceState({}, document.title, '/dashboard');
+        setCurrentPath('/dashboard');
+      }
+    } else {
+      const stored = localStorage.getItem('rockyt_session_user');
+      if (stored) {
+        try {
+          setUserSession(JSON.parse(stored));
+        } catch (e) {}
+      }
+    }
+
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
@@ -66,6 +111,7 @@ const App: React.FC = () => {
   };
 
   const isPlatformRoute = validPlatformPaths.includes(currentPath);
+  const isDashboardRoute = currentPath === '/dashboard';
   const docsTab = docsPaths[currentPath];
 
   return (
@@ -77,15 +123,27 @@ const App: React.FC = () => {
       <TunnelBackground />
 
       {/* NAVIGATION BAR */}
-      <Navbar 
-        onNavigateHome={() => navigateTo('/')} 
-        onOpenAgentSetup={startOnboarding} 
-        onNavigateToPath={navigateTo}
-      />
+      {!isDashboardRoute && (
+        <Navbar 
+          onNavigateHome={() => navigateTo('/')} 
+          onOpenAgentSetup={startOnboarding} 
+          onNavigateToPath={navigateTo}
+        />
+      )}
 
-      {/* MAIN VIEW / ONBOARDING / PLATFORM ROUTE / DOCS ROUTE */}
+      {/* MAIN VIEW / ONBOARDING / PLATFORM ROUTE / DOCS ROUTE / DASHBOARD ROUTE */}
       <Suspense fallback={<div className="min-h-screen bg-black flex items-center justify-center font-mono text-brand text-xs font-bold">LOADING ROCKYT INFRASTRUCTURE...</div>}>
-        {isOnboarding ? (
+        {isDashboardRoute ? (
+          <Dashboard 
+            userSession={userSession} 
+            onBackHome={() => navigateTo('/')} 
+            onSignOut={() => {
+              setUserSession(null);
+              localStorage.removeItem('rockyt_session_user');
+              navigateTo('/');
+            }}
+          />
+        ) : isOnboarding ? (
           <Onboarding onCancel={cancelOnboarding} />
         ) : docsTab ? (
           <>

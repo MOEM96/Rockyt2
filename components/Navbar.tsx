@@ -242,6 +242,15 @@ const Navbar: React.FC<NavbarProps> = ({ onNavigateHome, onOpenAgentSetup, onNav
             [04] PRICING
           </a>
 
+          {/* TAB 05: DASHBOARD */}
+          <a 
+            href="/dashboard" 
+            onClick={(e) => handleRouteClick(e, '/dashboard')}
+            className="border border-brand/50 bg-brand/10 text-brand px-3.5 py-1.5 font-mono text-[11px] hover:bg-brand hover:text-white transition-colors rounded-sm font-bold flex items-center gap-1 shadow-glow"
+          >
+            [05] DASHBOARD
+          </a>
+
           {/* CTA BUTTON */}
           <button
             onClick={() => {
