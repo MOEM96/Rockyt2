@@ -165,10 +165,10 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const [logSearchQuery, setLogSearchQuery] = useState<string>('');
 
   // User Profile metadata
-  const userEmail = userSession?.email || profile?.email || 'moamenemam966@gmail.com';
-  const userName = userSession?.name || 'Moamen Emam';
+  const userEmail = userSession?.email || profile?.email || '';
+  const userName = userSession?.name || profile?.full_name || 'Account Owner';
   const userAvatar = userSession?.picture || 'https://lh3.googleusercontent.com/a/ACg8ocL_PcCi9QCqJ-hfTUKklDZ6Q2RWJfer2LjarrUA0X2-4jNFuQ=s96-c';
-  const userId = userSession?.id;
+  const userId = userSession?.id || profile?.id;
 
   // 1. Fetch Real Live Data from Backend & Supabase
   const fetchLiveData = async () => {

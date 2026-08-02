@@ -122,8 +122,8 @@ const App: React.FC = () => {
           if (data.session?.user) {
             const userObj = {
               id: data.session.user.id,
-              email: data.session.user.email || 'moamenemam966@gmail.com',
-              name: data.session.user.user_metadata?.full_name || data.session.user.email || 'Moamen Emam',
+              email: data.session.user.email,
+              name: data.session.user.user_metadata?.full_name || data.session.user.email,
               picture: data.session.user.user_metadata?.avatar_url || ''
             };
             setUserSession(userObj);
@@ -145,7 +145,27 @@ const App: React.FC = () => {
 
     initUserSession();
 
-    return () => window.removeEventListener('popstate', handlePopState);
+    let authSubscription: any = null;
+    if (supabase) {
+      const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+        if (session?.user) {
+          const userObj = {
+            id: session.user.id,
+            email: session.user.email,
+            name: session.user.user_metadata?.full_name || session.user.email,
+            picture: session.user.user_metadata?.avatar_url || ''
+          };
+          setUserSession(userObj);
+          localStorage.setItem('rockyt_session_user', JSON.stringify(userObj));
+        }
+      });
+      authSubscription = listener?.subscription;
+    }
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      if (authSubscription) authSubscription.unsubscribe();
+    };
   }, []);
 
   const navigateTo = (path: string) => {
