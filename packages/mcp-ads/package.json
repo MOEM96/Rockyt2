@@ -1,0 +1,31 @@
+{
+  "name": "@rockyt/mcp-ads",
+  "version": "1.0.0",
+  "description": "Rockyt Ads & Campaign Management Model Context Protocol (MCP) Server for AI Agents — Ad Accounts, Campaigns, Budgets, ROI Analytics, and Spend Caps",
+  "main": "dist/index.js",
+  "type": "module",
+  "bin": {
+    "rockyt-mcp-ads": "./bin/mcp-ads.js"
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "keywords": [
+    "rockyt",
+    "mcp",
+    "ads",
+    "meta-ads",
+    "google-ads",
+    "tiktok-ads",
+    "campaigns",
+    "ai-agent"
+  ],
+  "author": "Rockyt Team",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.2.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.2.2"
+  }
+}
