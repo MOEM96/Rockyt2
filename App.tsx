@@ -22,7 +22,8 @@ const validPlatformPaths = [
   '/x', '/instagram', '/whatsapp', '/tiktok', '/linkedin', 
   '/telegram', '/discord', '/slack', '/meta-ads', '/google-ads', 
   '/threads', '/bluesky', '/reddit', '/pinterest', '/snapchat', 
-  '/googlebusiness'
+  '/googlebusiness', '/youtube', '/linkedin-ads', '/tiktok-ads', 
+  '/pinterest-ads', '/x-ads'
 ];
 
 const docsPaths: Record<string, string> = {
@@ -172,6 +173,7 @@ const App: React.FC = () => {
                 slug={currentPath} 
                 onBack={() => navigateTo('/')} 
                 onGetApiKey={startOnboarding} 
+                onNavigateToPath={navigateTo}
               />
             </main>
             <Footer onStartOnboarding={startOnboarding} onNavigateToPath={navigateTo} />
