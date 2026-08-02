@@ -1271,7 +1271,24 @@ async function startServer() {
           await supabase.from('connected_accounts').delete().eq('user_id', userId).eq('platform', cleanPlatform);
         }
 
-        // Recalculate remaining active connected accounts count
+        // 3. Rotate to a FRESH Zernio Profile ID so any future re-connection MUST force fresh OAuth authorization
+        const { data: userProfile } = await supabase.from('profiles').select('email').eq('id', userId).maybeSingle();
+        const userEmail = userProfile?.email || `user_${userId.substring(0, 8)}@rockyt.io`;
+        
+        let newZernioProfileId: string = `prof_${userId.substring(0, 8)}_${Date.now()}`;
+        try {
+          const zernioRes = await zernio.profiles.createProfile({
+            body: { name: `${userEmail}_${Date.now()}` }
+          });
+          const createdId = (zernioRes.data as any)?.profile?._id || (zernioRes.data as any)?._id;
+          if (createdId) {
+            newZernioProfileId = createdId;
+          }
+        } catch (zErr: any) {
+          console.warn('[disconnectSocialAccount] Zernio profile rotation notice:', zErr?.message || zErr);
+        }
+
+        // Recalculate remaining active connected accounts count and store fresh zernio_profile_id
         const { data: remaining } = await supabase
           .from('connected_accounts')
           .select('id')
@@ -1281,10 +1298,14 @@ async function startServer() {
         const newCount = remaining ? remaining.length : 0;
         await supabase
           .from('profiles')
-          .update({ connected_accounts_count: newCount })
+          .update({
+            connected_accounts_count: newCount,
+            zernio_profile_id: newZernioProfileId
+          })
           .eq('id', userId);
+
       } catch (dbErr: any) {
-        console.error('[disconnectSocialAccount] Supabase delete error:', dbErr);
+        console.error('[disconnectSocialAccount] Supabase disconnect error:', dbErr);
       }
     }
   };
