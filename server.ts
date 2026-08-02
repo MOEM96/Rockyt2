@@ -280,7 +280,8 @@ async function startServer() {
             email: userEmail,
             plan: 'Growth',
             max_accounts: 1,
-            connected_accounts_count: 0
+            connected_accounts_count: 0,
+            wallet_balance: 0.00
           }, { onConflict: 'id' })
           .select()
           .maybeSingle();
@@ -288,7 +289,7 @@ async function startServer() {
         if (upsertErr) {
           console.error('[ensureUserProfile] Profile upsert error:', upsertErr.message);
         }
-        profile = newProfile || { id: reqUser.id, email: userEmail, plan: 'Growth', max_accounts: 1, connected_accounts_count: 0 };
+        profile = newProfile || { id: reqUser.id, email: userEmail, plan: 'Growth', max_accounts: 1, connected_accounts_count: 0, wallet_balance: 0.00 };
       }
 
       if (profile && !profile.zernio_profile_id) {
@@ -1263,6 +1264,30 @@ async function startServer() {
         currentBalance: currentBalance,
         requiresDeposit: true
       });
+    }
+
+    // Deduct pass-through fee from user's wallet balance upon successful authentication
+    if (isPaidPlatform && supabase && req.user?.id) {
+      const newBalance = Math.max(0, currentBalance - requiredPassThroughFee);
+      try {
+        await supabase
+          .from('profiles')
+          .update({ wallet_balance: newBalance })
+          .eq('id', req.user.id);
+
+        await supabase
+          .from('wallet_transactions')
+          .insert([{
+            user_id: req.user.id,
+            amount: -requiredPassThroughFee,
+            type: 'deduction',
+            description: `X (Twitter) API Pass-Through Fee`,
+            balance_after: newBalance,
+            created_at: new Date().toISOString()
+          }]);
+      } catch (deductErr: any) {
+        console.warn('[POST /api/v1/accounts/connect] Balance deduction warning:', deductErr.message);
+      }
     }
 
     const appBaseUrl = process.env.APP_BASE_URL || (req.headers.origin || `https://${req.headers.host}`);
