@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Layers, Key, CreditCard, LogOut, ArrowLeft, Check, Copy, Eye, EyeOff, RefreshCw, Plus, Wifi, Radio } from 'lucide-react';
+import { Layers, Key, CreditCard, LogOut, ArrowLeft, Check, Copy, Eye, EyeOff, RefreshCw, Plus, Radio, ShieldCheck } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 
 interface DashboardProps {
@@ -16,6 +16,7 @@ interface DashboardProps {
 
 interface ConnectedAccount {
   id: string;
+  user_id: string;
   platform: string;
   username: string;
   profile_name: string;
@@ -25,15 +26,19 @@ interface ConnectedAccount {
 
 interface ApiKeyRow {
   id: string;
+  user_id: string;
   key_prefix: string;
+  revoked: boolean;
   created_at: string;
 }
 
-interface UsageLogRow {
+interface ApiLogRow {
   id: string;
-  endpoint: string;
-  method: string;
+  user_id: string;
+  activity: string;
+  platform: string;
   status_code: number;
+  duration_ms: number;
   created_at: string;
 }
 
@@ -46,12 +51,12 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const [activeTab, setActiveTab] = useState<'accounts' | 'apikeys' | 'billing'>('accounts');
   const [accounts, setAccounts] = useState<ConnectedAccount[]>([]);
   const [apiKeys, setApiKeys] = useState<ApiKeyRow[]>([]);
-  const [logs, setLogs] = useState<UsageLogRow[]>([]);
+  const [logs, setLogs] = useState<ApiLogRow[]>([]);
   const [apiKey, setApiKey] = useState<string>('rockyt_live_99f381a94b8e21c890192847a');
   const [showKey, setShowKey] = useState<boolean>(false);
   const [copiedKey, setCopiedKey] = useState<boolean>(false);
   const [isRegenerating, setIsRegenerating] = useState<boolean>(false);
-  const [isLiveConnected, setIsLiveConnected] = useState<boolean>(true);
+  const [isRealtimeActive, setIsRealtimeActive] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   // User Profile
@@ -64,7 +69,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const fetchLiveData = async () => {
     setIsLoading(true);
     try {
-      // A. Connected Accounts
+      // A. Fetch Real Connected Accounts from Supabase
       const { data: dbAccounts, error: accErr } = await supabase
         .from('connected_accounts')
         .select('*')
@@ -74,11 +79,11 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
         setAccounts(dbAccounts as ConnectedAccount[]);
       }
 
-      // B. API Keys
+      // B. Fetch Real User API Keys from Supabase
       const { data: dbKeys, error: keyErr } = await supabase
-        .from('api_keys')
-        .select('id, key_prefix, created_at')
-        .eq('status', 'active')
+        .from('user_api_keys')
+        .select('id, user_id, key_prefix, revoked, created_at')
+        .eq('revoked', false)
         .order('created_at', { ascending: false });
 
       if (!keyErr && dbKeys && dbKeys.length > 0) {
@@ -86,15 +91,15 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
         setApiKey(`${dbKeys[0].key_prefix}••••••••••••••••••••`);
       }
 
-      // C. Usage Logs
+      // C. Fetch Real API Logs from Supabase
       const { data: dbLogs } = await supabase
-        .from('usage_logs')
+        .from('api_logs')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(10);
 
       if (dbLogs) {
-        setLogs(dbLogs as UsageLogRow[]);
+        setLogs(dbLogs as ApiLogRow[]);
       }
     } catch (err) {
       console.warn('[Dashboard] Supabase live fetch notice:', err);
@@ -103,22 +108,25 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     }
   };
 
-  // 2. Setup Realtime Subscription
+  // 2. Setup Realtime Channel Listener
   useEffect(() => {
     fetchLiveData();
 
-    // Subscribe to real-time database updates from Supabase
-    const accountsChannel = supabase
+    // Subscribe to real-time database updates from Supabase for connected_accounts table
+    const realtimeChannel = supabase
       .channel('public:connected_accounts')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'connected_accounts' }, () => {
         fetchLiveData();
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'user_api_keys' }, () => {
+        fetchLiveData();
+      })
       .subscribe((status) => {
-        setIsLiveConnected(status === 'SUBSCRIBED');
+        setIsRealtimeActive(status === 'SUBSCRIBED');
       });
 
     return () => {
-      supabase.removeChannel(accountsChannel);
+      supabase.removeChannel(realtimeChannel);
     };
   }, [userId]);
 
@@ -130,22 +138,22 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
 
   const regenerateApiKey = async () => {
     setIsRegenerating(true);
-    const newPrefix = `rockyt_live_${Math.random().toString(36).substring(2, 10)}`;
+    const newPrefix = `rkt_live_${Math.random().toString(36).substring(2, 10)}`;
     const fullKey = `${newPrefix}${Math.random().toString(36).substring(2, 22)}`;
     
     try {
       if (userId) {
         await supabase
-          .from('api_keys')
+          .from('user_api_keys')
           .insert({
             user_id: userId,
-            key_name: 'Live Agent Key',
             key_prefix: newPrefix,
             key_hash: 'hash_' + Math.random().toString(36).substring(2),
-            status: 'active'
+            revoked: false
           });
       }
       setApiKey(fullKey);
+      fetchLiveData();
     } catch (e) {
       setApiKey(fullKey);
     } finally {
@@ -219,7 +227,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                 <span className="text-[10px] text-white/60 block truncate">{userEmail}</span>
               </div>
             </div>
-            <div className="flex items-center gap-1 shrink-0" title="Supabase Realtime Connection">
+            <div className="flex items-center gap-1 shrink-0" title="Supabase Realtime Channel Active">
               <Radio size={12} className="text-emerald-400 animate-pulse" />
               <span className="text-[9px] text-emerald-400 font-bold uppercase">LIVE DB</span>
             </div>
@@ -383,7 +391,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
               <div className="flex justify-between items-center border-b border-white/10 pb-3">
                 <div>
                   <h3 className="font-display font-bold text-xl text-white uppercase">LIVE SECRET API KEY</h3>
-                  <p className="text-xs text-white/60">Persisted in Supabase database (`public.api_keys`)</p>
+                  <p className="text-xs text-white/60">Persisted in Supabase database (`public.user_api_keys`)</p>
                 </div>
                 <span className="bg-emerald-500/10 border border-emerald-400 text-emerald-400 text-[10px] px-2.5 py-1 font-bold uppercase">
                   ACTIVE
@@ -424,7 +432,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
             <div className="bg-zinc-950 border border-white/15 p-6">
               <div className="flex items-center justify-between border-b border-white/10 pb-4 mb-4">
                 <h3 className="font-display font-bold text-xl text-white uppercase">REAL-TIME API DISPATCH LOGS</h3>
-                <span className="text-xs text-emerald-400 font-bold uppercase">Connected to Supabase</span>
+                <span className="text-xs text-emerald-400 font-bold uppercase">Connected to Supabase `public.api_logs`</span>
               </div>
 
               <div className="overflow-x-auto">
@@ -432,8 +440,8 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                   <thead>
                     <tr className="border-b border-white/15 text-brand uppercase text-[10px] tracking-wider">
                       <th className="pb-3">Timestamp</th>
-                      <th className="pb-3">Endpoint</th>
-                      <th className="pb-3">Method</th>
+                      <th className="pb-3">Activity</th>
+                      <th className="pb-3">Platform</th>
                       <th className="pb-3">Status</th>
                     </tr>
                   </thead>
@@ -442,11 +450,11 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                       logs.map((log) => (
                         <tr key={log.id} className="hover:bg-white/5 transition-colors">
                           <td className="py-3 text-white/60">{new Date(log.created_at).toLocaleString()}</td>
-                          <td className="py-3 font-bold text-white">{log.endpoint}</td>
-                          <td className="py-3 text-white/80 uppercase">{log.method}</td>
+                          <td className="py-3 font-bold text-white">{log.activity || 'POST /v1/dispatches'}</td>
+                          <td className="py-3 text-white/80 uppercase">{log.platform || 'social'}</td>
                           <td className="py-3">
                             <span className="bg-emerald-500/10 border border-emerald-400 text-emerald-400 text-[10px] px-2 py-0.5 font-bold">
-                              {log.status_code} OK
+                              {log.status_code || 200} OK
                             </span>
                           </td>
                         </tr>
@@ -454,7 +462,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                     ) : (
                       <tr>
                         <td colSpan={4} className="py-6 text-center text-white/40 italic">
-                          No dispatch logs recorded yet. Incoming agent requests will stream live here.
+                          No dispatch logs recorded yet in Supabase. Incoming agent requests will stream live here.
                         </td>
                       </tr>
                     )}
