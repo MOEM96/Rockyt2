@@ -3,7 +3,7 @@
     {
       "source": "/:path(.*)",
       "has": [{ "type": "host", "value": "www.rockyt.io" }],
-      "destination": "https://rockyt.io/:path",
+      "destination": "https://rockyt.io/:path*",
       "permanent": true
     }
   ],
