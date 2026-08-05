@@ -103,3 +103,40 @@ DROP POLICY IF EXISTS "api_logs_insert_own" ON public.api_logs;
 CREATE POLICY "api_logs_insert_own"
   ON public.api_logs FOR INSERT
   WITH CHECK (auth.uid() = user_id);
+
+
+-- 6. Add SECURITY DEFINER RPC function for server-side single-query data fetch ---
+
+CREATE OR REPLACE FUNCTION public.get_user_dashboard(p_user_id uuid)
+RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_profile json;
+  v_accounts json;
+  v_keys json;
+  v_logs json;
+  v_txns json;
+  v_webhooks json;
+  v_posts json;
+BEGIN
+  SELECT row_to_json(p) INTO v_profile FROM public.profiles p WHERE p.id = p_user_id;
+  SELECT COALESCE(json_agg(a), '[]'::json) INTO v_accounts FROM public.connected_accounts a WHERE a.user_id = p_user_id;
+  SELECT COALESCE(json_agg(k), '[]'::json) INTO v_keys FROM public.user_api_keys k WHERE k.user_id = p_user_id AND k.revoked = false;
+  SELECT COALESCE(json_agg(l), '[]'::json) INTO v_logs FROM (SELECT * FROM public.api_logs WHERE user_id = p_user_id ORDER BY created_at DESC LIMIT 50) l;
+  SELECT COALESCE(json_agg(t), '[]'::json) INTO v_txns FROM public.wallet_transactions t WHERE t.user_id = p_user_id;
+  SELECT COALESCE(json_agg(w), '[]'::json) INTO v_webhooks FROM public.webhooks w WHERE w.user_id = p_user_id;
+  SELECT COALESCE(json_agg(post), '[]'::json) INTO v_posts FROM (SELECT * FROM public.user_posts WHERE user_id = p_user_id ORDER BY created_at DESC) post;
+
+  RETURN json_build_object(
+    'profile', v_profile,
+    'accounts', v_accounts,
+    'apiKeys', v_keys,
+    'logs', v_logs,
+    'walletTransactions', v_txns,
+    'webhooks', v_webhooks,
+    'posts', v_posts
+  );
+END;
+$$;

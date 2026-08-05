@@ -250,11 +250,9 @@ async function startServer() {
     }
   }));
 
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
-  const hasRealSupabase = Boolean(process.env.VITE_SUPABASE_URL && supabaseKey);
-  const supabase = hasRealSupabase
-    ? createClient(process.env.VITE_SUPABASE_URL!, supabaseKey!)
-    : null;
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || 'https://srqpicqpadqfxjbtghky.supabase.co';
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_FCRt810ouCz9jKti1niwyA_yN6jKTij';
+  const supabase = createClient(supabaseUrl, supabaseKey);
 
   // Memory storage for local mock mode fallback
   const mockKeys: Array<{ id: string, user_id: string, key_hash: string, key_prefix: string, revoked: boolean, created_at: string }> = [];
@@ -394,12 +392,7 @@ async function startServer() {
       }
 
       if (!supabase) {
-        req.user = { id: '00000000-0000-0000-0000-000000000001', email: 'moamenemam966@gmail.com' };
-        req.zernioProfileId = 'mock-zernio-profile-id';
-        req.plan = 'Growth';
-        req.maxAccounts = 1;
-        req.connectedCount = mockConnectedCount;
-        return next();
+        return res.status(500).json({ error: 'Database service unavailable' });
       }
 
       // === PATH A: Supabase User JWT Token (contains dots) ===
@@ -1990,33 +1983,28 @@ async function startServer() {
   // ---------------------------------------------------------------------------
   app.get('/api/v1/me/dashboard', combinedAuth, asyncHandler(async (req: any, res: any) => {
     const userId = req.user.id;
-    const profile = await ensureUserProfile(req.user);
+    let dbData: any = null;
 
-    // Parallel fetch all user-scoped data
-    let accounts: any[] = [];
-    let apiKeys: any[] = [];
-    let logs: any[] = [];
-    let walletTxns: any[] = [];
-    let webhooks: any[] = [];
-    let posts: any[] = [];
-
-    if (supabase) {
-      const [accRes, keyRes, logRes, txnRes, whRes, postRes] = await Promise.allSettled([
-        supabase.from('connected_accounts').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
-        supabase.from('user_api_keys').select('id, key_prefix, created_at, revoked').eq('user_id', userId).eq('revoked', false).order('created_at', { ascending: false }),
-        supabase.from('api_logs').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(50),
-        supabase.from('wallet_transactions').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
-        supabase.from('webhooks').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
-        supabase.from('user_posts').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
-      ]);
-
-      if (accRes.status === 'fulfilled' && accRes.value.data) accounts = accRes.value.data;
-      if (keyRes.status === 'fulfilled' && keyRes.value.data) apiKeys = keyRes.value.data;
-      if (logRes.status === 'fulfilled' && logRes.value.data) logs = logRes.value.data;
-      if (txnRes.status === 'fulfilled' && txnRes.value.data) walletTxns = txnRes.value.data;
-      if (whRes.status === 'fulfilled' && whRes.value.data) webhooks = whRes.value.data;
-      if (postRes.status === 'fulfilled' && postRes.value.data) posts = postRes.value.data;
+    if (supabase && userId) {
+      try {
+        const { data: rpcData, error: rpcErr } = await supabase.rpc('get_user_dashboard', { p_user_id: userId });
+        if (!rpcErr && rpcData) {
+          dbData = rpcData;
+        } else if (rpcErr) {
+          console.warn('[/me/dashboard] get_user_dashboard RPC error:', rpcErr.message);
+        }
+      } catch (e: any) {
+        console.warn('[/me/dashboard] get_user_dashboard RPC exception:', e.message);
+      }
     }
+
+    let profile = dbData?.profile || await ensureUserProfile(req.user);
+    let accounts: any[] = dbData?.accounts || [];
+    let apiKeys: any[] = dbData?.apiKeys || [];
+    let logs: any[] = dbData?.logs || [];
+    let walletTxns: any[] = dbData?.walletTransactions || [];
+    let webhooks: any[] = dbData?.webhooks || [];
+    let posts: any[] = dbData?.posts || [];
 
     // Also merge Zernio accounts if available
     let zernioAccounts: any[] = [];
