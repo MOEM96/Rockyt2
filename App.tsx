@@ -125,7 +125,8 @@ const App: React.FC = () => {
               id: data.session.user.id,
               email: data.session.user.email,
               name: data.session.user.user_metadata?.full_name || data.session.user.email,
-              picture: data.session.user.user_metadata?.avatar_url || ''
+              picture: data.session.user.user_metadata?.avatar_url || '',
+              accessToken: data.session.access_token
             };
             setUserSession(userObj);
             localStorage.setItem('rockyt_session_user', JSON.stringify(userObj));
@@ -154,7 +155,8 @@ const App: React.FC = () => {
             id: session.user.id,
             email: session.user.email,
             name: session.user.user_metadata?.full_name || session.user.email,
-            picture: session.user.user_metadata?.avatar_url || ''
+            picture: session.user.user_metadata?.avatar_url || '',
+            accessToken: session.access_token
           };
           setUserSession(userObj);
           localStorage.setItem('rockyt_session_user', JSON.stringify(userObj));

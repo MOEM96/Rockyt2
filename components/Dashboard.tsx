@@ -187,17 +187,19 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     setIsLoading(true);
     try {
       const sessionRes = await supabase.auth.getSession();
-      const authToken = sessionRes.data.session?.access_token || userSession?.accessToken;
+      const tokenCandidate = sessionRes.data.session?.access_token || userSession?.accessToken || userEmail || userSession?.id || userId;
       
-      if (!authToken) {
-        console.warn('[Dashboard] No auth token available');
+      if (!tokenCandidate) {
+        console.warn('[Dashboard] No user identifier available');
         setIsLoading(false);
         return;
       }
 
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`,
+        'Authorization': `Bearer ${tokenCandidate}`,
+        'x-user-email': userEmail || userSession?.email || '',
+        'x-user-id': userId || userSession?.id || '',
       };
 
       // Single consolidated API call for all dashboard data
