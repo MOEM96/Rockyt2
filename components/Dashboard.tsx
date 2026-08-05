@@ -182,25 +182,29 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const userAvatar = userSession?.picture || 'https://lh3.googleusercontent.com/a/ACg8ocL_PcCi9QCqJ-hfTUKklDZ6Q2RWJfer2LjarrUA0X2-4jNFuQ=s96-c';
   const userId = userSession?.id || profile?.id;
 
+  // Helper: Build consistent auth headers for all server API calls
+  const getAuthHeaders = async (): Promise<Record<string, string>> => {
+    let token = userSession?.accessToken;
+    if (!token) {
+      try {
+        const sessionRes = await supabase.auth.getSession();
+        token = sessionRes.data.session?.access_token;
+      } catch (e) {}
+    }
+    const tokenCandidate = token || userSession?.email || userEmail || userSession?.id || userId || '';
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${tokenCandidate}`,
+      'x-user-email': userEmail || userSession?.email || '',
+      'x-user-id': userId || userSession?.id || '',
+    };
+  };
+
   // 1. Fetch Real Live Data from Server API (Multi-Tenant Isolated)
   const fetchLiveData = async () => {
     setIsLoading(true);
     try {
-      const sessionRes = await supabase.auth.getSession();
-      const tokenCandidate = sessionRes.data.session?.access_token || userSession?.accessToken || userEmail || userSession?.id || userId;
-      
-      if (!tokenCandidate) {
-        console.warn('[Dashboard] No user identifier available');
-        setIsLoading(false);
-        return;
-      }
-
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${tokenCandidate}`,
-        'x-user-email': userEmail || userSession?.email || '',
-        'x-user-id': userId || userSession?.id || '',
-      };
+      const headers = await getAuthHeaders();
 
       // Single consolidated API call for all dashboard data
       const dashRes = await fetch('/api/v1/me/dashboard', { headers });
@@ -254,13 +258,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     );
 
     try {
-      const sessionRes = await supabase.auth.getSession();
-      const authToken = sessionRes.data.session?.access_token || userSession?.accessToken;
-
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken || ''}`,
-      };
+      const headers = await getAuthHeaders();
 
       if (isCurrentlyConnected) {
         // Disconnect account
@@ -329,8 +327,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     setCheckoutSuccessMsg(null);
 
     try {
-      const sessionRes = await supabase.auth.getSession();
-      const authToken = sessionRes.data.session?.access_token || userSession?.accessToken || userEmail;
+      const headers = await getAuthHeaders();
 
       const finalAmount = amountVal || (customDeposit ? parseFloat(customDeposit) : depositAmount);
       if (isNaN(finalAmount) || finalAmount <= 0) {
@@ -339,11 +336,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
 
       const res = await fetch('/api/billing/create-checkout', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`,
-          'x-user-email': userEmail
-        },
+        headers,
         body: JSON.stringify({
           productId: productId || 'pdt_0NWDjzl0TS6LNFrVdFZYQ',
           amount: finalAmount,
@@ -375,15 +368,11 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const handleCreateWebhook = async () => {
     if (!newWebhookUrl) return;
     try {
-      const sessionRes = await supabase.auth.getSession();
-      const authToken = sessionRes.data.session?.access_token || userSession?.accessToken;
+      const headers = await getAuthHeaders();
 
       const res = await fetch('/api/v1/webhooks', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken || ''}`,
-        },
+        headers,
         body: JSON.stringify({
           url: newWebhookUrl,
           name: newWebhookName || 'Production Webhook',
@@ -404,14 +393,11 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   // Delete Webhook handler
   const handleDeleteWebhook = async (id: string) => {
     try {
-      const sessionRes = await supabase.auth.getSession();
-      const authToken = sessionRes.data.session?.access_token || userSession?.accessToken;
+      const headers = await getAuthHeaders();
 
       await fetch(`/api/v1/webhooks/${id}`, {
         method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${authToken || ''}`,
-        }
+        headers
       });
       setWebhooks(prev => prev.filter(w => w.id !== id));
     } catch (e) {}
@@ -1316,14 +1302,10 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
               onClick={async () => {
                 if (newPostContent) {
                   try {
-                    const sessionRes = await supabase.auth.getSession();
-                    const authToken = sessionRes.data.session?.access_token || userSession?.accessToken;
+                    const headers = await getAuthHeaders();
                     const res = await fetch('/api/v1/user/posts', {
                       method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${authToken || ''}`,
-                      },
+                      headers,
                       body: JSON.stringify({
                         platform: newPostPlatform,
                         content: newPostContent
