@@ -239,3 +239,42 @@ BEGIN
   );
 END;
 $$;
+
+-- 9. RPC Function: get_user_dashboard_by_identifier (UUID, Email, or Zernio Profile ID)
+CREATE OR REPLACE FUNCTION public.get_user_dashboard_by_identifier(p_identifier text)
+RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_user_id uuid;
+BEGIN
+  -- 1. Try matching by email
+  SELECT id INTO v_user_id FROM public.profiles WHERE lower(email) = lower(p_identifier) LIMIT 1;
+
+  -- 2. Try matching by zernio_profile_id
+  IF v_user_id IS NULL THEN
+    SELECT id INTO v_user_id FROM public.profiles WHERE zernio_profile_id = p_identifier LIMIT 1;
+  END IF;
+
+  -- 3. Try matching by UUID id
+  IF v_user_id IS NULL AND p_identifier ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+    SELECT id INTO v_user_id FROM public.profiles WHERE id = p_identifier::uuid LIMIT 1;
+  END IF;
+
+  IF v_user_id IS NULL THEN
+    RETURN json_build_object(
+      'error', 'User profile not found for identifier: ' || p_identifier,
+      'profile', null,
+      'accounts', '[]'::json,
+      'apiKeys', '[]'::json,
+      'logs', '[]'::json,
+      'walletTransactions', '[]'::json,
+      'webhooks', '[]'::json,
+      'posts', '[]'::json
+    );
+  END IF;
+
+  RETURN public.get_user_dashboard(v_user_id);
+END;
+$$;

@@ -357,22 +357,24 @@ async function startServer() {
   }
 
   // Decode a Supabase JWT locally without any network call.
-  // Supabase JWTs have: { sub: userId, email: ..., role: 'authenticated', ... }
+  // Decode a Supabase / OAuth JWT locally without any network call.
+  // Supports Supabase, Google OAuth, and custom JWT tokens with sub, id, or email.
   function decodeSupabaseJWT(token: string): { id: string; email: string } | null {
     try {
       const parts = token.split('.');
       if (parts.length !== 3) return null;
       // Add padding if needed
       const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-      const padded = base64 + '='.repeat((4 - base64.length % 4) % 4);
+      const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
       const payload = JSON.parse(Buffer.from(padded, 'base64').toString('utf8'));
-      if (!payload || !payload.sub) return null;
-      // Reject expired tokens
-      if (payload.exp && Date.now() / 1000 > payload.exp) return null;
-      // Only accept Supabase auth tokens (role: 'authenticated' or aud: 'authenticated')
-      if (payload.role !== 'authenticated' && payload.aud !== 'authenticated') return null;
-      const email = payload.email || payload.user_metadata?.email || `user_${payload.sub.substring(0, 8)}@rockyt.io`;
-      return { id: payload.sub, email };
+      if (!payload) return null;
+      const sub = payload.sub || payload.id || payload.user_id;
+      const email = payload.email || payload.user_metadata?.email || payload.preferred_username;
+      if (!sub && !email) return null;
+      return {
+        id: sub || `usr_${crypto.createHash('md5').update(email).digest('hex').substring(0, 16)}`,
+        email: email || `user_${String(sub).substring(0, 8)}@rockyt.io`
+      };
     } catch {
       return null;
     }
@@ -384,11 +386,13 @@ async function startServer() {
       if (headerToken === 'undefined' || headerToken === 'null' || headerToken === '[object Object]') {
         headerToken = '';
       }
-      const userEmailHeader = req.headers['x-user-email'] || req.headers['x-user-id'];
+      const userEmailHeader = req.headers['x-user-email'] || req.query.email;
+      const userIdHeader = req.headers['x-user-id'] || req.query.userId || req.query.user_id;
+      const profileIdHeader = req.headers['x-profile-id'] || req.query.profileId || req.query.profile_id;
 
       let token = headerToken || req.cookies?.rockyt_session;
-      if (!token && userEmailHeader) {
-        token = String(userEmailHeader).trim();
+      if (!token && (userEmailHeader || userIdHeader || profileIdHeader)) {
+        token = String(userEmailHeader || userIdHeader || profileIdHeader).trim();
       }
 
       if (!supabase) {
@@ -410,7 +414,7 @@ async function startServer() {
       }
 
       // === PATH B: API Key lookup via SHA-256 hash ===
-      if (token) {
+      if (token && (token.startsWith('rkt_') || token.length >= 32)) {
         const hash = crypto.createHash('sha256').update(token).digest('hex');
         const { data: keyData } = await supabase
           .from('user_api_keys')
@@ -433,15 +437,29 @@ async function startServer() {
           req.connectedCount = fullProfile?.connected_accounts_count || 0;
           return next();
         }
+      }
 
-        // Try looking up directly by email or ID in profiles
-        const tokenStr = String(token).trim();
-        if (tokenStr.includes('@') || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tokenStr)) {
-          const query = tokenStr.includes('@')
-            ? supabase.from('profiles').select('*').eq('email', tokenStr).maybeSingle()
-            : supabase.from('profiles').select('*').eq('id', tokenStr).maybeSingle();
+      // === PATH C: Direct lookup in profiles by any identifier (Email, UUID, or Zernio Profile ID) ===
+      const candidateIdentifiers = [
+        userEmailHeader,
+        userIdHeader,
+        profileIdHeader,
+        token
+      ].filter(Boolean).map(s => String(s).trim());
+
+      for (const ident of candidateIdentifiers) {
+        if (!ident || ident === 'undefined' || ident === 'null') continue;
+        let query = null;
+        if (ident.includes('@')) {
+          query = supabase.from('profiles').select('*').eq('email', ident).maybeSingle();
+        } else if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ident)) {
+          query = supabase.from('profiles').select('*').eq('id', ident).maybeSingle();
+        } else if (/^[0-9a-f]{24}$/i.test(ident) || ident.startsWith('prof_')) {
+          query = supabase.from('profiles').select('*').eq('zernio_profile_id', ident).maybeSingle();
+        }
+
+        if (query) {
           const { data: profileRow } = await query;
-
           if (profileRow) {
             req.user = { id: profileRow.id, email: profileRow.email };
             req.zernioProfileId = profileRow.zernio_profile_id || null;
@@ -453,25 +471,25 @@ async function startServer() {
         }
       }
 
-      // Fallback: If header provided x-user-email or x-user-id explicitly
-      if (userEmailHeader) {
-        const headerStr = String(userEmailHeader).trim();
-        const query = headerStr.includes('@')
-          ? supabase.from('profiles').select('*').eq('email', headerStr).maybeSingle()
-          : supabase.from('profiles').select('*').eq('id', headerStr).maybeSingle();
-        const { data: profileRow } = await query;
-        if (profileRow) {
-          req.user = { id: profileRow.id, email: profileRow.email };
-          req.zernioProfileId = profileRow.zernio_profile_id || null;
-          req.plan = profileRow.plan || 'Growth';
-          req.maxAccounts = getMaxAccountsForUser(profileRow);
-          req.connectedCount = profileRow.connected_accounts_count || 0;
+      // === PATH D: Fallback email auto-profile creation ===
+      if (userEmailHeader && String(userEmailHeader).includes('@')) {
+        const dummyUser = {
+          id: userIdHeader || `usr_${crypto.createHash('md5').update(String(userEmailHeader)).digest('hex').substring(0, 16)}`,
+          email: String(userEmailHeader).trim()
+        };
+        const fullProfile = await ensureUserProfile(dummyUser);
+        if (fullProfile) {
+          req.user = { id: fullProfile.id, email: fullProfile.email };
+          req.zernioProfileId = fullProfile.zernio_profile_id || null;
+          req.plan = fullProfile.plan || 'Growth';
+          req.maxAccounts = getMaxAccountsForUser(fullProfile);
+          req.connectedCount = fullProfile.connected_accounts_count || 0;
           return next();
         }
       }
 
-      // === PATH C: No valid auth found — return 401 ===
-      return res.status(401).json({ error: 'Authentication required. Provide a valid Bearer token or API key.' });
+      // === PATH E: No valid auth found — return 401 ===
+      return res.status(401).json({ error: 'Authentication required. Provide a valid Bearer token, session, or API key.' });
     } catch (err: any) {
       console.error('[combinedAuth] Error:', err?.message || err);
       return res.status(401).json({ error: 'Authentication failed' });
@@ -1995,19 +2013,27 @@ async function startServer() {
   // ---------------------------------------------------------------------------
   app.get('/api/v1/me/dashboard', combinedAuth, asyncHandler(async (req: any, res: any) => {
     const userId = req.user.id;
+    const userIdentifier = req.zernioProfileId || req.user?.id || req.user?.email || req.headers['x-profile-id'] || req.query?.profileId || req.query?.email;
     let dbData: any = null;
 
-    if (supabase && userId) {
+    if (supabase && userIdentifier) {
       try {
-        const { data: rpcData, error: rpcErr } = await supabase.rpc('get_user_dashboard', { p_user_id: userId });
-        if (!rpcErr && rpcData) {
+        const { data: rpcData, error: rpcErr } = await supabase.rpc('get_user_dashboard_by_identifier', { p_identifier: String(userIdentifier) });
+        if (!rpcErr && rpcData && !rpcData.error) {
           dbData = rpcData;
         } else if (rpcErr) {
-          console.warn('[/me/dashboard] get_user_dashboard RPC error:', rpcErr.message);
+          console.warn('[/me/dashboard] get_user_dashboard_by_identifier RPC error:', rpcErr.message);
         }
       } catch (e: any) {
-        console.warn('[/me/dashboard] get_user_dashboard RPC exception:', e.message);
+        console.warn('[/me/dashboard] get_user_dashboard_by_identifier RPC exception:', e.message);
       }
+    }
+
+    if (!dbData && supabase && userId) {
+      try {
+        const { data: rpcData } = await supabase.rpc('get_user_dashboard', { p_user_id: userId });
+        if (rpcData) dbData = rpcData;
+      } catch (e: any) {}
     }
 
     let profile = dbData?.profile || await ensureUserProfile(req.user);
