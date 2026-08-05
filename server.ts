@@ -452,36 +452,11 @@ async function startServer() {
         }
       }
 
-      // === PATH C: Session Fallback for Active User ===
-      const fallbackEmail = (token && token.includes('@')) ? token : (userEmailHeader || 'moamenemam966@gmail.com');
-      const { data: existingProfile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('email', fallbackEmail)
-        .maybeSingle();
-
-      if (existingProfile) {
-        req.user = { id: existingProfile.id, email: existingProfile.email };
-        req.zernioProfileId = existingProfile.zernio_profile_id || null;
-        req.plan = existingProfile.plan || 'Growth';
-        req.maxAccounts = getMaxAccountsForUser(existingProfile);
-        req.connectedCount = existingProfile.connected_accounts_count || 0;
-        return next();
-      }
-
-      // Create fallback profile row if missing
-      const defaultUser = { id: '00000000-0000-0000-0000-000000000001', email: String(fallbackEmail) };
-      req.user = defaultUser;
-      const fullProfile = await ensureUserProfile(defaultUser);
-      req.zernioProfileId = fullProfile?.zernio_profile_id || null;
-      req.plan = fullProfile?.plan || 'Growth';
-      req.maxAccounts = getMaxAccountsForUser(fullProfile);
-      req.connectedCount = fullProfile?.connected_accounts_count || 0;
-      return next();
+      // === PATH C: No valid auth found — return 401 ===
+      return res.status(401).json({ error: 'Authentication required. Provide a valid Bearer token or API key.' });
     } catch (err: any) {
       console.error('[combinedAuth] Error:', err?.message || err);
-      req.user = { id: '00000000-0000-0000-0000-000000000001', email: 'moamenemam966@gmail.com' };
-      return next();
+      return res.status(401).json({ error: 'Authentication failed' });
     }
   }
 
@@ -1981,6 +1956,121 @@ async function startServer() {
         id: profileId,
         name: req.user.email || 'Default Profile'
       }
+    });
+  }));
+
+  // ---------------------------------------------------------------------------
+  // Consolidated Dashboard Data Endpoint (Multi-Tenant Isolated)
+  // Returns ALL dashboard data for the authenticated user in a single call.
+  // ---------------------------------------------------------------------------
+  app.get('/api/v1/me/dashboard', combinedAuth, asyncHandler(async (req: any, res: any) => {
+    const userId = req.user.id;
+    const profile = await ensureUserProfile(req.user);
+
+    // Parallel fetch all user-scoped data
+    let accounts: any[] = [];
+    let apiKeys: any[] = [];
+    let logs: any[] = [];
+    let walletTxns: any[] = [];
+    let webhooks: any[] = [];
+    let posts: any[] = [];
+
+    if (supabase) {
+      const [accRes, keyRes, logRes, txnRes, whRes, postRes] = await Promise.allSettled([
+        supabase.from('connected_accounts').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
+        supabase.from('user_api_keys').select('id, key_prefix, created_at, revoked').eq('user_id', userId).eq('revoked', false).order('created_at', { ascending: false }),
+        supabase.from('api_logs').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(50),
+        supabase.from('wallet_transactions').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
+        supabase.from('webhooks').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
+        supabase.from('user_posts').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
+      ]);
+
+      if (accRes.status === 'fulfilled' && accRes.value.data) accounts = accRes.value.data;
+      if (keyRes.status === 'fulfilled' && keyRes.value.data) apiKeys = keyRes.value.data;
+      if (logRes.status === 'fulfilled' && logRes.value.data) logs = logRes.value.data;
+      if (txnRes.status === 'fulfilled' && txnRes.value.data) walletTxns = txnRes.value.data;
+      if (whRes.status === 'fulfilled' && whRes.value.data) webhooks = whRes.value.data;
+      if (postRes.status === 'fulfilled' && postRes.value.data) posts = postRes.value.data;
+    }
+
+    // Also merge Zernio accounts if available
+    let zernioAccounts: any[] = [];
+    if (profile?.zernio_profile_id) {
+      try {
+        const accountsRes = await zernio.accounts.listAccounts({
+          query: { profileId: profile.zernio_profile_id }
+        });
+        const rawAccounts = (accountsRes.data as any)?.accounts || (accountsRes.data as any) || [];
+        if (Array.isArray(rawAccounts)) {
+          zernioAccounts = rawAccounts.map((a: any) => ({
+            id: a._id || a.id,
+            platform: a.platform ? (a.platform.charAt(0).toUpperCase() + a.platform.slice(1)) : 'Facebook',
+            username: a.username || a.name || a.title || `@${a.platform || 'social'}_account`,
+            profile_name: a.name || a.username || a.platform || 'Connected Page',
+            status: a.status || 'connected',
+            created_at: a.createdAt || a.created_at || new Date().toISOString(),
+          }));
+        }
+      } catch (err: any) {
+        console.warn('[/me/dashboard] Zernio listAccounts warning:', err.message);
+      }
+    }
+
+    // Merge DB accounts with Zernio accounts, deduplicating by platform
+    const mergedAccounts = [...accounts];
+    zernioAccounts.forEach((za: any) => {
+      if (!mergedAccounts.some((a: any) => a.id === za.id || (a.platform && a.platform.toLowerCase() === za.platform.toLowerCase()))) {
+        mergedAccounts.push(za);
+      }
+    });
+
+    // Compute analytics from real data
+    const totalPosts = posts.length;
+    const totalLikes = posts.reduce((sum: number, p: any) => sum + (p.likes || 0), 0);
+    const totalComments = posts.reduce((sum: number, p: any) => sum + (p.comments || 0), 0);
+    const totalEngagements = totalLikes + totalComments;
+    const engagementRate = totalPosts > 0 ? ((totalEngagements / totalPosts) * 100).toFixed(1) : '0.0';
+    const connectedPlatforms = mergedAccounts.filter((a: any) => a.status === 'connected').length;
+    const totalApiCalls = logs.length;
+
+    // Posts per platform breakdown
+    const postsPerPlatform: Record<string, number> = {};
+    posts.forEach((p: any) => {
+      const plat = p.platform || 'Unknown';
+      postsPerPlatform[plat] = (postsPerPlatform[plat] || 0) + 1;
+    });
+
+    res.json({
+      profile: {
+        id: profile?.id || userId,
+        email: profile?.email || req.user.email,
+        full_name: profile?.full_name || null,
+        plan: profile?.plan || 'Growth',
+        subscription_status: profile?.subscription_status || 'trialing',
+        wallet_balance: profile?.wallet_balance ?? 0,
+        max_accounts: profile?.max_accounts || 1,
+        connected_accounts_count: connectedPlatforms,
+        dodo_customer_id: profile?.dodo_customer_id || null,
+        plan_product_id: profile?.plan_product_id || null,
+        is_trial: profile?.is_trial ?? true,
+        created_at: profile?.created_at || null,
+      },
+      accounts: mergedAccounts,
+      apiKeys,
+      logs,
+      walletTransactions: walletTxns,
+      webhooks,
+      posts,
+      analytics: {
+        totalPosts,
+        totalLikes,
+        totalComments,
+        totalEngagements,
+        engagementRate: `${engagementRate}%`,
+        connectedPlatforms,
+        totalApiCalls,
+        postsPerPlatform,
+      },
     });
   }));
 

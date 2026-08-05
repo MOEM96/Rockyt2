@@ -95,6 +95,17 @@ interface PostItem {
 
 type TabType = 'connections' | 'posts' | 'analytics' | 'inbox' | 'ads' | 'apikeys' | 'users' | 'webhooks' | 'logs' | 'settings';
 
+interface AnalyticsData {
+  totalPosts: number;
+  totalLikes: number;
+  totalComments: number;
+  totalEngagements: number;
+  engagementRate: string;
+  connectedPlatforms: number;
+  totalApiCalls: number;
+  postsPerPlatform: Record<string, number>;
+}
+
 const allConnectPlatforms = [
   { name: 'Instagram', icon: '📸', desc: 'Auto-publish reels, posts & comment-to-DM funnels', category: 'Social' },
   { name: 'X / Twitter', icon: '𝕏', desc: 'Post tweets, threads & automate mentions ($1.00 pass-through)', category: 'Social' },
@@ -138,7 +149,8 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const [newWebhookName, setNewWebhookName] = useState<string>('');
   const [inviteEmail, setInviteEmail] = useState<string>('');
 
-  const [apiKey, setApiKey] = useState<string>('rockyt_live_99f381a94b8e21c890192847a');
+  const [apiKey, setApiKey] = useState<string>('');
+  const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
   const [showKey, setShowKey] = useState<boolean>(false);
   const [copiedKey, setCopiedKey] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -170,108 +182,46 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const userAvatar = userSession?.picture || 'https://lh3.googleusercontent.com/a/ACg8ocL_PcCi9QCqJ-hfTUKklDZ6Q2RWJfer2LjarrUA0X2-4jNFuQ=s96-c';
   const userId = userSession?.id || profile?.id;
 
-  // 1. Fetch Real Live Data from Backend & Supabase
+  // 1. Fetch Real Live Data from Server API (Multi-Tenant Isolated)
   const fetchLiveData = async () => {
     setIsLoading(true);
     try {
       const sessionRes = await supabase.auth.getSession();
-      const authToken = sessionRes.data.session?.access_token || userSession?.accessToken || userEmail;
+      const authToken = sessionRes.data.session?.access_token || userSession?.accessToken;
       
+      if (!authToken) {
+        console.warn('[Dashboard] No auth token available');
+        setIsLoading(false);
+        return;
+      }
+
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${authToken}`,
-        'x-user-email': userEmail
       };
 
-      // A. Fetch Connected Accounts
-      try {
-        const accRes = await fetch('/api/v1/accounts', { headers });
-        if (accRes.ok) {
-          const accData = await accRes.json();
-          if (accData.accounts) {
-            setAccounts(accData.accounts);
+      // Single consolidated API call for all dashboard data
+      const dashRes = await fetch('/api/v1/me/dashboard', { headers });
+      if (dashRes.ok) {
+        const data = await dashRes.json();
+        
+        if (data.profile) setProfile(data.profile);
+        if (data.accounts) setAccounts(data.accounts);
+        if (data.apiKeys) {
+          setApiKeys(data.apiKeys);
+          // Set the first non-revoked key prefix as display key
+          if (data.apiKeys.length > 0) {
+            setApiKey(data.apiKeys[0].key_prefix + '••••••••••••••••');
           }
         }
-      } catch (e) {}
-
-      // B. Fetch Profile info & Wallet Balance by ID or Email
-      if (supabase) {
-        let profData = null;
-        if (userId) {
-          const { data: p1 } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', userId)
-            .maybeSingle();
-          profData = p1;
-        }
-        if (!profData && userEmail) {
-          const { data: p2 } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('email', userEmail)
-            .maybeSingle();
-          profData = p2;
-        }
-
-        if (profData) {
-          setProfile(profData);
-          const effectiveUserId = profData.id;
-
-          // C. Fetch API Keys
-          const { data: keyData } = await supabase
-            .from('user_api_keys')
-            .select('*')
-            .eq('user_id', effectiveUserId)
-            .order('created_at', { ascending: false });
-          if (keyData) setApiKeys(keyData);
-
-          // D. Fetch API Logs
-          const { data: logData } = await supabase
-            .from('api_logs')
-            .select('*')
-            .eq('user_id', effectiveUserId)
-            .order('created_at', { ascending: false })
-            .limit(50);
-          if (logData && logData.length > 0) {
-            setLogs(logData);
-          }
-
-          // E. Fetch Wallet Transactions
-          const { data: txnData } = await supabase
-            .from('wallet_transactions')
-            .select('*')
-            .eq('user_id', effectiveUserId)
-            .order('created_at', { ascending: false });
-          if (txnData) setWalletTxns(txnData || []);
-
-          // F. Fetch Webhooks
-          const { data: whData } = await supabase
-            .from('webhooks')
-            .select('*')
-            .eq('user_id', effectiveUserId)
-            .order('created_at', { ascending: false });
-          if (whData) setWebhooks(whData || []);
-
-          // G. Fetch User Posts
-          const { data: postsData } = await supabase
-            .from('user_posts')
-            .select('*')
-            .eq('user_id', effectiveUserId)
-            .order('created_at', { ascending: false });
-          if (postsData) setPosts(postsData || []);
-        }
+        if (data.logs) setLogs(data.logs);
+        if (data.walletTransactions) setWalletTxns(data.walletTransactions);
+        if (data.webhooks) setWebhooks(data.webhooks);
+        if (data.posts) setPosts(data.posts);
+        if (data.analytics) setAnalyticsData(data.analytics);
+      } else if (dashRes.status === 401) {
+        console.warn('[Dashboard] Unauthorized — session may have expired');
       }
-
-      // G. Fetch Webhooks fallback
-      try {
-        const whRes = await fetch('/api/v1/webhooks', { headers });
-        if (whRes.ok) {
-          const whData = await whRes.json();
-          if (whData.webhooks && whData.webhooks.length > 0) setWebhooks(whData.webhooks);
-        }
-      } catch (e) {}
-
     } catch (err: any) {
       console.error('[Dashboard fetchLiveData error]:', err);
     } finally {
@@ -303,12 +253,11 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
 
     try {
       const sessionRes = await supabase.auth.getSession();
-      const authToken = sessionRes.data.session?.access_token || userSession?.accessToken || userEmail;
+      const authToken = sessionRes.data.session?.access_token || userSession?.accessToken;
 
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`,
-        'x-user-email': userEmail
+        'Authorization': `Bearer ${authToken || ''}`,
       };
 
       if (isCurrentlyConnected) {
@@ -425,14 +374,13 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     if (!newWebhookUrl) return;
     try {
       const sessionRes = await supabase.auth.getSession();
-      const authToken = sessionRes.data.session?.access_token || userSession?.accessToken || userEmail;
+      const authToken = sessionRes.data.session?.access_token || userSession?.accessToken;
 
       const res = await fetch('/api/v1/webhooks', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`,
-          'x-user-email': userEmail
+          'Authorization': `Bearer ${authToken || ''}`,
         },
         body: JSON.stringify({
           url: newWebhookUrl,
@@ -455,13 +403,12 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const handleDeleteWebhook = async (id: string) => {
     try {
       const sessionRes = await supabase.auth.getSession();
-      const authToken = sessionRes.data.session?.access_token || userSession?.accessToken || userEmail;
+      const authToken = sessionRes.data.session?.access_token || userSession?.accessToken;
 
       await fetch(`/api/v1/webhooks/${id}`, {
         method: 'DELETE',
         headers: {
-          'Authorization': `Bearer ${authToken}`,
-          'x-user-email': userEmail
+          'Authorization': `Bearer ${authToken || ''}`,
         }
       });
       setWebhooks(prev => prev.filter(w => w.id !== id));
@@ -908,48 +855,77 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
               </button>
             </div>
 
-            {/* KPI Metric Cards */}
+            {/* KPI Metric Cards — Real Data */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
               <div className="bg-zinc-950 border border-white/10 rounded p-4">
                 <span className="text-[10px] text-white/40 uppercase block">Engagement rate</span>
-                <span className="text-xl font-bold text-white">4.8%</span>
+                <span className="text-xl font-bold text-white">{analyticsData?.engagementRate || '0.0%'}</span>
               </div>
               <div className="bg-zinc-950 border border-white/10 rounded p-4">
-                <span className="text-[10px] text-white/40 uppercase block">Total reach</span>
-                <span className="text-xl font-bold text-white">29K</span>
+                <span className="text-[10px] text-white/40 uppercase block">Total posts</span>
+                <span className="text-xl font-bold text-white">{analyticsData?.totalPosts || 0}</span>
               </div>
               <div className="bg-zinc-950 border border-white/10 rounded p-4">
-                <span className="text-[10px] text-white/40 uppercase block">Total followers</span>
-                <span className="text-xl font-bold text-white">14.6K</span>
+                <span className="text-[10px] text-white/40 uppercase block">Connected platforms</span>
+                <span className="text-xl font-bold text-white">{analyticsData?.connectedPlatforms || 0}</span>
               </div>
               <div className="bg-zinc-950 border border-white/10 rounded p-4">
-                <span className="text-[10px] text-white/40 uppercase block">Posts this period</span>
-                <span className="text-xl font-bold text-white">12</span>
+                <span className="text-[10px] text-white/40 uppercase block">Total likes</span>
+                <span className="text-xl font-bold text-white">{analyticsData?.totalLikes || 0}</span>
               </div>
               <div className="bg-zinc-950 border border-white/10 rounded p-4">
-                <span className="text-[10px] text-white/40 uppercase block">Best post</span>
-                <span className="text-xl font-bold text-emerald-400">View</span>
+                <span className="text-[10px] text-white/40 uppercase block">API calls</span>
+                <span className="text-xl font-bold text-white">{analyticsData?.totalApiCalls || 0}</span>
               </div>
             </div>
 
-            {/* Visual Analytics Chart Placeholder */}
+            {/* Posts per platform — Real Data */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="bg-zinc-950 border border-white/10 rounded-lg p-5">
                 <h4 className="font-bold text-sm text-white mb-4">Posts per platform</h4>
-                <div className="h-48 flex items-end justify-center gap-8 border-b border-white/10 pb-2">
-                  <div className="w-12 bg-brand h-32 rounded-t flex items-center justify-center text-[10px] font-bold">Insta</div>
-                  <div className="w-12 bg-blue-600 h-24 rounded-t flex items-center justify-center text-[10px] font-bold">X</div>
-                  <div className="w-12 bg-emerald-600 h-40 rounded-t flex items-center justify-center text-[10px] font-bold">WA</div>
-                </div>
+                {analyticsData?.postsPerPlatform && Object.keys(analyticsData.postsPerPlatform).length > 0 ? (
+                  <div className="h-48 flex items-end justify-center gap-6 border-b border-white/10 pb-2">
+                    {Object.entries(analyticsData.postsPerPlatform).map(([platform, count]) => {
+                      const counts = Object.values(analyticsData.postsPerPlatform) as number[];
+                      const maxCount = counts.length > 0 ? Math.max(...counts) : 1;
+                      const numCount = count as number;
+                      const height = maxCount > 0 ? Math.max(20, (numCount / maxCount) * 160) : 20;
+                      return (
+                        <div key={platform} className="flex flex-col items-center gap-1">
+                          <span className="text-[10px] text-white/60 font-bold">{count}</span>
+                          <div className="w-12 bg-brand rounded-t" style={{ height: `${height}px` }} />
+                          <span className="text-[9px] text-white/40 truncate max-w-[48px]">{platform}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="h-48 flex items-center justify-center text-xs text-white/30">
+                    No posts yet. Create your first post to see platform distribution.
+                  </div>
+                )}
               </div>
 
               <div className="bg-zinc-950 border border-white/10 rounded-lg p-5">
-                <h4 className="font-bold text-sm text-white mb-4">Posts over time</h4>
-                <div className="h-48 flex items-end justify-center gap-6 border-b border-white/10 pb-2">
-                  <div className="w-8 bg-brand/60 h-16 rounded-t"></div>
-                  <div className="w-8 bg-brand/80 h-28 rounded-t"></div>
-                  <div className="w-8 bg-brand h-40 rounded-t"></div>
-                </div>
+                <h4 className="font-bold text-sm text-white mb-4">Engagement breakdown</h4>
+                {(analyticsData?.totalLikes || 0) + (analyticsData?.totalComments || 0) > 0 ? (
+                  <div className="h-48 flex items-end justify-center gap-8 border-b border-white/10 pb-2">
+                    <div className="flex flex-col items-center gap-1">
+                      <span className="text-[10px] text-white/60 font-bold">{analyticsData?.totalLikes || 0}</span>
+                      <div className="w-16 bg-brand rounded-t" style={{ height: `${Math.max(20, ((analyticsData?.totalLikes || 0) / Math.max(1, (analyticsData?.totalLikes || 0) + (analyticsData?.totalComments || 0))) * 160)}px` }} />
+                      <span className="text-[10px] text-white/40">Likes</span>
+                    </div>
+                    <div className="flex flex-col items-center gap-1">
+                      <span className="text-[10px] text-white/60 font-bold">{analyticsData?.totalComments || 0}</span>
+                      <div className="w-16 bg-emerald-600 rounded-t" style={{ height: `${Math.max(20, ((analyticsData?.totalComments || 0) / Math.max(1, (analyticsData?.totalLikes || 0) + (analyticsData?.totalComments || 0))) * 160)}px` }} />
+                      <span className="text-[10px] text-white/40">Comments</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="h-48 flex items-center justify-center text-xs text-white/30">
+                    No engagement data yet. Post content to track likes and comments.
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -965,41 +941,21 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
               </div>
             </div>
 
-            {/* Split Pane Inbox View (Matches Reference Screenshot) */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border border-white/10 rounded-lg overflow-hidden min-h-[500px]">
-              <div className="bg-zinc-950 border-r border-white/10 p-4 space-y-3">
-                <div className="relative">
-                  <Search size={14} className="absolute left-3 top-3 text-white/40" />
-                  <input 
-                    type="text" 
-                    placeholder="Search messages..." 
-                    className="w-full bg-zinc-900 border border-white/15 text-xs text-white pl-9 pr-3 py-2 rounded outline-none"
-                  />
-                </div>
-
-                <div className="space-y-1 text-xs">
-                  <div className="p-3 bg-zinc-900 rounded border border-white/15 flex items-center justify-between cursor-pointer">
-                    <div>
-                      <h4 className="font-bold text-white">Md Akash Ahmed</h4>
-                      <p className="text-[10px] text-white/50">hey, how does Rockyt API pricing work?</p>
-                    </div>
-                    <span className="text-[9px] text-white/40">May 24</span>
-                  </div>
-
-                  <div className="p-3 hover:bg-zinc-900/50 rounded flex items-center justify-between cursor-pointer">
-                    <div>
-                      <h4 className="font-bold text-white/80">Youssef Mohamed</h4>
-                      <p className="text-[10px] text-white/40">marhaba, interested in agent setup</p>
-                    </div>
-                    <span className="text-[9px] text-white/40">Mar 20</span>
-                  </div>
-                </div>
+            {/* Empty State — No Messages Table Yet */}
+            <div className="bg-zinc-950 border border-white/10 rounded-lg p-12 text-center space-y-4">
+              <MessageSquare size={48} className="mx-auto text-white/15" />
+              <div>
+                <h3 className="font-bold text-base text-white">No messages yet</h3>
+                <p className="text-xs text-white/50 mt-2 max-w-md mx-auto leading-relaxed">
+                  Connect a social account with messaging capabilities (WhatsApp Business, Instagram, Facebook) to start receiving and managing messages from your unified inbox.
+                </p>
               </div>
-
-              <div className="md:col-span-2 bg-black p-6 flex flex-col justify-center items-center text-center space-y-3 text-white/40">
-                <MessageSquare size={36} />
-                <p className="text-xs">Select a conversation from the left to view messages</p>
-              </div>
+              <button
+                onClick={() => setShowNewConnectionModal(true)}
+                className="bg-brand text-white text-xs font-bold px-5 py-2.5 rounded shadow-glow uppercase flex items-center gap-2 mx-auto"
+              >
+                <Plus size={16} /> Connect Messaging Platform
+              </button>
             </div>
           </div>
         )}
@@ -1012,30 +968,21 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
               <p className="text-xs text-white/50 mt-1">Meta Ads, Google Ads, LinkedIn Ads &amp; TikTok Ads management</p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-zinc-950 border border-white/15 rounded-lg p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-sm text-white">Meta Ads Manager</span>
-                  <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded uppercase font-bold">Active</span>
-                </div>
-                <p className="text-xs text-white/60">Campaign: Summer ROAS Growth Scale</p>
-                <div className="pt-2 border-t border-white/10 text-xs flex justify-between text-white/50">
-                  <span>Spend: $420.00</span>
-                  <span>ROAS: 4.2x</span>
-                </div>
+            {/* Empty State — No Ad Campaigns Table Yet */}
+            <div className="bg-zinc-950 border border-white/10 rounded-lg p-12 text-center space-y-4">
+              <Megaphone size={48} className="mx-auto text-white/15" />
+              <div>
+                <h3 className="font-bold text-base text-white">No active ad campaigns</h3>
+                <p className="text-xs text-white/50 mt-2 max-w-md mx-auto leading-relaxed">
+                  Connect your Meta Ads Manager, Google Ads, or other advertising platform to view and manage campaign performance, spend, and ROAS from this dashboard.
+                </p>
               </div>
-
-              <div className="bg-zinc-950 border border-white/15 rounded-lg p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-sm text-white">Google Ads</span>
-                  <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded uppercase font-bold">Active</span>
-                </div>
-                <p className="text-xs text-white/60">Campaign: AI Agent Search Intent</p>
-                <div className="pt-2 border-t border-white/10 text-xs flex justify-between text-white/50">
-                  <span>Spend: $680.00</span>
-                  <span>Clicks: 1.4K</span>
-                </div>
-              </div>
+              <button
+                onClick={() => setShowNewConnectionModal(true)}
+                className="bg-brand text-white text-xs font-bold px-5 py-2.5 rounded shadow-glow uppercase flex items-center gap-2 mx-auto"
+              >
+                <Plus size={16} /> Connect Ad Platform
+              </button>
             </div>
           </div>
         )}
@@ -1048,21 +995,40 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
               <p className="text-xs text-white/50 mt-1">Manage production API tokens for Claude, Cursor &amp; Agent scripts</p>
             </div>
 
-            <div className="bg-zinc-950 border border-brand/40 shadow-glow rounded-lg p-6 space-y-4">
-              <label className="text-xs text-brand uppercase font-bold block">LIVE PRODUCTION KEY</label>
-              <div className="flex items-center gap-3 bg-black border border-white/20 p-3 rounded">
-                <Key size={16} className="text-brand shrink-0" />
-                <span className="flex-1 font-mono text-xs font-bold text-white">
-                  {showKey ? apiKey : `${apiKey.substring(0, 12)}••••••••••••••••`}
-                </span>
-                <button onClick={() => setShowKey(!showKey)} className="text-white/60 hover:text-white p-1">
-                  {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
-                <button onClick={() => copyToClipboard(apiKey)} className="bg-brand text-white text-xs font-bold px-3 py-1.5 rounded uppercase">
-                  {copiedKey ? 'COPIED' : 'COPY'}
-                </button>
+            {apiKeys.length > 0 ? (
+              <div className="space-y-4">
+                {apiKeys.map(key => (
+                  <div key={key.id} className="bg-zinc-950 border border-brand/40 shadow-glow rounded-lg p-6 space-y-4">
+                    <label className="text-xs text-brand uppercase font-bold block">LIVE PRODUCTION KEY</label>
+                    <div className="flex items-center gap-3 bg-black border border-white/20 p-3 rounded">
+                      <Key size={16} className="text-brand shrink-0" />
+                      <span className="flex-1 font-mono text-xs font-bold text-white">
+                        {showKey ? key.key_prefix + '••••••••••••••••' : `${key.key_prefix}••••••••••••••••`}
+                      </span>
+                      <button onClick={() => setShowKey(!showKey)} className="text-white/60 hover:text-white p-1">
+                        {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                      <button onClick={() => copyToClipboard(key.key_prefix)} className="bg-brand text-white text-xs font-bold px-3 py-1.5 rounded uppercase">
+                        {copiedKey ? 'COPIED' : 'COPY'}
+                      </button>
+                    </div>
+                    <div className="text-[10px] text-white/40">
+                      Created: {key.created_at ? new Date(key.created_at).toLocaleDateString() : 'Unknown'}
+                    </div>
+                  </div>
+                ))}
               </div>
-            </div>
+            ) : (
+              <div className="bg-zinc-950 border border-white/10 rounded-lg p-10 text-center space-y-4">
+                <Key size={36} className="mx-auto text-white/20" />
+                <div>
+                  <h3 className="font-bold text-base text-white">No API Keys Yet</h3>
+                  <p className="text-xs text-white/50 mt-1 max-w-md mx-auto">
+                    Generate a live API key to connect Claude, Cursor, or autonomous agent scripts to the Rockyt platform.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1088,6 +1054,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                   <tr>
                     <th className="p-3">User</th>
                     <th className="p-3">Role</th>
+                    <th className="p-3">Plan</th>
                     <th className="p-3">Joined</th>
                   </tr>
                 </thead>
@@ -1097,7 +1064,8 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                       <img src={userAvatar} className="w-6 h-6 rounded-full" /> {userEmail}
                     </td>
                     <td className="p-3 text-emerald-400 font-bold">Owner / Admin</td>
-                    <td className="p-3 text-white/50">Jul 2026</td>
+                    <td className="p-3 text-brand font-bold uppercase">{profile?.plan || 'Growth'}</td>
+                    <td className="p-3 text-white/50">{profile?.created_at ? new Date(profile.created_at).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : '—'}</td>
                   </tr>
                 </tbody>
               </table>
@@ -1347,13 +1315,12 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                 if (newPostContent) {
                   try {
                     const sessionRes = await supabase.auth.getSession();
-                    const authToken = sessionRes.data.session?.access_token || userSession?.accessToken || userEmail;
+                    const authToken = sessionRes.data.session?.access_token || userSession?.accessToken;
                     const res = await fetch('/api/v1/user/posts', {
                       method: 'POST',
                       headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${authToken}`,
-                        'x-user-email': userEmail
+                        'Authorization': `Bearer ${authToken || ''}`,
                       },
                       body: JSON.stringify({
                         platform: newPostPlatform,

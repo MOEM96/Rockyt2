@@ -93,8 +93,9 @@ const App: React.FC = () => {
         if (accessToken) {
           const payload = parseJwtPayload(accessToken);
           const userObj = {
-            email: payload?.email || payload?.user_metadata?.email || 'moamenemam966@gmail.com',
-            name: payload?.user_metadata?.full_name || payload?.name || 'Moamen Emam',
+            id: payload?.sub || payload?.id || payload?.user_id || '',
+            email: payload?.email || payload?.user_metadata?.email || '',
+            name: payload?.user_metadata?.full_name || payload?.name || payload?.email || 'User',
             picture: payload?.user_metadata?.picture || payload?.user_metadata?.avatar_url || '',
             accessToken: accessToken
           };
