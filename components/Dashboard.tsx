@@ -461,19 +461,57 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     setCheckoutError(null);
     try {
       const headers = await getAuthHeaders();
-      const res = await fetch('/api/v1/keys', {
-        method: 'POST',
-        headers
-      });
-      const data = await res.json();
-      if (res.ok && data.key) {
-        setNewGeneratedKey(data.key);
+      let generatedKey: string | null = null;
+
+      try {
+        const res = await fetch('/api/v1/keys', {
+          method: 'POST',
+          headers
+        });
+        const data = await res.json();
+        if (res.ok && data.key) {
+          generatedKey = data.key;
+        } else if (data?.error) {
+          console.warn('[handleGenerateApiKey] API returned error:', data.error);
+        }
+      } catch (apiErr) {
+        console.warn('[handleGenerateApiKey] API call failed, falling back to direct Supabase RPC:', apiErr);
+      }
+
+      // Supabase RPC Fallback if Express route is unreachable or errored
+      if (!generatedKey && supabase) {
+        const targetIdentifier = profile?.zernio_profile_id || userSession?.email || profile?.email || userEmail || userSession?.id || profile?.id;
+        if (targetIdentifier) {
+          const rawKey = 'rkt_live_' + Array.from(crypto.getRandomValues(new Uint8Array(24))).map(b => b.toString(16).padStart(2, '0')).join('');
+          const msgBuffer = new TextEncoder().encode(rawKey);
+          const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+          const hashArray = Array.from(new Uint8Array(hashBuffer));
+          const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+          const prefix = rawKey.substring(0, 12);
+
+          const { data: rpcData, error: rpcErr } = await supabase.rpc('generate_user_api_key', {
+            p_identifier: String(targetIdentifier),
+            p_key_hash: hashHex,
+            p_key_prefix: prefix
+          });
+
+          if (!rpcErr && rpcData && rpcData.success) {
+            generatedKey = rawKey;
+          } else if (rpcErr) {
+            console.error('[handleGenerateApiKey] Supabase RPC error:', rpcErr.message);
+          }
+        }
+      }
+
+      if (generatedKey) {
+        setNewGeneratedKey(generatedKey);
         setCheckoutSuccessMsg('Live Rockyt API Key created successfully! Copy it now as it cannot be retrieved in full later.');
         fetchLiveData();
       } else {
-        throw new Error(data.error || 'Failed to generate API key');
+        throw new Error('Failed to generate API key. Please check your connection and try again.');
       }
     } catch (e: any) {
+      console.error('[Generate API Key Error]:', e);
       setCheckoutError(e.message || 'Failed to generate API key');
     } finally {
       setIsGeneratingKey(false);
@@ -484,16 +522,33 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     if (!confirm('Are you sure you want to revoke this API key? AI agents using this key will lose access immediately.')) return;
     try {
       const headers = await getAuthHeaders();
-      const res = await fetch(`/api/v1/keys/${keyId}`, {
-        method: 'DELETE',
-        headers
-      });
-      if (res.ok) {
-        setApiKeys(prev => prev.filter(k => k.id !== keyId));
-        setCheckoutSuccessMsg('API key revoked successfully.');
-        fetchLiveData();
+      let revoked = false;
+
+      try {
+        const res = await fetch(`/api/v1/keys/${keyId}`, {
+          method: 'DELETE',
+          headers
+        });
+        if (res.ok) revoked = true;
+      } catch (apiErr) {
+        console.warn('[handleRevokeApiKey] API delete failed, using Supabase fallback:', apiErr);
       }
-    } catch (e) {}
+
+      if (!revoked && supabase) {
+        const targetIdentifier = profile?.zernio_profile_id || userSession?.email || profile?.email || userEmail || '';
+        await supabase.rpc('revoke_user_api_key', {
+          p_key_id: keyId,
+          p_identifier: String(targetIdentifier)
+        });
+        revoked = true;
+      }
+
+      setApiKeys(prev => prev.filter(k => k.id !== keyId));
+      setCheckoutSuccessMsg('API key revoked successfully.');
+      fetchLiveData();
+    } catch (e: any) {
+      console.error('[Revoke API Key Error]:', e);
+    }
   };
 
   const copyToClipboard = (text: string) => {

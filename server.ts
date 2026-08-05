@@ -258,27 +258,39 @@ async function startServer() {
   const mockKeys: Array<{ id: string, user_id: string, key_hash: string, key_prefix: string, revoked: boolean, created_at: string }> = [];
   let mockConnectedCount = 0;
 
+  function isValidUUID(str: any): boolean {
+    if (!str || typeof str !== 'string') return false;
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str.trim());
+  }
+
+  function toUUID(str: string): string {
+    if (isValidUUID(str)) return str.trim();
+    const hash = crypto.createHash('md5').update(str || 'default_rockyt_user').digest('hex');
+    return `${hash.substring(0, 8)}-${hash.substring(8, 12)}-4${hash.substring(13, 16)}-a${hash.substring(17, 20)}-${hash.substring(20, 32)}`;
+  }
+
   async function ensureUserProfile(reqUser: { id: string; email?: string | null; user_metadata?: any }) {
-    if (!supabase || !reqUser?.id) return null;
-    const userEmail = reqUser.email || reqUser.user_metadata?.email || `user_${reqUser.id.substring(0, 8)}@rockyt.io`;
+    if (!supabase || !reqUser) return null;
+    const userEmail = reqUser.email || reqUser.user_metadata?.email || (reqUser.id ? `user_${reqUser.id.substring(0, 8)}@rockyt.io` : 'user@rockyt.io');
+    const safeUserId = isValidUUID(reqUser.id) ? reqUser.id : toUUID(userEmail || reqUser.id || 'rockyt_user');
 
     try {
       let profile = null;
-      if (reqUser.id) {
+      if (userEmail) {
+        const { data: p2 } = await supabase.from('profiles').select('*').ilike('email', userEmail).maybeSingle();
+        profile = p2;
+      }
+      if (!profile && isValidUUID(reqUser.id)) {
         const { data: p1 } = await supabase.from('profiles').select('*').eq('id', reqUser.id).maybeSingle();
         profile = p1;
       }
-      if (!profile && userEmail) {
-        const { data: p2 } = await supabase.from('profiles').select('*').eq('email', userEmail).maybeSingle();
-        profile = p2;
-      }
 
       if (!profile) {
-        console.log(`[ensureUserProfile] Creating profile row for user: ${reqUser.id} (${userEmail})`);
+        console.log(`[ensureUserProfile] Creating profile row for user: ${safeUserId} (${userEmail})`);
         const { data: newProfile, error: upsertErr } = await supabase
           .from('profiles')
           .upsert({
-            id: reqUser.id,
+            id: safeUserId,
             email: userEmail,
             plan: 'Growth',
             max_accounts: 1,
@@ -291,7 +303,7 @@ async function startServer() {
         if (upsertErr) {
           console.error('[ensureUserProfile] Profile upsert error:', upsertErr.message);
         }
-        profile = newProfile || { id: reqUser.id, email: userEmail, plan: 'Growth', max_accounts: 1, connected_accounts_count: 0, wallet_balance: 0.00 };
+        profile = newProfile || { id: safeUserId, email: userEmail, plan: 'Growth', max_accounts: 1, connected_accounts_count: 0, wallet_balance: 0.00 };
       }
 
       if (profile && !profile.zernio_profile_id) {
@@ -312,7 +324,7 @@ async function startServer() {
           }
         } catch (err: any) {
           console.warn('[ensureUserProfile] Zernio profile lookup warning:', err?.message || err);
-          zernioProfileId = `prof_${reqUser.id.substring(0, 16)}`;
+          zernioProfileId = `prof_${profile.id.replace(/-/g, '').substring(0, 16)}`;
         }
 
         if (zernioProfileId) {
@@ -320,7 +332,7 @@ async function startServer() {
             const { data: updated } = await supabase
               .from('profiles')
               .update({ zernio_profile_id: zernioProfileId })
-              .eq('id', reqUser.id)
+              .eq('id', profile.id)
               .select()
               .maybeSingle();
             if (updated) profile = updated;
@@ -333,7 +345,7 @@ async function startServer() {
       return profile;
     } catch (err: any) {
       console.error('[ensureUserProfile] Unhandled error:', err?.message || err);
-      return { id: reqUser.id, email: userEmail, plan: 'Growth', max_accounts: 1, connected_accounts_count: 0 };
+      return { id: safeUserId, email: userEmail, plan: 'Growth', max_accounts: 1, connected_accounts_count: 0 };
     }
   }
 
@@ -356,7 +368,6 @@ async function startServer() {
     return 1;
   }
 
-  // Decode a Supabase JWT locally without any network call.
   // Decode a Supabase / OAuth JWT locally without any network call.
   // Supports Supabase, Google OAuth, and custom JWT tokens with sub, id, or email.
   function decodeSupabaseJWT(token: string): { id: string; email: string } | null {
@@ -371,9 +382,10 @@ async function startServer() {
       const sub = payload.sub || payload.id || payload.user_id;
       const email = payload.email || payload.user_metadata?.email || payload.preferred_username;
       if (!sub && !email) return null;
+      const emailStr = email || `user_${String(sub).substring(0, 8)}@rockyt.io`;
       return {
-        id: sub || `usr_${crypto.createHash('md5').update(email).digest('hex').substring(0, 16)}`,
-        email: email || `user_${String(sub).substring(0, 8)}@rockyt.io`
+        id: isValidUUID(sub) ? sub : toUUID(sub || emailStr),
+        email: emailStr
       };
     } catch {
       return null;
@@ -688,26 +700,40 @@ async function startServer() {
   // API Key Management Routes
   // ---------------------------------------------------------------------------
   app.post('/api/v1/keys', supabaseAuth, asyncHandler(async (req: any, res: any) => {
-    await ensureUserProfile(req.user);
+    const profile = await ensureUserProfile(req.user);
+    const identifier = req.zernioProfileId || profile?.zernio_profile_id || req.user?.email || profile?.email || req.user?.id || req.headers['x-profile-id'] || req.headers['x-user-email'];
+    const userId = profile?.id || (isValidUUID(req.user?.id) ? req.user.id : toUUID(req.user?.email || req.user?.id || 'rockyt_user'));
 
     const rawKey = 'rkt_live_' + crypto.randomBytes(32).toString('hex');
     const hash = crypto.createHash('sha256').update(rawKey).digest('hex');
+    const prefix = rawKey.substring(0, 12);
 
     if (supabase) {
+      // 1. Try DB RPC first
+      try {
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc('generate_user_api_key', {
+          p_identifier: String(identifier || userId),
+          p_key_hash: hash,
+          p_key_prefix: prefix
+        });
+        if (!rpcErr && rpcRes && rpcRes.success) {
+          return res.json({ key: rawKey, success: true });
+        }
+      } catch (rpcEx: any) {
+        console.warn('[POST /api/v1/keys] generate_user_api_key RPC warning:', rpcEx.message);
+      }
+
+      // 2. Direct table insert fallback
+      const targetUserId = isValidUUID(userId) ? userId : toUUID(userId);
       const { data: inserted, error: insertError } = await supabase.from('user_api_keys').insert({
-        user_id: req.user.id,
+        user_id: targetUserId,
         key_hash: hash,
-        key_prefix: rawKey.substring(0, 12),
+        key_prefix: prefix,
         revoked: false
       }).select().maybeSingle();
 
       if (insertError) {
-        console.error('Failed to insert API key:', JSON.stringify({
-          message: insertError.message,
-          code: insertError.code,
-          details: insertError.details,
-          hint: insertError.hint
-        }));
+        console.error('Failed to insert API key:', JSON.stringify(insertError));
         return res.status(500).json({ 
           error: `Failed to save API key: ${insertError.message}`,
           code: insertError.code
@@ -716,23 +742,26 @@ async function startServer() {
     } else {
       mockKeys.push({
         id: crypto.randomUUID(),
-        user_id: req.user.id,
+        user_id: userId,
         key_hash: hash,
-        key_prefix: rawKey.substring(0, 12),
+        key_prefix: prefix,
         revoked: false,
         created_at: new Date().toISOString()
       });
     }
 
-    res.json({ key: rawKey });
+    res.json({ key: rawKey, success: true });
   }));
 
   app.get('/api/v1/keys', supabaseAuth, asyncHandler(async (req: any, res: any) => {
-    if (supabase) {
+    const profile = await ensureUserProfile(req.user);
+    const userId = profile?.id || (isValidUUID(req.user?.id) ? req.user.id : toUUID(req.user?.email || req.user?.id || 'rockyt_user'));
+
+    if (supabase && userId) {
       const { data, error } = await supabase
         .from('user_api_keys')
         .select('id, key_prefix, created_at')
-        .eq('user_id', req.user.id)
+        .eq('user_id', userId)
         .eq('revoked', false)
         .order('created_at', { ascending: false });
 
@@ -743,23 +772,31 @@ async function startServer() {
 
       res.json(data || []);
     } else {
-      const activeKeys = mockKeys.filter(k => k.user_id === req.user.id && !k.revoked);
+      const activeKeys = mockKeys.filter(k => k.user_id === userId && !k.revoked);
       res.json(activeKeys.map(k => ({ id: k.id, key_prefix: k.key_prefix, created_at: k.created_at })));
     }
   }));
 
   app.delete('/api/v1/keys/:id', supabaseAuth, asyncHandler(async (req: any, res: any) => {
-    if (supabase) {
-      const { error } = await supabase
-        .from('user_api_keys')
-        .update({ revoked: true })
-        .eq('id', req.params.id)
-        .eq('user_id', req.user.id);
+    const keyId = req.params.id;
+    const identifier = req.zernioProfileId || req.user?.email || req.user?.id || req.headers['x-profile-id'] || req.headers['x-user-email'];
 
-      if (error) {
-        console.error('Error revoking API key:', error.message);
-        return res.status(500).json({ error: error.message });
+    if (supabase && keyId) {
+      try {
+        if (isValidUUID(keyId)) {
+          await supabase.rpc('revoke_user_api_key', {
+            p_key_id: keyId,
+            p_identifier: String(identifier || '')
+          });
+        }
+        await supabase
+          .from('user_api_keys')
+          .update({ revoked: true })
+          .eq('id', keyId);
+      } catch (err: any) {
+        console.error('Error revoking API key:', err.message);
       }
+    }
 
       // Disconnect all social accounts under user's profile upon API key revocation
       const profile = await ensureUserProfile(req.user);

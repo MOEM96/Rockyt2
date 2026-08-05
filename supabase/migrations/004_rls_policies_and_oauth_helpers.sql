@@ -278,3 +278,72 @@ BEGIN
   RETURN public.get_user_dashboard(v_user_id);
 END;
 $$;
+
+-- 10. RPC Function: generate_user_api_key
+CREATE OR REPLACE FUNCTION public.generate_user_api_key(
+  p_identifier text,
+  p_key_hash text,
+  p_key_prefix text
+)
+RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_user_id uuid;
+  v_new_key json;
+BEGIN
+  -- 1. Match profile by email
+  SELECT id INTO v_user_id FROM public.profiles WHERE lower(email) = lower(p_identifier) LIMIT 1;
+  -- 2. Match profile by zernio_profile_id
+  IF v_user_id IS NULL THEN
+    SELECT id INTO v_user_id FROM public.profiles WHERE zernio_profile_id = p_identifier LIMIT 1;
+  END IF;
+  -- 3. Match profile by UUID
+  IF v_user_id IS NULL AND p_identifier ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+    SELECT id INTO v_user_id FROM public.profiles WHERE id = p_identifier::uuid LIMIT 1;
+  END IF;
+
+  IF v_user_id IS NULL THEN
+    RETURN json_build_object('error', 'Profile not found');
+  END IF;
+
+  INSERT INTO public.user_api_keys (user_id, key_hash, key_prefix, revoked)
+  VALUES (v_user_id, p_key_hash, p_key_prefix, false)
+  RETURNING row_to_json(public.user_api_keys.*) INTO v_new_key;
+
+  RETURN json_build_object('success', true, 'key', v_new_key);
+END;
+$$;
+
+-- 11. RPC Function: revoke_user_api_key
+CREATE OR REPLACE FUNCTION public.revoke_user_api_key(
+  p_key_id uuid,
+  p_identifier text DEFAULT NULL
+)
+RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_user_id uuid;
+BEGIN
+  IF p_identifier IS NOT NULL THEN
+    SELECT id INTO v_user_id FROM public.profiles WHERE lower(email) = lower(p_identifier) LIMIT 1;
+    IF v_user_id IS NULL THEN
+      SELECT id INTO v_user_id FROM public.profiles WHERE zernio_profile_id = p_identifier LIMIT 1;
+    END IF;
+    IF v_user_id IS NULL AND p_identifier ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+      SELECT id INTO v_user_id FROM public.profiles WHERE id = p_identifier::uuid LIMIT 1;
+    END IF;
+  END IF;
+
+  IF v_user_id IS NOT NULL THEN
+    UPDATE public.user_api_keys SET revoked = true WHERE id = p_key_id AND user_id = v_user_id;
+  ELSE
+    UPDATE public.user_api_keys SET revoked = true WHERE id = p_key_id;
+  END IF;
+
+  RETURN json_build_object('success', true);
+END;
+$$;
