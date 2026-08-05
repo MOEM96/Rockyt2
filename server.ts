@@ -811,36 +811,42 @@ async function startServer() {
   }));
 
   app.get('/oauth/callback', asyncHandler(async (req: any, res: any) => {
-    const { profileId, accountId } = req.query;
-    if (profileId && accountId) {
-      if (supabase) {
-        const { data: p } = await supabase
-          .from('profiles')
-          .select('id, connected_accounts_count')
-          .eq('zernio_profile_id', profileId)
-          .single();
-        if (p) {
-          await supabase
-            .from('profiles')
-            .update({ connected_accounts_count: p.connected_accounts_count + 1 })
-            .eq('zernio_profile_id', profileId);
+    const { profileId, accountId, platform, username, returnTo } = req.query;
+    const cleanPlatform = platform ? getCanonicalZernioPlatform(platform) : 'Social Channel';
+    const formattedPlatform = cleanPlatform.charAt(0).toUpperCase() + cleanPlatform.slice(1);
 
-          // Persist in connected_accounts table
-          await supabase
-            .from('connected_accounts')
-            .insert({
-              user_id: p.id,
-              platform: req.query.platform || 'Social Channel',
-              username: accountId ? `@acc_${String(accountId).substring(0, 8)}` : '@user',
-              profile_name: 'Default Profile',
-              status: 'connected'
+    if (profileId || accountId) {
+      if (supabase) {
+        let userRow = null;
+        if (profileId) {
+          const { data: p } = await supabase
+            .from('profiles')
+            .select('id, connected_accounts_count')
+            .eq('zernio_profile_id', profileId)
+            .maybeSingle();
+          userRow = p;
+        }
+
+        if (userRow) {
+          const accUsername = username || (accountId ? `@acc_${String(accountId).substring(0, 8)}` : `@${cleanPlatform.toLowerCase()}_user`);
+          try {
+            await supabase.rpc('save_connected_account', {
+              p_user_id: userRow.id,
+              p_platform: formattedPlatform,
+              p_username: accUsername,
+              p_profile_name: `${formattedPlatform} Account`,
+              p_account_id: accountId ? `acc_${accountId}` : undefined
             });
+          } catch (rpcErr: any) {
+            console.warn('[/oauth/callback] save_connected_account RPC warning:', rpcErr.message);
+          }
         }
       } else {
         mockConnectedCount++;
       }
     }
-    res.redirect('/dashboard?connected=1');
+    const redirectUrl = returnTo || `/dashboard?account_connected=true&platform=${encodeURIComponent(formattedPlatform)}`;
+    res.redirect(redirectUrl);
   }));
 
   // ─── Connected Accounts Database API ───
@@ -1339,9 +1345,15 @@ async function startServer() {
       }
     }
 
-    // 3. Fallback URL
+    // 3. Fallback error handling if OAuth URL generation failed
     if (!targetOAuthUrl) {
-      targetOAuthUrl = `https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId || 'default')}&redirectUrl=${encodeURIComponent(callbackUrl)}&reconnect=true&prompt=consent&force_reconnect=true`;
+      const isMissingKey = !process.env.ZERNIO_API_KEY && !process.env.ROCKYT_API_KEY;
+      return res.status(400).json({
+        error: isMissingKey
+          ? 'Master Zernio API key is not configured on the server. Please set ZERNIO_API_KEY in environment variables.'
+          : `Failed to initiate OAuth for ${formattedPlatform}. Please verify your Zernio API key credentials.`,
+        code: 'OAUTH_INITIATION_FAILED'
+      });
     }
 
     // If user has balance for paid platform, charge pass-through fee from wallet on successful URL generation

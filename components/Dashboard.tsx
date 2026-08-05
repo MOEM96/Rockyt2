@@ -150,6 +150,8 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const [inviteEmail, setInviteEmail] = useState<string>('');
 
   const [apiKey, setApiKey] = useState<string>('');
+  const [newGeneratedKey, setNewGeneratedKey] = useState<string | null>(null);
+  const [isGeneratingKey, setIsGeneratingKey] = useState<boolean>(false);
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
   const [showKey, setShowKey] = useState<boolean>(false);
   const [copiedKey, setCopiedKey] = useState<boolean>(false);
@@ -243,8 +245,9 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     if (urlParams.get('account_connected') === 'true' || urlParams.get('connected') === '1') {
       const platform = urlParams.get('platform') || 'Social Channel';
       setCheckoutSuccessMsg(`Successfully authenticated and connected your ${platform} account!`);
-      // Clean query string
+      // Clean query string and refetch live data
       window.history.replaceState({}, document.title, window.location.pathname);
+      fetchLiveData();
     }
   }, [userSession?.email, userSession?.id, userSession?.accessToken]);
 
@@ -400,6 +403,47 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
         headers
       });
       setWebhooks(prev => prev.filter(w => w.id !== id));
+    } catch (e) {}
+  };
+
+  // API Key Generation & Revocation Handlers
+  const handleGenerateApiKey = async () => {
+    setIsGeneratingKey(true);
+    setCheckoutError(null);
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch('/api/v1/keys', {
+        method: 'POST',
+        headers
+      });
+      const data = await res.json();
+      if (res.ok && data.key) {
+        setNewGeneratedKey(data.key);
+        setCheckoutSuccessMsg('Live Rockyt API Key created successfully! Copy it now as it cannot be retrieved in full later.');
+        fetchLiveData();
+      } else {
+        throw new Error(data.error || 'Failed to generate API key');
+      }
+    } catch (e: any) {
+      setCheckoutError(e.message || 'Failed to generate API key');
+    } finally {
+      setIsGeneratingKey(false);
+    }
+  };
+
+  const handleRevokeApiKey = async (keyId: string) => {
+    if (!confirm('Are you sure you want to revoke this API key? AI agents using this key will lose access immediately.')) return;
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch(`/api/v1/keys/${keyId}`, {
+        method: 'DELETE',
+        headers
+      });
+      if (res.ok) {
+        setApiKeys(prev => prev.filter(k => k.id !== keyId));
+        setCheckoutSuccessMsg('API key revoked successfully.');
+        fetchLiveData();
+      }
     } catch (e) {}
   };
 
@@ -978,20 +1022,65 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
         {/* ─── TAB 6: API KEYS ─── */}
         {activeTab === 'apikeys' && (
           <div className="space-y-6 animate-in fade-in duration-200">
-            <div className="border-b border-white/10 pb-5">
-              <h1 className="text-2xl font-bold text-white tracking-tight uppercase">API Keys &amp; Logs</h1>
-              <p className="text-xs text-white/50 mt-1">Manage production API tokens for Claude, Cursor &amp; Agent scripts</p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-5">
+              <div>
+                <h1 className="text-2xl font-bold text-white tracking-tight uppercase">API Keys &amp; Logs</h1>
+                <p className="text-xs text-white/50 mt-1">Generate and manage Rockyt production API tokens for Claude, Cursor, AI agents &amp; backend SDKs</p>
+              </div>
+              <button
+                onClick={handleGenerateApiKey}
+                disabled={isGeneratingKey}
+                className="bg-brand text-white text-xs font-bold px-4 py-2.5 rounded shadow-glow flex items-center gap-2 uppercase shrink-0 disabled:opacity-50 hover:bg-brand/90 transition-all cursor-pointer"
+              >
+                <Key size={16} /> {isGeneratingKey ? 'GENERATING...' : 'GENERATE NEW API KEY'}
+              </button>
             </div>
+
+            {/* Newly Generated Key Alert Banner */}
+            {newGeneratedKey && (
+              <div className="bg-brand/10 border-2 border-brand p-5 rounded-lg space-y-3 animate-in slide-in-from-top-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-brand uppercase tracking-wider flex items-center gap-2">
+                    ⚡ NEW LIVE API KEY GENERATED
+                  </span>
+                  <button onClick={() => setNewGeneratedKey(null)} className="text-white/50 hover:text-white text-xs">
+                    Dismiss
+                  </button>
+                </div>
+                <p className="text-xs text-white/80">
+                  Copy this key now. For security purposes, this is the only time the full key will be displayed.
+                </p>
+                <div className="flex items-center gap-2 bg-black border border-brand/50 p-3 rounded">
+                  <span className="flex-1 font-mono text-xs font-bold text-brand select-all break-all">
+                    {newGeneratedKey}
+                  </span>
+                  <button 
+                    onClick={() => copyToClipboard(newGeneratedKey)} 
+                    className="bg-brand text-white text-xs font-bold px-4 py-2 rounded uppercase shrink-0 hover:bg-brand/90"
+                  >
+                    {copiedKey ? 'COPIED!' : 'COPY KEY'}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {apiKeys.length > 0 ? (
               <div className="space-y-4">
                 {apiKeys.map(key => (
                   <div key={key.id} className="bg-zinc-950 border border-brand/40 shadow-glow rounded-lg p-6 space-y-4">
-                    <label className="text-xs text-brand uppercase font-bold block">LIVE PRODUCTION KEY</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs text-brand uppercase font-bold block">LIVE PRODUCTION KEY</label>
+                      <button 
+                        onClick={() => handleRevokeApiKey(key.id)}
+                        className="text-red-400 hover:text-red-300 text-xs font-mono uppercase underline cursor-pointer"
+                      >
+                        Revoke Key
+                      </button>
+                    </div>
                     <div className="flex items-center gap-3 bg-black border border-white/20 p-3 rounded">
                       <Key size={16} className="text-brand shrink-0" />
                       <span className="flex-1 font-mono text-xs font-bold text-white">
-                        {showKey ? key.key_prefix + '••••••••••••••••' : `${key.key_prefix}••••••••••••••••`}
+                        {showKey ? key.key_prefix + '••••••••••••••••••••••••••••••••' : `${key.key_prefix}••••••••••••••••••••••••••••••••`}
                       </span>
                       <button onClick={() => setShowKey(!showKey)} className="text-white/60 hover:text-white p-1">
                         {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
@@ -1012,9 +1101,16 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                 <div>
                   <h3 className="font-bold text-base text-white">No API Keys Yet</h3>
                   <p className="text-xs text-white/50 mt-1 max-w-md mx-auto">
-                    Generate a live API key to connect Claude, Cursor, or autonomous agent scripts to the Rockyt platform.
+                    Generate a live Rockyt API key to connect Claude, Cursor, autonomous AI agents, or backend SDKs to the Rockyt platform.
                   </p>
                 </div>
+                <button
+                  onClick={handleGenerateApiKey}
+                  disabled={isGeneratingKey}
+                  className="bg-brand text-white text-xs font-bold px-6 py-3 rounded shadow-glow uppercase inline-flex items-center gap-2 hover:bg-brand/90 transition-all cursor-pointer"
+                >
+                  <Key size={16} /> {isGeneratingKey ? 'GENERATING...' : 'GENERATE FIRST API KEY'}
+                </button>
               </div>
             )}
           </div>
