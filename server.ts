@@ -150,7 +150,11 @@ async function startServer() {
   }));
 
   app.get('/api/auth/session', (req: any, res) => {
-    const token = req.cookies?.rockyt_session || req.headers.authorization?.replace('Bearer ', '').trim();
+    let headerToken = req.headers.authorization?.replace(/^Bearer\s+/i, '').trim();
+    if (headerToken === 'undefined' || headerToken === 'null' || headerToken === '[object Object]') {
+      headerToken = '';
+    }
+    const token = headerToken || req.cookies?.rockyt_session;
     if (!token) return res.json({});
     const decoded = decodeSupabaseJWT(token);
     if (!decoded) return res.json({});
@@ -378,11 +382,15 @@ async function startServer() {
 
   async function combinedAuth(req: any, res: any, next: any) {
     try {
-      let token = req.cookies?.rockyt_session || req.headers.authorization?.replace('Bearer ', '').trim();
+      let headerToken = req.headers.authorization?.replace(/^Bearer\s+/i, '').trim();
+      if (headerToken === 'undefined' || headerToken === 'null' || headerToken === '[object Object]') {
+        headerToken = '';
+      }
       const userEmailHeader = req.headers['x-user-email'] || req.headers['x-user-id'];
 
+      let token = headerToken || req.cookies?.rockyt_session;
       if (!token && userEmailHeader) {
-        token = String(userEmailHeader);
+        token = String(userEmailHeader).trim();
       }
 
       if (!supabase) {
@@ -449,6 +457,23 @@ async function startServer() {
             req.connectedCount = profileRow.connected_accounts_count || 0;
             return next();
           }
+        }
+      }
+
+      // Fallback: If header provided x-user-email or x-user-id explicitly
+      if (userEmailHeader) {
+        const headerStr = String(userEmailHeader).trim();
+        const query = headerStr.includes('@')
+          ? supabase.from('profiles').select('*').eq('email', headerStr).maybeSingle()
+          : supabase.from('profiles').select('*').eq('id', headerStr).maybeSingle();
+        const { data: profileRow } = await query;
+        if (profileRow) {
+          req.user = { id: profileRow.id, email: profileRow.email };
+          req.zernioProfileId = profileRow.zernio_profile_id || null;
+          req.plan = profileRow.plan || 'Growth';
+          req.maxAccounts = getMaxAccountsForUser(profileRow);
+          req.connectedCount = profileRow.connected_accounts_count || 0;
+          return next();
         }
       }
 
