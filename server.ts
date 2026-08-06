@@ -1150,21 +1150,22 @@ async function startServer() {
       }
 
       let accountsRes;
+      let fetchedOk = false;
       if (targetProfileId) {
         try {
           accountsRes = await zernio.accounts.listAccounts({
             query: { profileId: targetProfileId }
           });
+          fetchedOk = true;
         } catch {
           accountsRes = { data: { accounts: [] } };
         }
       } else {
-        // Strictly return empty if user has no assigned Zernio profile to prevent leaking cross-tenant accounts
         accountsRes = { data: { accounts: [] } };
       }
 
       const rawAccounts = (accountsRes.data as any)?.accounts || (accountsRes.data as any) || [];
-      const accounts = Array.isArray(rawAccounts) ? rawAccounts.map((a: any) => ({
+      const zernioAccountsList = Array.isArray(rawAccounts) ? rawAccounts.map((a: any) => ({
         id: a._id || a.id,
         platform: a.platform ? (a.platform.charAt(0).toUpperCase() + a.platform.slice(1)) : 'Facebook',
         username: a.username || a.name || a.title || `@${a.platform || 'social'}_account`,
@@ -1176,20 +1177,44 @@ async function startServer() {
         profileName: 'Default Profile'
       })) : [];
 
-      if (supabase && req.user?.id) {
-        try {
-          const { data: dbAccs } = await supabase
-            .from('connected_accounts')
-            .select('*')
-            .eq('user_id', req.user.id)
-            .eq('status', 'connected');
+      let finalAccounts: any[] = [];
 
-          if (dbAccs && dbAccs.length > 0) {
-            dbAccs
-              .filter((a: any) => !String(a.id || '').startsWith('acc_syn_') && !String(a.username || '').endsWith('_profile'))
-              .forEach((a: any) => {
-                if (!accounts.some((existing: any) => existing.id === a.id || existing.platform.toLowerCase() === a.platform.toLowerCase())) {
-                  accounts.push({
+      if (fetchedOk) {
+        finalAccounts = [...zernioAccountsList];
+        if (supabase && req.user?.id) {
+          try {
+            const zernioIds = zernioAccountsList.map((a: any) => String(a.id));
+            const zernioPlatforms = zernioAccountsList.map((a: any) => String(a.platform).toLowerCase());
+
+            const { data: dbAccs } = await supabase
+              .from('connected_accounts')
+              .select('id, platform')
+              .eq('user_id', req.user.id);
+
+            if (dbAccs && dbAccs.length > 0) {
+              for (const dba of dbAccs) {
+                const isMatch = zernioIds.includes(String(dba.id)) || zernioPlatforms.includes(String(dba.platform || '').toLowerCase());
+                if (!isMatch) {
+                  await supabase.from('connected_accounts').delete().eq('id', dba.id);
+                }
+              }
+            }
+          } catch (_purgeErr) {}
+        }
+      } else {
+        if (supabase && req.user?.id) {
+          try {
+            const { data: dbAccs } = await supabase
+              .from('connected_accounts')
+              .select('*')
+              .eq('user_id', req.user.id)
+              .eq('status', 'connected');
+
+            if (dbAccs && dbAccs.length > 0) {
+              dbAccs
+                .filter((a: any) => !String(a.id || '').startsWith('acc_syn_') && !String(a.username || '').endsWith('_profile'))
+                .forEach((a: any) => {
+                  finalAccounts.push({
                     id: a.id,
                     platform: a.platform ? (a.platform.charAt(0).toUpperCase() + a.platform.slice(1)) : 'Facebook',
                     username: a.username || '@user_profile',
@@ -1200,15 +1225,15 @@ async function startServer() {
                     connectedAt: a.created_at ? a.created_at.substring(0, 10) : new Date().toISOString().substring(0, 10),
                     profileName: a.profile_name || 'Default Profile'
                   });
-                }
-              });
+                });
+            }
+          } catch (dbErr: any) {
+            console.warn('[GET /api/v1/accounts] Supabase query warning:', dbErr.message);
           }
-        } catch (dbErr: any) {
-          console.warn('[GET /api/v1/accounts] Supabase query warning:', dbErr.message);
         }
       }
 
-      res.json({ accounts });
+      res.json({ accounts: finalAccounts });
     } catch (err: any) {
       console.warn('[GET /api/v1/accounts] Warning fetching accounts:', err.message);
       res.json({ accounts: [] });
@@ -2143,8 +2168,10 @@ async function startServer() {
     let webhooks: any[] = dbData?.webhooks || [];
     let posts: any[] = dbData?.posts || [];
 
-    // Also merge Zernio accounts if available
+    // Fetch real-time connected social accounts directly from Zernio API (Primary Source of Truth)
     let zernioAccounts: any[] = [];
+    let fetchedZernioOk = false;
+
     if (profile?.zernio_profile_id) {
       try {
         const accountsRes = await zernio.accounts.listAccounts({
@@ -2160,36 +2187,47 @@ async function startServer() {
             status: a.status || 'connected',
             created_at: a.createdAt || a.created_at || new Date().toISOString(),
           }));
+          fetchedZernioOk = true;
         }
       } catch (err: any) {
         console.warn('[/me/dashboard] Zernio listAccounts warning:', err.message);
       }
     }
 
-    // Filter out any legacy synthetic/fake account rows from DB
-    const realDbAccounts = (Array.isArray(accounts) ? accounts : []).filter((a: any) => 
-      !String(a.id || '').startsWith('acc_syn_') && 
-      !String(a.username || '').endsWith('_profile')
-    );
+    let mergedAccounts: any[] = [];
 
-    // Clean up any legacy synthetic entries from Supabase connected_accounts table
-    if (supabase && userId) {
-      try {
-        await supabase
-          .from('connected_accounts')
-          .delete()
-          .eq('user_id', userId)
-          .or('id.ilike.acc_syn_%,username.ilike.%_profile');
-      } catch (_cleanErr) {}
-    }
+    if (fetchedZernioOk) {
+      // Zernio API is primary — live accounts from Zernio
+      mergedAccounts = [...zernioAccounts];
 
-    // Merge DB accounts with Zernio accounts, deduplicating by platform
-    const mergedAccounts = [...realDbAccounts];
-    zernioAccounts.forEach((za: any) => {
-      if (!mergedAccounts.some((a: any) => a.id === za.id || (a.platform && a.platform.toLowerCase() === za.platform.toLowerCase()))) {
-        mergedAccounts.push(za);
+      // Purge any stale DB accounts from Supabase connected_accounts table that don't exist in Zernio
+      if (supabase && userId) {
+        try {
+          const zernioAccountIds = zernioAccounts.map((a: any) => String(a.id));
+          const zernioPlatforms = zernioAccounts.map((a: any) => String(a.platform).toLowerCase());
+
+          const { data: existingDbAccs } = await supabase
+            .from('connected_accounts')
+            .select('id, platform')
+            .eq('user_id', userId);
+
+          if (existingDbAccs && existingDbAccs.length > 0) {
+            for (const dba of existingDbAccs) {
+              const isMatch = zernioAccountIds.includes(String(dba.id)) || zernioPlatforms.includes(String(dba.platform || '').toLowerCase());
+              if (!isMatch) {
+                await supabase.from('connected_accounts').delete().eq('id', dba.id);
+              }
+            }
+          }
+        } catch (_purgeErr) {}
       }
-    });
+    } else {
+      // Fallback: If Zernio call failed, filter DB accounts
+      mergedAccounts = (Array.isArray(accounts) ? accounts : []).filter((a: any) => 
+        !String(a.id || '').startsWith('acc_syn_') && 
+        !String(a.username || '').endsWith('_profile')
+      );
+    }
 
     // Update profiles.connected_accounts_count in Supabase to reflect real connected account count
     const connectedPlatforms = mergedAccounts.filter((a: any) => a.status === 'connected').length;
