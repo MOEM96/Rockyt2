@@ -2222,11 +2222,18 @@ async function startServer() {
         } catch (_purgeErr) {}
       }
     } else {
-      // Fallback: If Zernio call failed, filter DB accounts
-      mergedAccounts = (Array.isArray(accounts) ? accounts : []).filter((a: any) => 
-        !String(a.id || '').startsWith('acc_syn_') && 
-        !String(a.username || '').endsWith('_profile')
-      );
+      // Fallback: If Zernio call failed, strictly filter DB accounts
+      mergedAccounts = (Array.isArray(accounts) ? accounts : []).filter((a: any) => {
+        const status = String(a.status || '').toLowerCase();
+        const username = String(a.username || '').toLowerCase();
+        const id = String(a.id || '').toLowerCase();
+        const isFakePattern = username.endsWith('_user') || 
+                              username.endsWith('_profile') || 
+                              username.endsWith('_account') || 
+                              username.startsWith('@stripetest_') || 
+                              id.startsWith('acc_syn_');
+        return status === 'connected' && !isFakePattern;
+      });
     }
 
     // Update profiles.connected_accounts_count in Supabase to reflect real connected account count

@@ -224,13 +224,28 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
       const qs = queryParams.toString() ? `?${queryParams.toString()}` : '';
       let loadedSuccessfully = false;
 
+      const sanitizeAccounts = (rawAccounts: any[]) => {
+        if (!Array.isArray(rawAccounts)) return [];
+        return rawAccounts.filter((a: any) => {
+          const status = String(a.status || '').toLowerCase();
+          const username = String(a.username || '').toLowerCase();
+          const id = String(a.id || '').toLowerCase();
+          const isFakePattern = username.endsWith('_user') || 
+                                username.endsWith('_profile') || 
+                                username.endsWith('_account') || 
+                                username.startsWith('@stripetest_') || 
+                                id.startsWith('acc_syn_');
+          return status === 'connected' && !isFakePattern;
+        });
+      };
+
       // Primary: Single consolidated API call for all dashboard data
       try {
         const dashRes = await fetch(`/api/v1/me/dashboard${qs}`, { headers });
         if (dashRes.ok) {
           const data = await dashRes.json();
           if (data.profile) setProfile(data.profile);
-          if (Array.isArray(data.accounts)) setAccounts(data.accounts);
+          if (Array.isArray(data.accounts)) setAccounts(sanitizeAccounts(data.accounts));
           if (Array.isArray(data.apiKeys)) {
             setApiKeys(data.apiKeys);
             if (data.apiKeys.length > 0) {
@@ -261,7 +276,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
 
             if (!rpcErr && rpcData && !rpcData.error) {
               if (rpcData.profile) setProfile(rpcData.profile);
-              if (Array.isArray(rpcData.accounts)) setAccounts(rpcData.accounts);
+              if (Array.isArray(rpcData.accounts)) setAccounts(sanitizeAccounts(rpcData.accounts));
               if (Array.isArray(rpcData.apiKeys)) {
                 setApiKeys(rpcData.apiKeys);
                 if (rpcData.apiKeys.length > 0) {
