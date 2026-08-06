@@ -142,6 +142,12 @@ async function startServer() {
           sameSite: 'lax',
           maxAge: (session.expires_in || 3600) * 1000
         });
+
+        // Eager Zernio profile creation on user signup / login
+        const decodedUser = session.user || decodeSupabaseJWT(session.access_token);
+        if (decodedUser) {
+          await ensureUserProfile(decodedUser);
+        }
       }
       return res.redirect('/dashboard');
     } catch (e) {
@@ -165,6 +171,61 @@ async function startServer() {
     res.clearCookie('rockyt_session');
     res.json({ success: true });
   });
+
+  app.get('/api/auth/me', asyncHandler(async (req: any, res: any) => {
+    let headerToken = req.headers.authorization?.replace(/^Bearer\s+/i, '').trim();
+    if (headerToken === 'undefined' || headerToken === 'null' || headerToken === '[object Object]') {
+      headerToken = '';
+    }
+    const token = headerToken || req.cookies?.rockyt_session;
+    if (!token) {
+      return res.status(401).json({ error: 'Unauthenticated' });
+    }
+    const decoded = decodeSupabaseJWT(token);
+    if (!decoded) {
+      return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+
+    const profile = await ensureUserProfile(decoded);
+    const userId = profile?.id || decoded.id;
+
+    let apiKey: string | null = null;
+    if (supabase && userId) {
+      try {
+        const { data: keys } = await supabase
+          .from('user_api_keys')
+          .select('key_prefix, created_at')
+          .eq('user_id', userId)
+          .eq('revoked', false)
+          .order('created_at', { ascending: false });
+
+        if (keys && keys.length > 0) {
+          apiKey = keys[0].key_prefix + '••••••••••••••••';
+        } else {
+          // Auto-generate first live API key for user
+          const rawKey = 'rkt_live_' + crypto.randomBytes(32).toString('hex');
+          const hash = crypto.createHash('sha256').update(rawKey).digest('hex');
+          const prefix = rawKey.substring(0, 12);
+          await supabase.from('user_api_keys').insert({
+            user_id: userId,
+            key_hash: hash,
+            key_prefix: prefix,
+            revoked: false
+          });
+          apiKey = rawKey;
+        }
+      } catch (err: any) {
+        console.warn('[GET /api/auth/me] API key lookup warning:', err.message);
+      }
+    }
+
+    return res.json({
+      user: { id: decoded.id, email: decoded.email },
+      profile,
+      apiKey,
+      zernioProfileId: profile?.zernio_profile_id || null
+    });
+  }));
 
   app.get('/api/auth/csrf', (_req, res) => res.json({ csrfToken: 'rockyt_csrf_token' }));
   app.get('/api/auth/providers', (_req, res) => res.json({ google: { id: 'google', name: 'Google' } }));
@@ -796,7 +857,6 @@ async function startServer() {
       } catch (err: any) {
         console.error('Error revoking API key:', err.message);
       }
-    }
 
       // Disconnect all social accounts under user's profile upon API key revocation
       const profile = await ensureUserProfile(req.user);

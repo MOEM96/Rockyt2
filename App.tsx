@@ -160,6 +160,13 @@ const App: React.FC = () => {
           };
           setUserSession(userObj);
           localStorage.setItem('rockyt_session_user', JSON.stringify(userObj));
+
+          // Eagerly trigger Zernio profile creation on client-side OAuth
+          if (session.access_token) {
+            fetch('/api/auth/me', {
+              headers: { 'Authorization': `Bearer ${session.access_token}` }
+            }).catch(() => {});
+          }
         }
       });
       authSubscription = listener?.subscription;

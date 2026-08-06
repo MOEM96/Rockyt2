@@ -189,7 +189,10 @@ const Onboarding: React.FC<OnboardingProps> = ({ onCancel, initialMode = 'signup
             </div>
 
             <button
-              onClick={onCancel}
+              onClick={() => {
+                onCancel();
+                window.location.href = '/dashboard';
+              }}
               className="w-full bg-brand text-white font-mono text-xs font-bold px-6 py-3.5 uppercase tracking-wider hover:bg-white hover:text-ink transition-all flex items-center justify-center gap-2 rounded-sm shadow-glow cursor-pointer"
             >
               LAUNCH STUDIO CONSOLE <ArrowRight size={14} />

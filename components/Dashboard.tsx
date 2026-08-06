@@ -195,7 +195,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     }
     const resolvedEmail = userSession?.email || profile?.email || userEmail || '';
     const resolvedId = userSession?.id || profile?.id || userId || '';
-    const resolvedProfileId = profile?.zernio_profile_id || (resolvedEmail === 'stripetest394@gmail.com' ? '6a628bb590d8faa0ffc45a9f' : '');
+    const resolvedProfileId = profile?.zernio_profile_id || '';
     const tokenCandidate = token || resolvedEmail || resolvedId || '';
 
     return {
@@ -214,7 +214,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
       const headers = await getAuthHeaders();
       const resolvedEmail = userSession?.email || profile?.email || userEmail || '';
       const resolvedId = userSession?.id || profile?.id || userId || '';
-      const resolvedProfileId = profile?.zernio_profile_id || (resolvedEmail === 'stripetest394@gmail.com' ? '6a628bb590d8faa0ffc45a9f' : '');
+      const resolvedProfileId = profile?.zernio_profile_id || '';
 
       const queryParams = new URLSearchParams();
       if (resolvedEmail) queryParams.set('email', resolvedEmail);
