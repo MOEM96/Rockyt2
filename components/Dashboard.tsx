@@ -207,6 +207,19 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     };
   };
 
+  const safeFetchJson = async (res: Response) => {
+    try {
+      const text = await res.text();
+      try {
+        return JSON.parse(text);
+      } catch {
+        return { error: `Server error (${res.status})` };
+      }
+    } catch {
+      return { error: `HTTP ${res.status}` };
+    }
+  };
+
   // 1. Fetch Real Live Data from Server API (Multi-Tenant Isolated) + Supabase Redundant Fallback
   const fetchLiveData = async () => {
     setIsLoading(true);
@@ -243,7 +256,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
       try {
         const dashRes = await fetch(`/api/v1/me/dashboard${qs}`, { headers });
         if (dashRes.ok) {
-          const data = await dashRes.json();
+          const data = await safeFetchJson(dashRes);
           if (data.profile) setProfile(data.profile);
           if (Array.isArray(data.accounts)) setAccounts(sanitizeAccounts(data.accounts));
           if (Array.isArray(data.apiKeys)) {
@@ -354,7 +367,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
           })
         });
 
-        const data = await res.json();
+        const data = await safeFetchJson(res);
 
         if (res.status === 402 || data.code === 'PAYMENT_REQUIRED' || data.reason === 'twitter_passthrough' || data.requiresDeposit) {
           setTopUpModalData({
@@ -369,7 +382,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
         }
 
         if (!res.ok) {
-          throw new Error(data.error || `Failed to initiate ${platformName} connection`);
+          throw new Error(data.error || `Failed to initiate ${platformName} connection (${res.status})`);
         }
 
         if (data.authUrl) {
@@ -412,7 +425,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
         })
       });
 
-      const data = await res.json();
+      const data = await safeFetchJson(res);
 
       if (!res.ok) {
         throw new Error(data.error || 'Failed to create checkout session with Dodo Payments.');
@@ -483,7 +496,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
           method: 'POST',
           headers
         });
-        const data = await res.json();
+        const data = await safeFetchJson(res);
         if (res.ok && data.key) {
           generatedKey = data.key;
         } else if (data?.error) {
@@ -1526,7 +1539,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                         content: newPostContent
                       })
                     });
-                    const data = await res.json();
+                    const data = await safeFetchJson(res);
                     if (data.post) {
                       setPosts(prev => [data.post, ...prev]);
                     } else {
