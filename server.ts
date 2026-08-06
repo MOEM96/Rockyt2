@@ -2193,10 +2193,9 @@ function startServer() {
     let mergedAccounts: any[] = [];
 
     if (fetchedZernioOk) {
-      // Zernio API is primary — live accounts from Zernio
       mergedAccounts = [...zernioAccounts];
 
-      // Purge any stale DB accounts from Supabase connected_accounts table that don't exist in Zernio
+      // Merge and purge DB connected accounts safely
       if (supabase && userId && isValidUUID(userId)) {
         try {
           const zernioAccountIds = zernioAccounts.map((a: any) => String(a.id));
@@ -2204,17 +2203,28 @@ function startServer() {
 
           const { data: existingDbAccs } = await supabase
             .from('connected_accounts')
-            .select('id, platform')
-            .eq('user_id', userId);
+            .select('*')
+            .eq('user_id', userId)
+            .eq('status', 'connected');
 
           if (existingDbAccs && existingDbAccs.length > 0) {
             for (const dba of existingDbAccs) {
               const isMatch = zernioAccountIds.includes(String(dba.id)) || zernioPlatforms.includes(String(dba.platform || '').toLowerCase());
-              if (!isMatch && dba.id) {
-                if (isValidUUID(dba.id)) {
-                  await supabase.from('connected_accounts').delete().eq('id', dba.id);
-                } else if (dba.platform) {
-                  await supabase.from('connected_accounts').delete().eq('user_id', userId).eq('platform', dba.platform);
+              if (!isMatch) {
+                if (zernioAccounts.length > 0) {
+                  if (isValidUUID(dba.id)) {
+                    await supabase.from('connected_accounts').delete().eq('id', dba.id);
+                  }
+                } else {
+                  // Zernio list returned 0 accounts, but DB has a connected account — preserve it!
+                  mergedAccounts.push({
+                    id: dba.id,
+                    platform: dba.platform ? (dba.platform.charAt(0).toUpperCase() + dba.platform.slice(1)) : 'Social',
+                    username: dba.username || dba.profile_name || `@${dba.platform || 'social'}_account`,
+                    profile_name: dba.profile_name || dba.username || dba.platform || 'Connected Account',
+                    status: 'connected',
+                    created_at: dba.created_at || new Date().toISOString()
+                  });
                 }
               }
             }

@@ -326,7 +326,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
       window.history.replaceState({}, document.title, window.location.pathname);
       fetchLiveData();
     }
-  }, [userSession?.email, userSession?.id, userSession?.accessToken]);
+  }, [userSession?.email, userSession?.id, userSession?.accessToken, activeTab]);
 
   // Connect or Disconnect Platform Action
   const toggleAccountStatus = async (platformName: string, accountId?: string) => {
