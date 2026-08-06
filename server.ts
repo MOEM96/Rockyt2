@@ -9,7 +9,7 @@ import helmet from "helmet";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
 
-async function startServer() {
+function startServer() {
   const app = express();
   const PORT = 3000;
 
@@ -2201,7 +2201,7 @@ async function startServer() {
       mergedAccounts = [...zernioAccounts];
 
       // Purge any stale DB accounts from Supabase connected_accounts table that don't exist in Zernio
-      if (supabase && userId) {
+      if (supabase && userId && isValidUUID(userId)) {
         try {
           const zernioAccountIds = zernioAccounts.map((a: any) => String(a.id));
           const zernioPlatforms = zernioAccounts.map((a: any) => String(a.platform).toLowerCase());
@@ -2214,8 +2214,12 @@ async function startServer() {
           if (existingDbAccs && existingDbAccs.length > 0) {
             for (const dba of existingDbAccs) {
               const isMatch = zernioAccountIds.includes(String(dba.id)) || zernioPlatforms.includes(String(dba.platform || '').toLowerCase());
-              if (!isMatch) {
-                await supabase.from('connected_accounts').delete().eq('id', dba.id);
+              if (!isMatch && dba.id) {
+                if (isValidUUID(dba.id)) {
+                  await supabase.from('connected_accounts').delete().eq('id', dba.id);
+                } else if (dba.platform) {
+                  await supabase.from('connected_accounts').delete().eq('user_id', userId).eq('platform', dba.platform);
+                }
               }
             }
           }
@@ -2430,9 +2434,8 @@ async function startServer() {
   return app;
 }
 
-const appPromise = startServer();
+const app = startServer();
 
-export default async function handler(req: any, res: any) {
-  const app = await appPromise;
-  app(req, res);
+export default function handler(req: any, res: any) {
+  return app(req, res);
 }
