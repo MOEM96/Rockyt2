@@ -2250,7 +2250,6 @@ async function startServer() {
     const totalComments = posts.reduce((sum: number, p: any) => sum + (p.comments || 0), 0);
     const totalEngagements = totalLikes + totalComments;
     const engagementRate = totalPosts > 0 ? ((totalEngagements / totalPosts) * 100).toFixed(1) : '0.0';
-    const connectedPlatforms = mergedAccounts.filter((a: any) => a.status === 'connected').length;
     const totalApiCalls = logs.length;
 
     // Posts per platform breakdown
