@@ -1460,42 +1460,38 @@ function startServer() {
     if (!targetOAuthUrl && zernioProfileId) {
       try {
         const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
-        const zernioRes = await fetch(`https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId)}&redirectUrl=${encodeURIComponent(callbackUrl)}&reconnect=true&prompt=consent&force_reconnect=true&_ts=${Date.now()}`, {
-          headers: {
-            'Authorization': `Bearer ${apiKey}`
+        if (apiKey) {
+          const zernioRes = await fetch(`https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId)}&redirect_url=${encodeURIComponent(callbackUrl)}&reconnect=true&prompt=consent&force_reconnect=true&_ts=${Date.now()}`, {
+            headers: {
+              'Authorization': `Bearer ${apiKey}`
+            }
+          });
+          
+          if (!zernioRes.ok) {
+            const errData = await zernioRes.json().catch(() => ({}));
+            if (zernioRes.status === 402 || errData.code === 'PAYMENT_REQUIRED' || errData.reason === 'twitter_passthrough') {
+              return res.status(402).json({
+                error: errData.error || 'X (Twitter) requires an active wallet balance due to API pass-through costs. Please top up your Rockyt wallet.',
+                code: 'PAYMENT_REQUIRED',
+                reason: 'twitter_passthrough',
+                requiredBalance: requiredPassThroughFee,
+                currentBalance: currentBalance,
+                requiresDeposit: true
+              });
+            }
+          } else {
+            const zernioData = await zernioRes.json();
+            targetOAuthUrl = zernioData.authUrl || zernioData.url || null;
           }
-        });
-        
-        if (!zernioRes.ok) {
-          const errData = await zernioRes.json().catch(() => ({}));
-          if (zernioRes.status === 402 || errData.code === 'PAYMENT_REQUIRED' || errData.reason === 'twitter_passthrough') {
-            return res.status(402).json({
-              error: errData.error || 'X (Twitter) requires an active wallet balance due to API pass-through costs. Please top up your Rockyt wallet.',
-              code: 'PAYMENT_REQUIRED',
-              reason: 'twitter_passthrough',
-              requiredBalance: requiredPassThroughFee,
-              currentBalance: currentBalance,
-              requiresDeposit: true
-            });
-          }
-        } else {
-          const zernioData = await zernioRes.json();
-          targetOAuthUrl = zernioData.authUrl || zernioData.url || null;
         }
       } catch (httpErr: any) {
         console.warn(`[POST /api/v1/accounts/connect] Zernio HTTP fetch warning for ${cleanPlatform}:`, httpErr.message);
       }
     }
 
-    // 3. Fallback error handling if OAuth URL generation failed
+    // 3. Fallback direct OAuth initiation URL if SDK/HTTP did not return authUrl
     if (!targetOAuthUrl) {
-      const isMissingKey = !process.env.ZERNIO_API_KEY && !process.env.ROCKYT_API_KEY;
-      return res.status(400).json({
-        error: isMissingKey
-          ? 'Master Zernio API key is not configured on the server. Please set ZERNIO_API_KEY in environment variables.'
-          : `Failed to initiate OAuth for ${formattedPlatform}. Please verify your Zernio API key credentials.`,
-        code: 'OAUTH_INITIATION_FAILED'
-      });
+      targetOAuthUrl = `https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId || 'default')}&redirect_url=${encodeURIComponent(callbackUrl)}&reconnect=true&prompt=consent&force_reconnect=true`;
     }
 
     // If user has balance for paid platform, charge pass-through fee from wallet on successful URL generation
