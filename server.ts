@@ -1185,21 +1185,23 @@ async function startServer() {
             .eq('status', 'connected');
 
           if (dbAccs && dbAccs.length > 0) {
-            dbAccs.forEach((a: any) => {
-              if (!accounts.some((existing: any) => existing.id === a.id || existing.platform.toLowerCase() === a.platform.toLowerCase())) {
-                accounts.push({
-                  id: a.id,
-                  platform: a.platform ? (a.platform.charAt(0).toUpperCase() + a.platform.slice(1)) : 'Facebook',
-                  username: a.username || '@user_profile',
-                  name: a.username || a.platform,
-                  email: a.email || req.user?.email || '',
-                  avatar: null,
-                  status: a.status || 'connected',
-                  connectedAt: a.created_at ? a.created_at.substring(0, 10) : new Date().toISOString().substring(0, 10),
-                  profileName: a.profile_name || 'Default Profile'
-                });
-              }
-            });
+            dbAccs
+              .filter((a: any) => !String(a.id || '').startsWith('acc_syn_') && !String(a.username || '').endsWith('_profile'))
+              .forEach((a: any) => {
+                if (!accounts.some((existing: any) => existing.id === a.id || existing.platform.toLowerCase() === a.platform.toLowerCase())) {
+                  accounts.push({
+                    id: a.id,
+                    platform: a.platform ? (a.platform.charAt(0).toUpperCase() + a.platform.slice(1)) : 'Facebook',
+                    username: a.username || '@user_profile',
+                    name: a.username || a.platform,
+                    email: a.email || req.user?.email || '',
+                    avatar: null,
+                    status: a.status || 'connected',
+                    connectedAt: a.created_at ? a.created_at.substring(0, 10) : new Date().toISOString().substring(0, 10),
+                    profileName: a.profile_name || 'Default Profile'
+                  });
+                }
+              });
           }
         } catch (dbErr: any) {
           console.warn('[GET /api/v1/accounts] Supabase query warning:', dbErr.message);
@@ -1693,7 +1695,7 @@ async function startServer() {
         }
       }
 
-      const connectedCount = Math.max(accounts.length, dbAccountCount, profile?.connected_accounts_count || 0);
+      const connectedCount = accounts.length > 0 ? accounts.length : dbAccountCount;
       const maxAccounts = getMaxAccountsForUser(profile);
 
       // Keep database connected_accounts_count in sync
@@ -2164,80 +2166,37 @@ async function startServer() {
       }
     }
 
+    // Filter out any legacy synthetic/fake account rows from DB
+    const realDbAccounts = (Array.isArray(accounts) ? accounts : []).filter((a: any) => 
+      !String(a.id || '').startsWith('acc_syn_') && 
+      !String(a.username || '').endsWith('_profile')
+    );
+
+    // Clean up any legacy synthetic entries from Supabase connected_accounts table
+    if (supabase && userId) {
+      try {
+        await supabase
+          .from('connected_accounts')
+          .delete()
+          .eq('user_id', userId)
+          .or('id.ilike.acc_syn_%,username.ilike.%_profile');
+      } catch (_cleanErr) {}
+    }
+
     // Merge DB accounts with Zernio accounts, deduplicating by platform
-    const mergedAccounts = [...accounts];
+    const mergedAccounts = [...realDbAccounts];
     zernioAccounts.forEach((za: any) => {
       if (!mergedAccounts.some((a: any) => a.id === za.id || (a.platform && a.platform.toLowerCase() === za.platform.toLowerCase()))) {
         mergedAccounts.push(za);
       }
     });
 
-    // Fallback: If user has posts or profile ad_platforms or connected_accounts_count > 0,
-    // ensure those platforms exist in mergedAccounts (and auto-persist to connected_accounts DB table)
-    const activePlatforms = new Set<string>();
-    posts.forEach((p: any) => {
-      if (p.platform) activePlatforms.add(p.platform);
-    });
-    if (Array.isArray(profile?.ad_platforms)) {
-      profile.ad_platforms.forEach((ap: string) => {
-        if (ap) activePlatforms.add(ap.charAt(0).toUpperCase() + ap.slice(1));
-      });
-    }
-
-    for (const plat of activePlatforms) {
-      if (!mergedAccounts.some((a: any) => a.platform && a.platform.toLowerCase() === plat.toLowerCase())) {
-        const synthAcc = {
-          id: `acc_syn_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          user_id: userId,
-          platform: plat,
-          username: `@${plat.toLowerCase().replace(/[^a-z0-9]/g, '')}_profile`,
-          profile_name: `${plat} Account`,
-          email: profile?.email || req.user.email,
-          status: 'connected',
-          created_at: new Date().toISOString()
-        };
-        mergedAccounts.push(synthAcc);
-
-        if (supabase && userId) {
-          try {
-            await supabase.from('connected_accounts').insert({
-              user_id: userId,
-              platform: plat,
-              username: synthAcc.username,
-              profile_name: synthAcc.profile_name,
-              status: 'connected'
-            });
-          } catch (synthErr: any) {
-            console.warn('[/me/dashboard] Auto-insert connected_account warning:', synthErr.message);
-          }
-        }
-      }
-    }
-
-    if (mergedAccounts.length === 0 && (profile?.connected_accounts_count || 0) > 0) {
-      const defaultPlat = 'Instagram';
-      const synthAcc = {
-        id: `acc_syn_${Date.now()}`,
-        user_id: userId,
-        platform: defaultPlat,
-        username: `@${defaultPlat.toLowerCase()}_profile`,
-        profile_name: `${defaultPlat} Account`,
-        email: profile?.email || req.user.email,
-        status: 'connected',
-        created_at: new Date().toISOString()
-      };
-      mergedAccounts.push(synthAcc);
-      if (supabase && userId) {
-        try {
-          await supabase.from('connected_accounts').insert({
-            user_id: userId,
-            platform: defaultPlat,
-            username: synthAcc.username,
-            profile_name: synthAcc.profile_name,
-            status: 'connected'
-          });
-        } catch (e) {}
-      }
+    // Update profiles.connected_accounts_count in Supabase to reflect real connected account count
+    const connectedPlatforms = mergedAccounts.filter((a: any) => a.status === 'connected').length;
+    if (supabase && userId && profile?.connected_accounts_count !== connectedPlatforms) {
+      try {
+        await supabase.from('profiles').update({ connected_accounts_count: connectedPlatforms }).eq('id', userId);
+      } catch (_updErr) {}
     }
 
     // Compute analytics from real data
