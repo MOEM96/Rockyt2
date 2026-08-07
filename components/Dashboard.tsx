@@ -602,17 +602,14 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
           return;
         }
 
-        let targetAuthUrl = data.authUrl || data.connectUrl || data.url;
-
-        if (!targetAuthUrl && res.ok) {
-          const cleanPlat = platformName.toLowerCase().replace(/[^a-z0-9]/g, '');
-          targetAuthUrl = `${window.location.origin}/connect/${encodeURIComponent(cleanPlat)}`;
-        }
+        const cleanPlat = platformName.toLowerCase().replace(/[^a-z0-9]/g, '');
+        let targetAuthUrl = data.connectUrl || `${window.location.origin}/connect/${encodeURIComponent(cleanPlat)}`;
 
         if (targetAuthUrl) {
-          // Open OAuth provider consent in a NEW TAB so user maintains dashboard state
+          // Open Rockyt Branded Connection Gateway Screen in a NEW TAB
           window.open(targetAuthUrl, '_blank');
           setShowNewConnectionModal(false);
+          setConnectingPlatform(null);
           return;
         }
 

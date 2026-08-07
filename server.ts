@@ -1601,8 +1601,52 @@ function startServer() {
       });
     }
 
-    // Redirect browser directly to provider authorization screen
-    return res.redirect(targetOAuthUrl);
+    // Render Rockyt Branded Connection Gateway Interstitial Screen
+    return res.send(`
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <title>Connecting ${formattedPlatform} | Rockyt</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <script src="https://cdn.tailwindcss.com"></script>
+        <style>
+          body { background-color: #09090b; color: #ffffff; font-family: system-ui, -apple-system, sans-serif; }
+          .shadow-glow { box-shadow: 0 0 25px rgba(234, 88, 12, 0.35); }
+        </style>
+      </head>
+      <body class="min-h-screen flex items-center justify-center p-4 bg-zinc-950">
+        <div class="max-w-md w-full bg-zinc-900 border border-white/10 rounded-2xl p-8 shadow-2xl text-center space-y-6">
+          <div class="flex items-center justify-center gap-3">
+            <div class="w-12 h-12 rounded-xl bg-orange-600/20 border border-orange-500/30 flex items-center justify-center text-orange-500 font-black text-2xl shadow-glow">
+              🚀
+            </div>
+            <div class="text-2xl font-bold tracking-widest text-white uppercase">ROCKYT</div>
+          </div>
+          
+          <div class="space-y-2">
+            <h2 class="text-xl font-bold text-white">Connecting ${formattedPlatform} Account</h2>
+            <p class="text-xs text-zinc-400">You are about to authorize your ${formattedPlatform} account with Rockyt.</p>
+          </div>
+
+          <div class="bg-zinc-950 border border-white/5 rounded-xl p-4 text-left text-xs text-zinc-400 space-y-2.5">
+            <div class="flex items-center gap-2.5 text-white font-medium">
+              <span class="text-emerald-400 font-bold">✓</span> Rockyt Encrypted Integration Gateway
+            </div>
+            <div class="flex items-center gap-2.5 text-white font-medium">
+              <span class="text-emerald-400 font-bold">✓</span> Direct Return to Rockyt Dashboard
+            </div>
+          </div>
+
+          <a href="${targetOAuthUrl}" class="block w-full bg-orange-600 hover:bg-orange-500 text-white font-bold text-sm py-3.5 px-6 rounded-xl transition-all shadow-glow uppercase tracking-wider">
+            Authorize ${formattedPlatform} Account →
+          </a>
+
+          <p class="text-[11px] text-zinc-500">Secure connection powered by Rockyt Headless Infrastructure</p>
+        </div>
+      </body>
+      </html>
+    `);
   }));
 
   // ---------------------------------------------------------------------------
