@@ -53,12 +53,15 @@ interface ApiLogRow {
 interface UserProfile {
   id?: string;
   email?: string;
+  full_name?: string;
   plan?: string;
   subscription_status?: string;
   wallet_balance?: number;
   max_accounts?: number;
+  connected_accounts_count?: number;
   dodo_customer_id?: string;
   plan_product_id?: string;
+  zernio_profile_id?: string;
   is_trial?: boolean;
 }
 
@@ -240,15 +243,12 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
       const sanitizeAccounts = (rawAccounts: any[]) => {
         if (!Array.isArray(rawAccounts)) return [];
         return rawAccounts.filter((a: any) => {
-          const status = String(a.status || '').toLowerCase();
-          const username = String(a.username || '').toLowerCase();
-          const id = String(a.id || '').toLowerCase();
-          const isFakePattern = username.endsWith('_user') || 
-                                username.endsWith('_profile') || 
-                                username.endsWith('_account') || 
-                                username.startsWith('@stripetest_') || 
-                                id.startsWith('acc_syn_');
-          return status === 'connected' && !isFakePattern;
+          const status = String(a.status || 'connected').toLowerCase();
+          const id = String(a.id || '');
+          // Only filter out accounts that are explicitly disconnected or have no ID
+          if (!id || id === 'undefined' || id === 'null') return false;
+          if (status === 'disconnected' || status === 'revoked') return false;
+          return true;
         });
       };
 
@@ -314,6 +314,59 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     }
   };
 
+  // Dedicated connections fetch — called as a redundant fallback when consolidated endpoint returns 0 accounts
+  const fetchConnectionsData = async () => {
+    try {
+      const headers = await getAuthHeaders();
+      const resolvedEmail = userSession?.email || profile?.email || userEmail || '';
+      const resolvedId = userSession?.id || profile?.id || userId || '';
+      const resolvedProfileId = profile?.zernio_profile_id || '';
+
+      const queryParams = new URLSearchParams();
+      if (resolvedEmail) queryParams.set('email', resolvedEmail);
+      if (resolvedId) queryParams.set('userId', resolvedId);
+      if (resolvedProfileId) queryParams.set('profileId', resolvedProfileId);
+      const qs = queryParams.toString() ? `?${queryParams.toString()}` : '';
+
+      // Try the dedicated accounts endpoint which fetches directly from Zernio API
+      const res = await fetch(`/api/v1/accounts${qs}`, { headers });
+      if (res.ok) {
+        const data = await safeFetchJson(res);
+        if (Array.isArray(data.accounts) && data.accounts.length > 0) {
+          const validAccounts = data.accounts.filter((a: any) => {
+            const id = String(a.id || '');
+            const status = String(a.status || 'connected').toLowerCase();
+            return id && id !== 'undefined' && status !== 'disconnected';
+          });
+          if (validAccounts.length > 0) {
+            setAccounts(validAccounts);
+            console.log(`[Dashboard] fetchConnectionsData: loaded ${validAccounts.length} accounts from /api/v1/accounts`);
+          }
+        }
+      }
+
+      // Also try the /api/user/connected-accounts DB-backed endpoint
+      if (accounts.length === 0) {
+        const dbRes = await fetch(`/api/user/connected-accounts${qs}`, { headers });
+        if (dbRes.ok) {
+          const dbData = await safeFetchJson(dbRes);
+          if (Array.isArray(dbData.accounts) && dbData.accounts.length > 0) {
+            const validDbAccounts = dbData.accounts.filter((a: any) => {
+              const status = String(a.status || 'connected').toLowerCase();
+              return status === 'connected';
+            });
+            if (validDbAccounts.length > 0) {
+              setAccounts(validDbAccounts);
+              console.log(`[Dashboard] fetchConnectionsData: loaded ${validDbAccounts.length} accounts from DB fallback`);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[Dashboard] fetchConnectionsData fallback error:', err);
+    }
+  };
+
   useEffect(() => {
     fetchLiveData();
 
@@ -327,6 +380,13 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
       fetchLiveData();
     }
   }, [userSession?.email, userSession?.id, userSession?.accessToken, activeTab]);
+
+  // Dedicated effect: when on connections tab and accounts are empty after initial load, try dedicated fetch
+  useEffect(() => {
+    if (activeTab === 'connections' && !isLoading && accounts.length === 0) {
+      fetchConnectionsData();
+    }
+  }, [activeTab, isLoading, accounts.length]);
 
   // Connect or Disconnect Platform Action
   const toggleAccountStatus = async (platformName: string, accountId?: string) => {
@@ -381,13 +441,22 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
           return;
         }
 
-        if (!res.ok) {
-          throw new Error(data.error || `Failed to initiate ${platformName} connection (${res.status})`);
+        let targetAuthUrl = data.authUrl || data.connectUrl || data.url;
+
+        if (!targetAuthUrl && res.ok) {
+          const cleanPlat = platformName.toLowerCase().replace(/[^a-z0-9]/g, '');
+          targetAuthUrl = `${window.location.origin}/connect/${encodeURIComponent(cleanPlat)}`;
         }
 
-        if (data.authUrl) {
-          window.location.href = data.authUrl;
+        if (targetAuthUrl) {
+          // Open OAuth provider consent in a NEW TAB so user maintains dashboard state
+          window.open(targetAuthUrl, '_blank');
+          setShowNewConnectionModal(false);
           return;
+        }
+
+        if (!res.ok) {
+          throw new Error(data.error || `Failed to initiate ${platformName} connection (${res.status})`);
         }
 
         fetchLiveData();

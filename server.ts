@@ -385,15 +385,17 @@ function startServer() {
           }
         } catch (err: any) {
           console.warn('[ensureUserProfile] Zernio profile lookup warning:', err?.message || err);
-          zernioProfileId = `prof_${profile.id.replace(/-/g, '').substring(0, 16)}`;
+          zernioProfileId = `prof_${String(profile?.id || safeUserId || 'user').replace(/-/g, '').substring(0, 16)}`;
         }
 
         if (zernioProfileId) {
+          if (profile) profile.zernio_profile_id = zernioProfileId;
           try {
+            const targetId = profile?.id || safeUserId;
             const { data: updated } = await supabase
               .from('profiles')
               .update({ zernio_profile_id: zernioProfileId })
-              .eq('id', profile.id)
+              .eq('id', targetId)
               .select()
               .maybeSingle();
             if (updated) profile = updated;
@@ -1165,17 +1167,20 @@ function startServer() {
       }
 
       const rawAccounts = (accountsRes.data as any)?.accounts || (accountsRes.data as any) || [];
-      const zernioAccountsList = Array.isArray(rawAccounts) ? rawAccounts.map((a: any) => ({
-        id: a._id || a.id,
-        platform: a.platform ? (a.platform.charAt(0).toUpperCase() + a.platform.slice(1)) : 'Facebook',
-        username: a.username || a.name || a.title || `@${a.platform || 'social'}_account`,
-        name: a.name || a.username || a.platform || 'Connected Page',
-        email: a.email || req.user?.email || 'user@rockyt.io',
-        avatar: a.avatar || a.profilePictureUrl || null,
-        status: a.status || 'connected',
-        connectedAt: a.createdAt || a.created_at ? (a.createdAt || a.created_at).substring(0, 10) : new Date().toISOString().substring(0, 10),
-        profileName: 'Default Profile'
-      })) : [];
+      const zernioAccountsList = Array.isArray(rawAccounts) ? rawAccounts.map((a: any) => {
+        const platformName = a.platform ? (a.platform.charAt(0).toUpperCase() + a.platform.slice(1)) : 'Social';
+        return {
+          id: a._id || a.id,
+          platform: platformName,
+          username: a.username || a.name || a.title || `@${platformName.toLowerCase()}`,
+          name: a.name || a.username || a.title || `${platformName} Account`,
+          email: a.email || req.user?.email || 'user@rockyt.io',
+          avatar: a.avatar || a.profilePictureUrl || null,
+          status: a.status || 'connected',
+          connectedAt: a.createdAt || a.created_at ? (a.createdAt || a.created_at).substring(0, 10) : new Date().toISOString().substring(0, 10),
+          profileName: 'Default Profile'
+        };
+      }) : [];
 
       let finalAccounts: any[] = [];
 
@@ -1212,13 +1217,17 @@ function startServer() {
 
             if (dbAccs && dbAccs.length > 0) {
               dbAccs
-                .filter((a: any) => !String(a.id || '').startsWith('acc_syn_') && !String(a.username || '').endsWith('_profile'))
+                .filter((a: any) => {
+                  const status = String(a.status || 'connected').toLowerCase();
+                  return status !== 'disconnected' && status !== 'revoked';
+                })
                 .forEach((a: any) => {
+                  const dbPlatform = a.platform ? (a.platform.charAt(0).toUpperCase() + a.platform.slice(1)) : 'Social';
                   finalAccounts.push({
                     id: a.id,
-                    platform: a.platform ? (a.platform.charAt(0).toUpperCase() + a.platform.slice(1)) : 'Facebook',
-                    username: a.username || '@user_profile',
-                    name: a.username || a.platform,
+                    platform: dbPlatform,
+                    username: a.username || a.profile_name || `@${dbPlatform.toLowerCase()}`,
+                    name: a.username || a.profile_name || `${dbPlatform} Account`,
                     email: a.email || req.user?.email || '',
                     avatar: null,
                     status: a.status || 'connected',
@@ -1354,7 +1363,7 @@ function startServer() {
   // Connected Accounts Creation & OAuth Connect Initiator Endpoint
   // ---------------------------------------------------------------------------
   app.post(['/api/v1/accounts/connect', '/api/v1/accounts'], supabaseAuth, asyncHandler(async (req: any, res: any) => {
-    const { platform, redirectUrl } = req.body;
+    const { platform, redirectUrl } = req.body || {};
     if (!platform) {
       return res.status(400).json({ error: 'Platform name is required (e.g. instagram, linkedin, x, whatsapp, tiktok)' });
     }
@@ -1702,14 +1711,17 @@ function startServer() {
           });
           const rawAccounts = (accountsRes.data as any)?.accounts || (accountsRes.data as any) || [];
           if (Array.isArray(rawAccounts)) {
-            accounts = rawAccounts.map((a: any) => ({
-              id: a._id || a.id,
-              platform: a.platform,
-              username: a.username || a.name || a.title || `@${a.platform}_account`,
-              name: a.name || a.username || a.platform,
-              avatar: a.avatar || a.profilePictureUrl || null,
-              status: a.status || 'active'
-            }));
+            accounts = rawAccounts.map((a: any) => {
+              const platformName = a.platform ? (a.platform.charAt(0).toUpperCase() + a.platform.slice(1)) : 'Social';
+              return {
+                id: a._id || a.id,
+                platform: platformName,
+                username: a.username || a.name || a.title || `@${platformName.toLowerCase()}`,
+                name: a.name || a.username || a.title || `${platformName} Account`,
+                avatar: a.avatar || a.profilePictureUrl || null,
+                status: a.status || 'connected'
+              };
+            });
           }
         } catch (err: any) {
           console.warn('[dashboard-usage] Zernio listAccounts warning:', err.message);
@@ -2175,15 +2187,19 @@ function startServer() {
         });
         const rawAccounts = (accountsRes.data as any)?.accounts || (accountsRes.data as any) || [];
         if (Array.isArray(rawAccounts)) {
-          zernioAccounts = rawAccounts.map((a: any) => ({
-            id: a._id || a.id,
-            platform: a.platform ? (a.platform.charAt(0).toUpperCase() + a.platform.slice(1)) : 'Facebook',
-            username: a.username || a.name || a.title || `@${a.platform || 'social'}_account`,
-            profile_name: a.name || a.username || a.platform || 'Connected Page',
-            status: a.status || 'connected',
-            created_at: a.createdAt || a.created_at || new Date().toISOString(),
-          }));
+          zernioAccounts = rawAccounts.map((a: any) => {
+            const platformName = a.platform ? (a.platform.charAt(0).toUpperCase() + a.platform.slice(1)) : 'Social';
+            return {
+              id: a._id || a.id,
+              platform: platformName,
+              username: a.username || a.name || a.title || `@${platformName.toLowerCase()}`,
+              profile_name: a.name || a.username || a.title || `${platformName} Account`,
+              status: a.status || 'connected',
+              created_at: a.createdAt || a.created_at || new Date().toISOString(),
+            };
+          });
           fetchedZernioOk = true;
+          console.log(`[/me/dashboard] Zernio returned ${zernioAccounts.length} accounts for profile ${profile.zernio_profile_id}`);
         }
       } catch (err: any) {
         console.warn('[/me/dashboard] Zernio listAccounts warning:', err.message);
@@ -2217,11 +2233,12 @@ function startServer() {
                   }
                 } else {
                   // Zernio list returned 0 accounts, but DB has a connected account — preserve it!
+                  const dbPlatformName = dba.platform ? (dba.platform.charAt(0).toUpperCase() + dba.platform.slice(1)) : 'Social';
                   mergedAccounts.push({
                     id: dba.id,
-                    platform: dba.platform ? (dba.platform.charAt(0).toUpperCase() + dba.platform.slice(1)) : 'Social',
-                    username: dba.username || dba.profile_name || `@${dba.platform || 'social'}_account`,
-                    profile_name: dba.profile_name || dba.username || dba.platform || 'Connected Account',
+                    platform: dbPlatformName,
+                    username: dba.username || dba.profile_name || `@${dbPlatformName.toLowerCase()}`,
+                    profile_name: dba.profile_name || dba.username || `${dbPlatformName} Account`,
                     status: 'connected',
                     created_at: dba.created_at || new Date().toISOString()
                   });
@@ -2232,18 +2249,14 @@ function startServer() {
         } catch (_purgeErr) {}
       }
     } else {
-      // Fallback: If Zernio call failed, strictly filter DB accounts
+      // Fallback: If Zernio call failed, use DB accounts — trust them without aggressive filtering
       mergedAccounts = (Array.isArray(accounts) ? accounts : []).filter((a: any) => {
-        const status = String(a.status || '').toLowerCase();
-        const username = String(a.username || '').toLowerCase();
-        const id = String(a.id || '').toLowerCase();
-        const isFakePattern = username.endsWith('_user') || 
-                              username.endsWith('_profile') || 
-                              username.endsWith('_account') || 
-                              username.startsWith('@stripetest_') || 
-                              id.startsWith('acc_syn_');
-        return status === 'connected' && !isFakePattern;
+        const status = String(a.status || 'connected').toLowerCase();
+        const id = String(a.id || '');
+        // Only reject accounts with no ID or explicitly disconnected status
+        return id && id !== 'undefined' && id !== 'null' && status !== 'disconnected' && status !== 'revoked';
       });
+      console.log(`[/me/dashboard] Zernio failed, using ${mergedAccounts.length} DB accounts (from ${(Array.isArray(accounts) ? accounts : []).length} raw DB entries)`);
     }
 
     // Update profiles.connected_accounts_count in Supabase to reflect real connected account count
