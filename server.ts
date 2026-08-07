@@ -1580,27 +1580,57 @@ function startServer() {
     }
   }));
 
-  // Helper: map user-facing platform names & display labels to canonical Zernio API platform slugs
-  function getCanonicalZernioPlatform(platformName: string): string {
+  // Helper: map user-facing platform names & display labels to canonical Zernio API platform info & endpoints
+  function getCanonicalZernioPlatformInfo(platformName: string): { cleanPlatform: string; connectEndpoint: string; formattedPlatform: string; isAds: boolean } {
     const p = String(platformName || '').trim().toLowerCase();
-    
-    if (p.includes('instagram')) return 'instagram';
-    if (p.includes('linkedin')) return 'linkedin';
-    if (p.includes('tiktok')) return 'tiktok';
-    if (p.includes('twitter') || p.includes('x') || p === 'x') return 'twitter';
-    if (p.includes('whatsapp')) return 'whatsapp';
-    if (p.includes('meta') || p.includes('facebook') || p.includes('fb')) return 'facebook';
-    if (p.includes('google') || p.includes('gmb') || p.includes('business')) return 'googlebusiness';
-    if (p.includes('youtube')) return 'youtube';
-    if (p.includes('pinterest')) return 'pinterest';
-    if (p.includes('threads')) return 'threads';
-    if (p.includes('snapchat')) return 'snapchat';
-    if (p.includes('bluesky')) return 'bluesky';
-    if (p.includes('telegram')) return 'telegram';
-    if (p.includes('discord')) return 'discord';
-    if (p.includes('slack')) return 'slack';
 
-    return p.replace(/[^a-z0-9]/g, '') || 'facebook';
+    // 1. Ads Platforms (uses GET /v1/connect/{platform}/ads)
+    if (p.includes('meta-ads') || p.includes('meta_ads') || p === 'metaads' || p.includes('facebook-ads') || p.includes('facebook_ads') || p.includes('meta ads')) {
+      return { cleanPlatform: 'metaads', connectEndpoint: 'facebook/ads', formattedPlatform: 'Meta Ads', isAds: true };
+    }
+    if (p.includes('google-ads') || p.includes('google_ads') || p === 'googleads' || p.includes('google ads')) {
+      return { cleanPlatform: 'googleads', connectEndpoint: 'googleads/ads', formattedPlatform: 'Google Ads', isAds: true };
+    }
+    if (p.includes('linkedin-ads') || p.includes('linkedin_ads') || p === 'linkedinads' || p.includes('linkedin ads')) {
+      return { cleanPlatform: 'linkedinads', connectEndpoint: 'linkedin/ads', formattedPlatform: 'LinkedIn Ads', isAds: true };
+    }
+    if (p.includes('tiktok-ads') || p.includes('tiktok_ads') || p === 'tiktokads' || p.includes('tiktok ads')) {
+      return { cleanPlatform: 'tiktokads', connectEndpoint: 'tiktok/ads', formattedPlatform: 'TikTok Ads', isAds: true };
+    }
+    if (p.includes('pinterest-ads') || p.includes('pinterest_ads') || p === 'pinterestads' || p.includes('pinterest ads')) {
+      return { cleanPlatform: 'pinterestads', connectEndpoint: 'pinterest/ads', formattedPlatform: 'Pinterest Ads', isAds: true };
+    }
+    if (p.includes('x-ads') || p.includes('x_ads') || p === 'xads' || p.includes('twitter-ads') || p.includes('twitter_ads') || p.includes('x ads') || p.includes('twitter ads')) {
+      return { cleanPlatform: 'xads', connectEndpoint: 'twitter/ads', formattedPlatform: 'X Ads', isAds: true };
+    }
+    if (p.includes('openai-ads') || p.includes('openai_ads') || p === 'openaiads' || p.includes('openai ads')) {
+      return { cleanPlatform: 'openaiads', connectEndpoint: 'openai-ads/credentials', formattedPlatform: 'OpenAI Ads', isAds: true };
+    }
+
+    // 2. Social & Messaging Platforms
+    if (p.includes('instagram')) return { cleanPlatform: 'instagram', connectEndpoint: 'instagram', formattedPlatform: 'Instagram', isAds: false };
+    if (p.includes('linkedin')) return { cleanPlatform: 'linkedin', connectEndpoint: 'linkedin', formattedPlatform: 'LinkedIn', isAds: false };
+    if (p.includes('tiktok')) return { cleanPlatform: 'tiktok', connectEndpoint: 'tiktok', formattedPlatform: 'TikTok', isAds: false };
+    if (p.includes('twitter') || p.includes('x') || p === 'x') return { cleanPlatform: 'twitter', connectEndpoint: 'twitter', formattedPlatform: 'Twitter/X', isAds: false };
+    if (p.includes('whatsapp')) return { cleanPlatform: 'whatsapp', connectEndpoint: 'whatsapp', formattedPlatform: 'WhatsApp', isAds: false };
+    if (p.includes('facebook') || p.includes('fb')) return { cleanPlatform: 'facebook', connectEndpoint: 'facebook', formattedPlatform: 'Facebook', isAds: false };
+    if (p.includes('google') || p.includes('gmb') || p.includes('business')) return { cleanPlatform: 'googlebusiness', connectEndpoint: 'gmb', formattedPlatform: 'Google Business', isAds: false };
+    if (p.includes('youtube')) return { cleanPlatform: 'youtube', connectEndpoint: 'youtube', formattedPlatform: 'YouTube', isAds: false };
+    if (p.includes('pinterest')) return { cleanPlatform: 'pinterest', connectEndpoint: 'pinterest', formattedPlatform: 'Pinterest', isAds: false };
+    if (p.includes('threads')) return { cleanPlatform: 'threads', connectEndpoint: 'threads', formattedPlatform: 'Threads', isAds: false };
+    if (p.includes('snapchat')) return { cleanPlatform: 'snapchat', connectEndpoint: 'snapchat', formattedPlatform: 'Snapchat', isAds: false };
+    if (p.includes('bluesky')) return { cleanPlatform: 'bluesky', connectEndpoint: 'bluesky', formattedPlatform: 'Bluesky', isAds: false };
+    if (p.includes('telegram')) return { cleanPlatform: 'telegram', connectEndpoint: 'telegram', formattedPlatform: 'Telegram', isAds: false };
+    if (p.includes('discord')) return { cleanPlatform: 'discord', connectEndpoint: 'discord', formattedPlatform: 'Discord', isAds: false };
+    if (p.includes('slack')) return { cleanPlatform: 'slack', connectEndpoint: 'slack', formattedPlatform: 'Slack', isAds: false };
+    if (p.includes('reddit')) return { cleanPlatform: 'reddit', connectEndpoint: 'reddit', formattedPlatform: 'Reddit', isAds: false };
+
+    const clean = p.replace(/[^a-z0-9]/g, '') || 'facebook';
+    return { cleanPlatform: clean, connectEndpoint: clean, formattedPlatform: clean.charAt(0).toUpperCase() + clean.slice(1), isAds: false };
+  }
+
+  function getCanonicalZernioPlatform(platformName: string): string {
+    return getCanonicalZernioPlatformInfo(platformName).cleanPlatform;
   }
 
   // ---------------------------------------------------------------------------
@@ -1612,8 +1642,10 @@ function startServer() {
       return res.status(400).json({ error: 'Platform name is required (e.g. instagram, linkedin, twitter, whatsapp)' });
     }
 
-    const cleanPlatform = getCanonicalZernioPlatform(rawPlatform);
-    const formattedPlatform = cleanPlatform.charAt(0).toUpperCase() + cleanPlatform.slice(1);
+    const platformInfo = getCanonicalZernioPlatformInfo(rawPlatform);
+    const cleanPlatform = platformInfo.cleanPlatform;
+    const connectEndpoint = platformInfo.connectEndpoint;
+    const formattedPlatform = platformInfo.formattedPlatform;
     
     // Resolve user's Zernio profile ID
     let zernioProfileId: string | null = req.zernioProfileId || null;
@@ -1634,31 +1666,11 @@ function startServer() {
 
     let targetOAuthUrl: string | null = null;
 
-    // 1. Generate underlying OAuth consent URL in Headless Mode (headless=true)
-    try {
-      if (zernioProfileId && typeof zernio?.connect?.getConnectUrl === 'function') {
-        const connectRes = await zernio.connect.getConnectUrl({
-          path: { platform: cleanPlatform as any },
-          query: {
-            profileId: zernioProfileId,
-            redirect_url: callbackUrl,
-            headless: 'true',
-            reconnect: 'true',
-            prompt: 'consent',
-            force_reconnect: 'true'
-          } as any
-        });
-        targetOAuthUrl = (connectRes?.data as any)?.authUrl || (connectRes?.data as any)?.url || null;
-      }
-    } catch (err: any) {
-      console.warn(`[Rockyt Connect Gateway] Zernio SDK connect warning for ${cleanPlatform}:`, err.message);
-    }
-
-    // 2. Direct HTTP fallback if SDK returned null
-    if (!targetOAuthUrl && zernioProfileId) {
+    // 1. Direct HTTP request to official Zernio connect endpoint
+    if (zernioProfileId) {
       try {
         const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
-        const zernioRes = await fetch(`https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId)}&redirectUrl=${encodeURIComponent(callbackUrl)}&headless=true&reconnect=true&prompt=consent&force_reconnect=true&_ts=${Date.now()}`, {
+        const zernioRes = await fetch(`https://zernio.com/api/v1/connect/${connectEndpoint}?profileId=${encodeURIComponent(zernioProfileId)}&redirectUrl=${encodeURIComponent(callbackUrl)}&headless=true&reconnect=true&prompt=consent&force_reconnect=true&_ts=${Date.now()}`, {
           headers: {
             'Authorization': `Bearer ${apiKey}`
           }
@@ -1668,16 +1680,16 @@ function startServer() {
           targetOAuthUrl = zernioData.authUrl || zernioData.url || null;
         }
       } catch (httpErr: any) {
-        console.warn(`[Rockyt Connect Gateway] Zernio HTTP fetch warning for ${cleanPlatform}:`, httpErr.message);
+        console.warn(`[Rockyt Connect Gateway] Zernio HTTP fetch warning for ${connectEndpoint}:`, httpErr.message);
       }
     }
 
-    // 3. Fail gracefully if zernioProfileId could not be resolved
+    // 2. Fail gracefully if zernioProfileId could not be resolved
     if (!targetOAuthUrl) {
       if (!zernioProfileId) {
         return res.status(400).json({ error: 'Zernio profile ID could not be resolved for your account.' });
       }
-      targetOAuthUrl = `https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId)}&redirectUrl=${encodeURIComponent(callbackUrl)}&headless=true&reconnect=true&prompt=consent&force_reconnect=true`;
+      targetOAuthUrl = `https://zernio.com/api/v1/connect/${connectEndpoint}?profileId=${encodeURIComponent(zernioProfileId)}&redirectUrl=${encodeURIComponent(callbackUrl)}&headless=true&reconnect=true&prompt=consent&force_reconnect=true`;
     }
 
     // If client requested JSON response
@@ -1747,8 +1759,10 @@ function startServer() {
       return res.status(400).json({ error: 'Platform name is required (e.g. instagram, linkedin, x, whatsapp, tiktok)' });
     }
 
-    const cleanPlatform = getCanonicalZernioPlatform(platform);
-    const formattedPlatform = cleanPlatform.charAt(0).toUpperCase() + cleanPlatform.slice(1);
+    const platformInfo = getCanonicalZernioPlatformInfo(platform);
+    const cleanPlatform = platformInfo.cleanPlatform;
+    const connectEndpoint = platformInfo.connectEndpoint;
+    const formattedPlatform = platformInfo.formattedPlatform;
     
     // Resolve user's Zernio profile ID
     let zernioProfileId: string | null = req.zernioProfileId || null;
@@ -1795,95 +1809,38 @@ function startServer() {
       });
     }
 
-    // Deduct pass-through fee from user's wallet balance upon successful authentication
-    if (isPaidPlatform && supabase && req.user?.id) {
-      const newBalance = Math.max(0, currentBalance - requiredPassThroughFee);
-      try {
-        await supabase
-          .from('profiles')
-          .update({ wallet_balance: newBalance })
-          .eq('id', req.user.id);
-
-        await supabase
-          .from('wallet_transactions')
-          .insert([{
-            user_id: req.user.id,
-            amount: -requiredPassThroughFee,
-            type: 'deduction',
-            description: `X (Twitter) API Pass-Through Fee`,
-            balance_after: newBalance,
-            created_at: new Date().toISOString()
-          }]);
-      } catch (deductErr: any) {
-        console.warn('[POST /api/v1/accounts/connect] Balance deduction warning:', deductErr.message);
-      }
-    }
-
     const appBaseUrl = process.env.APP_BASE_URL || (req.headers.origin || `https://${req.headers.host}`);
     const clientRedirectUrl = redirectUrl || `${appBaseUrl}/dashboard?account_connected=true&platform=${encodeURIComponent(cleanPlatform)}`;
     const callbackUrl = `${appBaseUrl}/oauth/callback?platform=${encodeURIComponent(cleanPlatform)}&returnTo=${encodeURIComponent(clientRedirectUrl)}`;
 
     let targetOAuthUrl: string | null = null;
 
-    // 1. Attempt Zernio SDK connect URL generation with Headless mode
-    try {
-      if (zernioProfileId && typeof zernio?.connect?.getConnectUrl === 'function') {
-        const connectRes = await zernio.connect.getConnectUrl({
-          path: { platform: cleanPlatform as any },
-          query: {
-            profileId: zernioProfileId,
-            redirect_url: callbackUrl,
-            headless: 'true',
-            reconnect: 'true',
-            prompt: 'consent',
-            force_reconnect: 'true'
-          } as any
-        });
-        targetOAuthUrl = (connectRes?.data as any)?.authUrl || (connectRes?.data as any)?.url || null;
-      }
-    } catch (err: any) {
-      console.warn(`[POST /api/v1/accounts/connect] Zernio SDK connect warning for ${cleanPlatform}:`, err.message);
-    }
-
-    // 2. Direct HTTP fallback to Zernio API if SDK returned null
-    if (!targetOAuthUrl && zernioProfileId) {
+    // 1. Direct HTTP request to official Zernio connect endpoint
+    if (zernioProfileId) {
       try {
         const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
         if (apiKey) {
-          const zernioRes = await fetch(`https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId)}&redirect_url=${encodeURIComponent(callbackUrl)}&headless=true&reconnect=true&prompt=consent&force_reconnect=true&_ts=${Date.now()}`, {
+          const zernioRes = await fetch(`https://zernio.com/api/v1/connect/${connectEndpoint}?profileId=${encodeURIComponent(zernioProfileId)}&redirect_url=${encodeURIComponent(callbackUrl)}&headless=true&reconnect=true&prompt=consent&force_reconnect=true&_ts=${Date.now()}`, {
             headers: {
               'Authorization': `Bearer ${apiKey}`
             }
           });
-          
-          if (!zernioRes.ok) {
-            const errData = await zernioRes.json().catch(() => ({}));
-            if (zernioRes.status === 402 || errData.code === 'PAYMENT_REQUIRED' || errData.reason === 'twitter_passthrough') {
-              return res.status(402).json({
-                error: errData.error || 'X (Twitter) requires an active wallet balance due to API pass-through costs. Please top up your Rockyt wallet.',
-                code: 'PAYMENT_REQUIRED',
-                reason: 'twitter_passthrough',
-                requiredBalance: requiredPassThroughFee,
-                currentBalance: currentBalance,
-                requiresDeposit: true
-              });
-            }
-          } else {
+          if (zernioRes.ok) {
             const zernioData = await zernioRes.json();
             targetOAuthUrl = zernioData.authUrl || zernioData.url || null;
           }
         }
       } catch (httpErr: any) {
-        console.warn(`[POST /api/v1/accounts/connect] Zernio HTTP fetch warning for ${cleanPlatform}:`, httpErr.message);
+        console.warn(`[POST /api/v1/accounts/connect] Zernio HTTP fetch warning for ${connectEndpoint}:`, httpErr.message);
       }
     }
 
-    // 3. Fail gracefully if zernioProfileId could not be resolved
+    // 2. Fail gracefully if zernioProfileId could not be resolved
     if (!targetOAuthUrl) {
       if (!zernioProfileId) {
         return res.status(400).json({ error: 'Zernio profile ID could not be resolved for your account.' });
       }
-      targetOAuthUrl = `https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId)}&redirect_url=${encodeURIComponent(callbackUrl)}&headless=true&reconnect=true&prompt=consent&force_reconnect=true`;
+      targetOAuthUrl = `https://zernio.com/api/v1/connect/${connectEndpoint}?profileId=${encodeURIComponent(zernioProfileId)}&redirect_url=${encodeURIComponent(callbackUrl)}&headless=true&reconnect=true&prompt=consent&force_reconnect=true`;
     }
 
     // If user has balance for paid platform, charge pass-through fee from wallet on successful URL generation

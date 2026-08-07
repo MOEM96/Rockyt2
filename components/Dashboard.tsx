@@ -110,22 +110,48 @@ interface AnalyticsData {
 }
 
 const allConnectPlatforms = [
-  { name: 'Instagram', icon: '📸', desc: 'Auto-publish reels, posts & comment-to-DM funnels', category: 'Social' },
-  { name: 'X / Twitter', icon: '𝕏', desc: 'Post tweets, threads & automate mentions ($1.00 pass-through)', category: 'Social' },
-  { name: 'LinkedIn', icon: '💼', desc: 'Share posts & articles to personal and org pages', category: 'Social' },
-  { name: 'TikTok', icon: '🎵', desc: 'Publish video content & track video analytics', category: 'Social' },
-  { name: 'WhatsApp Business', icon: '💬', desc: 'Automate WhatsApp messages, templates & AI bots', category: 'Messaging' },
-  { name: 'Meta Ads Manager', icon: '🎯', desc: 'Manage Facebook & Instagram ad campaigns & ROAS', category: 'Ads' },
-  { name: 'Google Ads', icon: '🔍', desc: 'Track & optimize Google Search & Display ad spend', category: 'Ads' },
-  { name: 'Telegram Bot', icon: '✈️', desc: 'Send automated Telegram channel messages & alerts', category: 'Messaging' },
-  { name: 'Discord Webhook', icon: '🎮', desc: 'Post Discord channel announcements & webhooks', category: 'Messaging' },
-  { name: 'Slack App', icon: '🪟', desc: 'Broadcast updates to Slack channels & workspaces', category: 'Messaging' },
-  { name: 'Threads', icon: '🧵', desc: 'Publish Threads posts & track engagement', category: 'Social' },
-  { name: 'Bluesky', icon: '🦋', desc: 'Post to decentralized Bluesky network', category: 'Social' },
-  { name: 'Pinterest', icon: '📌', desc: 'Publish Pins & boards automatically', category: 'Social' },
-  { name: 'YouTube', icon: '▶️', desc: 'Upload Shorts & manage video metadata', category: 'Social' },
-  { name: 'Snapchat', icon: '👻', desc: 'Publish Snapchat stories & spotlight clips', category: 'Social' },
-  { name: 'Google Business', icon: '🏪', desc: 'Publish Google Maps updates & customer reviews', category: 'Business' }
+  // --- PLATFORMS ---
+  { id: 'twitter', name: 'Twitter/X', icon: '𝕏', desc: 'Post tweets, threads & automate mentions ($1.00 pass-through)', category: 'Social' },
+  { id: 'instagram', name: 'Instagram', icon: '📸', desc: 'Auto-publish reels, posts & comment-to-DM funnels', category: 'Social' },
+  { id: 'tiktok', name: 'TikTok', icon: '🎵', desc: 'Publish video content & track video analytics', category: 'Social' },
+  { id: 'whatsapp', name: 'WhatsApp', icon: '💬', desc: 'Automate WhatsApp messages, templates & AI bots', category: 'Messaging' },
+  { id: 'linkedin', name: 'LinkedIn', icon: '💼', desc: 'Share posts & articles to personal and org pages', category: 'Social' },
+  { id: 'facebook', name: 'Facebook', icon: '📘', desc: 'Publish Facebook page posts, reels & manage comments', category: 'Social' },
+  { id: 'youtube', name: 'YouTube', icon: '▶️', desc: 'Upload Shorts & manage video metadata', category: 'Social' },
+  { id: 'threads', name: 'Threads', icon: '🧵', desc: 'Publish Threads posts & track engagement', category: 'Social' },
+  { id: 'reddit', name: 'Reddit', icon: '🤖', desc: 'Post to subreddits, manage flairs & track karma', category: 'Social' },
+  { id: 'pinterest', name: 'Pinterest', icon: '📌', desc: 'Publish Pins & boards automatically', category: 'Social' },
+  { id: 'bluesky', name: 'Bluesky', icon: '🦋', desc: 'Post to decentralized Bluesky network', category: 'Social' },
+  { id: 'telegram', name: 'Telegram', icon: '✈️', desc: 'Send automated Telegram channel messages & alerts', category: 'Messaging' },
+  { id: 'snapchat', name: 'Snapchat', icon: '👻', desc: 'Publish Snapchat stories & spotlight clips', category: 'Social' },
+  { id: 'googlebusiness', name: 'Google Business', icon: '🏪', desc: 'Publish Google Maps updates & customer reviews', category: 'Business' },
+  { id: 'discord', name: 'Discord', icon: '🎮', desc: 'Post Discord channel announcements & webhooks', category: 'Messaging' },
+  { id: 'slack', name: 'Slack', icon: '🪟', desc: 'Broadcast updates to Slack channels & workspaces', category: 'Messaging' },
+
+  // --- ADS NETWORKS ---
+  { id: 'meta-ads', name: 'Meta Ads', icon: '🎯', desc: 'Manage Facebook & Instagram ad campaigns, ROAS & ad sets', category: 'Ads' },
+  { id: 'google-ads', name: 'Google Ads', icon: '🔍', desc: 'Track & optimize Google Search, Display & Performance Max ad spend', category: 'Ads' },
+  { id: 'linkedin-ads', name: 'LinkedIn Ads', icon: '📊', desc: 'Manage LinkedIn sponsored content & B2B ad campaigns', category: 'Ads' },
+  { id: 'tiktok-ads', name: 'TikTok Ads', icon: '🚀', desc: 'Manage TikTok video ads & Spark Ads campaigns', category: 'Ads' },
+  { id: 'pinterest-ads', name: 'Pinterest Ads', icon: '🎨', desc: 'Manage Pinterest promoted pins & shopping ad campaigns', category: 'Ads' },
+  { id: 'x-ads', name: 'X Ads', icon: '📈', desc: 'Manage X/Twitter promoted tweets & audience campaigns', category: 'Ads' },
+  { id: 'openai-ads', name: 'OpenAI Ads', icon: '🤖', desc: 'Connect OpenAI ad campaigns & API integrations', category: 'Ads' },
+
+  // --- APIS ---
+  { id: 'posting-api', name: 'Posting API', icon: '⚡', desc: 'REST API for cross-platform post scheduling & publishing', category: 'APIs' },
+  { id: 'comments-api', name: 'Comments API', icon: '💬', desc: 'Automated comment fetching, moderation & replies API', category: 'APIs' },
+  { id: 'messaging-api', name: 'Messaging API', icon: '📬', desc: 'Unified Direct Message & Chat Inbox API', category: 'APIs' },
+  { id: 'analytics-api', name: 'Analytics API', icon: '📊', desc: 'Real-time multi-platform reach & engagement metrics API', category: 'APIs' },
+  { id: 'ads-api', name: 'Ads API', icon: '🎯', desc: 'Unified Ad Campaign creation & performance metrics API', category: 'APIs' },
+  { id: 'comment-to-dm', name: 'Comment to DM', icon: '🔄', desc: 'Automatic DM funnel trigger on keyword comments', category: 'APIs' },
+
+  // --- FOR AGENTS ---
+  { id: 'ai-agents', name: 'AI Agents', icon: '🤖', desc: 'Autonomous AI agent execution framework & tools', category: 'Agents' },
+  { id: 'claude-code', name: 'Claude Code', icon: '🧠', desc: 'Anthropic Claude Code integration & agent tools', category: 'Agents' },
+  { id: 'cursor', name: 'Cursor', icon: '🖱️', desc: 'Cursor IDE AI agent integration & extension', category: 'Agents' },
+  { id: 'codex', name: 'Codex', icon: '⚡', desc: 'OpenAI Codex code generation & agent execution', category: 'Agents' },
+  { id: 'openclaw', name: 'OpenClaw', icon: '🐾', desc: 'OpenClaw web automation & scraping agent', category: 'Agents' },
+  { id: 'hermes', name: 'Hermes', icon: '🕊️', desc: 'Hermes autonomous communication & workflow agent', category: 'Agents' }
 ];
 
 const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOut }) => {
