@@ -52,6 +52,15 @@ function startServer() {
   app.use('/api/v1/keys', authLimiter);
   const zernio = new Zernio({ apiKey: process.env.ROCKYT_API_KEY || process.env.ZERNIO_API_KEY || "dummy_dev_key" });
 
+  const pendingHeadlessSessions = new Map<string, {
+    profileId?: string;
+    tempToken?: string;
+    userProfile?: any;
+    platform?: string;
+    step?: string;
+    createdAt: number;
+  }>();
+
   // ─── Static frontend: dist (Vite SPA) & fallback to cloned_site ───────────────────────
   const DIST_DIR = path.join(process.cwd(), 'dist');
   const CLONED_DIR = fs.existsSync(DIST_DIR) ? DIST_DIR : path.join(process.cwd(), 'cloned_site');
@@ -937,15 +946,34 @@ function startServer() {
   }));
 
   app.get('/oauth/callback', asyncHandler(async (req: any, res: any) => {
-    const { profileId, accountId, platform, username, returnTo, step, pendingDataToken, tempToken, connect_token } = req.query;
+    const { profileId, accountId, platform, username, returnTo, step, pendingDataToken, tempToken, userProfile, connect_token } = req.query;
     const cleanPlatform = platform ? getCanonicalZernioPlatform(platform) : 'Social Channel';
     const formattedPlatform = cleanPlatform.charAt(0).toUpperCase() + cleanPlatform.slice(1);
 
     // If headless mode returned a secondary selection step (e.g. select_page, select_board, select_location)
-    if (step || pendingDataToken || tempToken) {
+    if (step || pendingDataToken || tempToken || userProfile) {
       const stepParam = step || 'select_page';
-      const tokenParam = pendingDataToken || tempToken || connect_token || '';
-      const redirectUrl = `/dashboard?step=${encodeURIComponent(stepParam)}&pendingDataToken=${encodeURIComponent(tokenParam)}&platform=${encodeURIComponent(formattedPlatform)}&profileId=${encodeURIComponent(profileId || '')}`;
+      const tokenKey = (pendingDataToken || connect_token || `pdt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`) as string;
+      
+      let decodedUserProfile = null;
+      if (userProfile) {
+        try {
+          decodedUserProfile = typeof userProfile === 'string' ? JSON.parse(decodeURIComponent(userProfile)) : userProfile;
+        } catch {
+          decodedUserProfile = userProfile;
+        }
+      }
+
+      pendingHeadlessSessions.set(tokenKey, {
+        profileId: profileId ? String(profileId) : undefined,
+        tempToken: tempToken ? String(tempToken) : undefined,
+        userProfile: decodedUserProfile,
+        platform: cleanPlatform,
+        step: String(stepParam),
+        createdAt: Date.now()
+      });
+
+      const redirectUrl = `/dashboard?step=${encodeURIComponent(stepParam)}&pendingDataToken=${encodeURIComponent(tokenKey)}&platform=${encodeURIComponent(formattedPlatform)}&profileId=${encodeURIComponent(profileId || '')}`;
       return res.redirect(redirectUrl);
     }
 
@@ -990,16 +1018,60 @@ function startServer() {
     const cleanPlatform = getCanonicalZernioPlatform(rawPlatform);
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
 
+    let session = pendingDataToken ? pendingHeadlessSessions.get(String(pendingDataToken)) : null;
+    let targetTempToken = (tempToken || session?.tempToken) as string | undefined;
+    let targetProfileId = (profileId || session?.profileId || req.zernioProfileId) as string | undefined;
+
     try {
+      if (cleanPlatform === 'facebook') {
+        if (targetTempToken && targetProfileId) {
+          try {
+            const fbRes = await (zernio.connect as any).facebook.listFacebookPages({
+              query: { profileId: targetProfileId, tempToken: targetTempToken }
+            });
+            const pages = fbRes.data?.pages || fbRes.data?.options || fbRes.data || [];
+            return res.json({ success: true, options: pages });
+          } catch {}
+        }
+        const fbResDirect = await fetch(`https://zernio.com/api/v1/connect/facebook/select-page?profileId=${encodeURIComponent(targetProfileId || '')}&tempToken=${encodeURIComponent(targetTempToken || '')}`, {
+          headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        if (fbResDirect.ok) {
+          const fbData = await fbResDirect.json();
+          return res.json({ success: true, options: fbData.pages || fbData.options || [] });
+        }
+      }
+
+      if (cleanPlatform === 'pinterest') {
+        const pinRes = await fetch(`https://zernio.com/api/v1/connect/pinterest/select-board?profileId=${encodeURIComponent(targetProfileId || '')}&tempToken=${encodeURIComponent(targetTempToken || '')}`, {
+          headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        if (pinRes.ok) {
+          const pinData = await pinRes.json();
+          return res.json({ success: true, options: pinData.boards || pinData.options || [] });
+        }
+      }
+
+      if (cleanPlatform === 'linkedin') {
+        const liRes = await fetch(`https://zernio.com/api/v1/connect/linkedin/organizations?profileId=${encodeURIComponent(targetProfileId || '')}&tempToken=${encodeURIComponent(targetTempToken || '')}`, {
+          headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        if (liRes.ok) {
+          const liData = await liRes.json();
+          return res.json({ success: true, options: liData.organizations || liData.options || [] });
+        }
+      }
+
       if (pendingDataToken) {
-        const pendingRes = await fetch(`https://zernio.com/api/v1/connect/pending-data?pendingDataToken=${encodeURIComponent(pendingDataToken)}`, {
+        const pendingRes = await fetch(`https://zernio.com/api/v1/connect/pending-data?pendingDataToken=${encodeURIComponent(String(pendingDataToken))}`, {
           headers: { 'Authorization': `Bearer ${apiKey}` }
         });
         if (pendingRes.ok) {
           const pData = await pendingRes.json();
-          return res.json({ success: true, options: pData.options || pData.pages || pData.boards || [], raw: pData });
+          return res.json({ success: true, options: pData.options || pData.pages || pData.boards || pData.locations || [], raw: pData });
         }
       }
+
       return res.json({ success: true, options: [] });
     } catch (err: any) {
       console.warn('[selection-options] Error fetching options:', err.message);
@@ -1013,6 +1085,59 @@ function startServer() {
     const { pendingDataToken, selectedId, selectedName, profileId } = req.body || {};
     const cleanPlatform = getCanonicalZernioPlatform(rawPlatform);
     const formattedPlatform = cleanPlatform.charAt(0).toUpperCase() + cleanPlatform.slice(1);
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+
+    let session = pendingDataToken ? pendingHeadlessSessions.get(String(pendingDataToken)) : null;
+    let targetTempToken = session?.tempToken;
+    let targetProfileId = profileId || session?.profileId || req.zernioProfileId;
+    let targetUserProfile = session?.userProfile;
+
+    const appBaseUrl = process.env.APP_BASE_URL || (req.headers.origin || `https://${req.headers.host}`);
+    const callbackUrl = `${appBaseUrl}/oauth/callback?platform=${encodeURIComponent(cleanPlatform)}`;
+
+    let createdAccountId: string | undefined = undefined;
+
+    if (cleanPlatform === 'facebook' && targetTempToken && targetProfileId) {
+      try {
+        const selectRes = await (zernio.connect as any).facebook.selectFacebookPage({
+          body: {
+            profileId: targetProfileId,
+            pageId: selectedId,
+            tempToken: targetTempToken,
+            userProfile: targetUserProfile,
+            redirect_url: callbackUrl
+          }
+        });
+        createdAccountId = selectRes.data?.account?.accountId || selectRes.data?.accountId;
+      } catch (err: any) {
+        console.warn('[select-option] Facebook SDK select warning:', err.message);
+      }
+    }
+
+    if (!createdAccountId && apiKey) {
+      try {
+        const directRes = await fetch(`https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}/select-page`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+          },
+          body: JSON.stringify({
+            profileId: targetProfileId,
+            pageId: selectedId,
+            tempToken: targetTempToken,
+            userProfile: targetUserProfile,
+            pendingDataToken
+          })
+        });
+        if (directRes.ok) {
+          const directData = await directRes.json();
+          createdAccountId = directData.account?.accountId || directData.accountId || directData.id;
+        }
+      } catch (err: any) {
+        console.warn('[select-option] Direct POST fetch warning:', err.message);
+      }
+    }
 
     if (supabase && req.user?.id) {
       try {
@@ -1021,14 +1146,18 @@ function startServer() {
           p_platform: formattedPlatform,
           p_username: selectedName ? `@${selectedName.toLowerCase().replace(/\s+/g, '_')}` : `@${cleanPlatform}_account`,
           p_profile_name: selectedName || `${formattedPlatform} Account`,
-          p_account_id: selectedId ? `acc_${selectedId}` : `acc_${Date.now()}`
+          p_account_id: createdAccountId ? `acc_${createdAccountId}` : (selectedId ? `acc_${selectedId}` : `acc_${Date.now()}`)
         });
       } catch (rpcErr: any) {
         console.warn('[select-option] save_connected_account RPC warning:', rpcErr.message);
       }
     }
 
-    return res.json({ success: true, platform: formattedPlatform, message: `${formattedPlatform} selection saved successfully!` });
+    if (pendingDataToken) {
+      pendingHeadlessSessions.delete(String(pendingDataToken));
+    }
+
+    return res.json({ success: true, platform: formattedPlatform, accountId: createdAccountId, message: `${formattedPlatform} selection saved successfully!` });
   }));
 
   // ─── Connected Accounts Database API ───
