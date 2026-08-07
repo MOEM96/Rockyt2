@@ -30,7 +30,16 @@ function startServer() {
       req.rawBody = buf;
     }
   }));
-  app.use(express.urlencoded({ extended: true }));
+  // Normalize Vercel serverless rewritten API URLs
+  app.use((req, _res, next) => {
+    const rawPath = req.headers['x-matched-path'] || req.headers['x-invoke-path'] || req.headers['x-forwarded-uri'];
+    if (rawPath && typeof rawPath === 'string' && rawPath.startsWith('/api') && !req.url.startsWith(rawPath.split('?')[0])) {
+      const cleanPath = rawPath.split('?')[0];
+      const queryStr = req.url.includes('?') ? '?' + req.url.split('?')[1] : '';
+      req.url = cleanPath + queryStr;
+    }
+    next();
+  });
 
   // Rate limiting for auth and API key creation
   const authLimiter = rateLimit({
@@ -2394,16 +2403,24 @@ function startServer() {
       url.searchParams.set('profileId', req.zernioProfileId);
     }
 
-    const zernioRes = await fetch(url, {
-      method: req.method,
-      headers: {
-        Authorization: `Bearer ${process.env.ZERNIO_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: ['GET', 'HEAD'].includes(req.method) ? undefined : JSON.stringify(req.body)
-    });
-    const data = await zernioRes.json();
-    res.status(zernioRes.status).json(data);
+    try {
+      const zernioRes = await fetch(url, {
+        method: req.method,
+        headers: {
+          Authorization: `Bearer ${process.env.ZERNIO_API_KEY || ''}`,
+          'Content-Type': 'application/json'
+        },
+        body: ['GET', 'HEAD'].includes(req.method) ? undefined : JSON.stringify(req.body)
+      });
+      if (zernioRes.ok) {
+        const data = await zernioRes.json().catch(() => ({}));
+        return res.status(zernioRes.status).json(data);
+      }
+    } catch (proxyErr: any) {
+      console.warn(`[Proxy Fallback] Failed to fetch ${url}:`, proxyErr?.message || proxyErr);
+    }
+
+    return res.status(404).json({ error: 'Endpoint not found or service unavailable' });
   }));
 
   // Fallback for unhandled /api/* calls (preventing HTML 404s on client fetch calls)
