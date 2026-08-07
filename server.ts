@@ -172,22 +172,20 @@ function startServer() {
     res.json({ success: true });
   });
 
-  app.get('/api/auth/me', asyncHandler(async (req: any, res: any) => {
-    let headerToken = req.headers.authorization?.replace(/^Bearer\s+/i, '').trim();
-    if (headerToken === 'undefined' || headerToken === 'null' || headerToken === '[object Object]') {
-      headerToken = '';
+  function safeArray(val: any): any[] {
+    if (Array.isArray(val)) return val;
+    if (typeof val === 'string') {
+      try {
+        const parsed = JSON.parse(val);
+        if (Array.isArray(parsed)) return parsed;
+      } catch {}
     }
-    const token = headerToken || req.cookies?.rockyt_session;
-    if (!token) {
-      return res.status(401).json({ error: 'Unauthenticated' });
-    }
-    const decoded = decodeSupabaseJWT(token);
-    if (!decoded) {
-      return res.status(401).json({ error: 'Invalid or expired token' });
-    }
+    return [];
+  }
 
-    const profile = await ensureUserProfile(decoded);
-    const userId = profile?.id || decoded.id;
+  app.get('/api/auth/me', combinedAuth, asyncHandler(async (req: any, res: any) => {
+    const profile = await ensureUserProfile(req.user);
+    const userId = profile?.id || req.user.id;
 
     let apiKey: string | null = null;
     if (supabase && userId) {
@@ -220,10 +218,10 @@ function startServer() {
     }
 
     return res.json({
-      user: { id: decoded.id, email: decoded.email },
+      user: { id: req.user.id, email: req.user.email },
       profile,
       apiKey,
-      zernioProfileId: profile?.zernio_profile_id || null
+      zernioProfileId: profile?.zernio_profile_id || req.zernioProfileId || null
     });
   }));
 
@@ -2168,13 +2166,23 @@ function startServer() {
       } catch (e: any) {}
     }
 
-    let profile = dbData?.profile || await ensureUserProfile(req.user);
-    let accounts: any[] = dbData?.accounts || [];
-    let apiKeys: any[] = dbData?.apiKeys || [];
-    let logs: any[] = dbData?.logs || [];
-    let walletTxns: any[] = dbData?.walletTransactions || [];
-    let webhooks: any[] = dbData?.webhooks || [];
-    let posts: any[] = dbData?.posts || [];
+    let profile: any = null;
+    if (dbData?.profile) {
+      if (typeof dbData.profile === 'object') profile = dbData.profile;
+      else if (typeof dbData.profile === 'string') {
+        try { profile = JSON.parse(dbData.profile); } catch {}
+      }
+    }
+    if (!profile) {
+      profile = await ensureUserProfile(req.user);
+    }
+
+    let accounts: any[] = safeArray(dbData?.accounts);
+    let apiKeys: any[] = safeArray(dbData?.apiKeys);
+    let logs: any[] = safeArray(dbData?.logs);
+    let walletTxns: any[] = safeArray(dbData?.walletTransactions);
+    let webhooks: any[] = safeArray(dbData?.webhooks);
+    let posts: any[] = safeArray(dbData?.posts);
 
     // Fetch real-time connected social accounts directly from Zernio API (Primary Source of Truth)
     let zernioAccounts: any[] = [];
