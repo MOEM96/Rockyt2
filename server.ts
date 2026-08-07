@@ -837,8 +837,8 @@ function startServer() {
         .order('created_at', { ascending: false });
 
       if (error) {
-        console.error('Error fetching user API keys:', error.message);
-        return res.status(500).json({ error: error.message });
+        console.warn('Error fetching user API keys:', error.message);
+        return res.json([]);
       }
 
       res.json(data || []);
@@ -1013,7 +1013,7 @@ function startServer() {
           .select()
           .single();
 
-        if (updErr) return res.status(500).json({ error: updErr.message });
+        if (updErr) return res.json({ success: false, error: updErr.message });
         return res.json({ success: true, account: updated });
       } else {
         const { data: inserted, error: insErr } = await supabase
@@ -1028,7 +1028,7 @@ function startServer() {
           .select()
           .single();
 
-        if (insErr) return res.status(500).json({ error: insErr.message });
+        if (insErr) return res.json({ success: false, error: insErr.message });
         return res.json({ success: true, account: inserted });
       }
     }
@@ -1636,7 +1636,7 @@ function startServer() {
   }));
 
   app.post('/api/v1/webhooks', supabaseAuth, asyncHandler(async (req: any, res: any) => {
-    const { url, events, name } = req.body;
+    const { url, events, name } = req.body || {};
     if (!url) return res.status(400).json({ error: 'Webhook endpoint URL is required' });
     const secret = `whsec_${Math.random().toString(36).substring(2)}${Date.now().toString(36)}`;
     const newWebhook = {
@@ -1671,7 +1671,7 @@ function startServer() {
   // Connected Accounts Toggle & Disconnect Endpoints
   // ---------------------------------------------------------------------------
   app.post(['/api/v1/accounts/toggle', '/api/v1/accounts/disconnect'], supabaseAuth, asyncHandler(async (req: any, res: any) => {
-    const { id, platform, status } = req.body;
+    const { id, platform, status } = req.body || {};
     const userId = req.user?.id || '00000000-0000-0000-0000-000000000000';
 
     if (status === 'disconnected' || !status) {
