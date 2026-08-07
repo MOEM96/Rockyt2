@@ -139,6 +139,9 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const [walletTxns, setWalletTxns] = useState<WalletTransactionRow[]>([]);
   const [webhooks, setWebhooks] = useState<WebhookItem[]>([]);
   const [posts, setPosts] = useState<PostItem[]>([]);
+  const [conversations, setConversations] = useState<any[]>([]);
+  const [adCampaigns, setAdCampaigns] = useState<any[]>([]);
+  const [teamMembers, setTeamMembers] = useState<any[]>([]);
 
   // UI Modals & Filters
   const [showNewConnectionModal, setShowNewConnectionModal] = useState<boolean>(false);
@@ -168,6 +171,16 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const [checkoutSuccessMsg, setCheckoutSuccessMsg] = useState<string | null>(null);
   const [overlayCheckoutUrl, setOverlayCheckoutUrl] = useState<string | null>(null);
   const [connectingPlatform, setConnectingPlatform] = useState<string | null>(null);
+  const [secondarySelectionData, setSecondarySelectionData] = useState<{
+    platform: string;
+    step: string;
+    pendingDataToken: string;
+    options: Array<{ id: string; name: string }>;
+    loading: boolean;
+    selectedId?: string;
+    selectedName?: string;
+  } | null>(null);
+  const [isSavingSelection, setIsSavingSelection] = useState<boolean>(false);
   const [showTopUpModal, setShowTopUpModal] = useState<boolean>(false);
   const [topUpModalData, setTopUpModalData] = useState<{ platform: string; requiredBalance: number; currentBalance: number } | null>(null);
 
@@ -367,15 +380,163 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     }
   };
 
+  const fetchPostsData = async () => {
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch('/api/v1/user/posts', { headers });
+      if (res.ok) {
+        const data = await safeFetchJson(res);
+        if (Array.isArray(data.posts)) setPosts(data.posts);
+      }
+    } catch (e) {}
+  };
+
+  const fetchAnalyticsData = async () => {
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch('/api/v1/analytics', { headers });
+      if (res.ok) {
+        const data = await safeFetchJson(res);
+        if (data.analytics) setAnalyticsData(data.analytics);
+      }
+    } catch (e) {}
+  };
+
+  const fetchInboxData = async () => {
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch('/api/v1/inbox/conversations', { headers });
+      if (res.ok) {
+        const data = await safeFetchJson(res);
+        if (Array.isArray(data.conversations)) setConversations(data.conversations);
+      }
+    } catch (e) {}
+  };
+
+  const fetchAdsData = async () => {
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch('/api/v1/ads', { headers });
+      if (res.ok) {
+        const data = await safeFetchJson(res);
+        if (Array.isArray(data.campaigns)) setAdCampaigns(data.campaigns);
+      }
+    } catch (e) {}
+  };
+
+  const fetchApiKeysData = async () => {
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch('/api/v1/keys', { headers });
+      if (res.ok) {
+        const data = await safeFetchJson(res);
+        if (Array.isArray(data.apiKeys)) setApiKeys(data.apiKeys);
+      }
+    } catch (e) {}
+  };
+
+  const fetchUsersData = async () => {
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch('/api/v1/users', { headers });
+      if (res.ok) {
+        const data = await safeFetchJson(res);
+        if (Array.isArray(data.users)) setTeamMembers(data.users);
+      }
+    } catch (e) {}
+  };
+
+  const fetchWebhooksData = async () => {
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch('/api/v1/webhooks', { headers });
+      if (res.ok) {
+        const data = await safeFetchJson(res);
+        if (Array.isArray(data.webhooks)) setWebhooks(data.webhooks);
+      }
+    } catch (e) {}
+  };
+
+  const fetchLogsData = async () => {
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch('/api/v1/logs', { headers });
+      if (res.ok) {
+        const data = await safeFetchJson(res);
+        if (Array.isArray(data.logs)) setLogs(data.logs);
+      }
+    } catch (e) {}
+  };
+
+  // Per-Tab Trigger: Automatically fetch live data when switching tabs
+  useEffect(() => {
+    switch (activeTab) {
+      case 'connections':
+        fetchConnectionsData();
+        break;
+      case 'posts':
+        fetchPostsData();
+        break;
+      case 'analytics':
+        fetchAnalyticsData();
+        break;
+      case 'inbox':
+        fetchInboxData();
+        break;
+      case 'ads':
+        fetchAdsData();
+        break;
+      case 'apikeys':
+        fetchApiKeysData();
+        break;
+      case 'users':
+        fetchUsersData();
+        break;
+      case 'webhooks':
+        fetchWebhooksData();
+        break;
+      case 'logs':
+        fetchLogsData();
+        break;
+      case 'settings':
+        fetchLiveData();
+        break;
+    }
+  }, [activeTab]);
+
   useEffect(() => {
     fetchLiveData();
 
-    // Query params check for OAuth callback completion
+    // Query params check for OAuth callback completion or secondary selection step
     const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('account_connected') === 'true' || urlParams.get('connected') === '1') {
-      const platform = urlParams.get('platform') || 'Social Channel';
-      setCheckoutSuccessMsg(`Successfully authenticated and connected your ${platform} account!`);
-      // Clean query string and refetch live data
+    const step = urlParams.get('step');
+    const pendingToken = urlParams.get('pendingDataToken');
+    const platform = urlParams.get('platform') || 'Social Channel';
+
+    if (step && pendingToken) {
+      setSecondarySelectionData({
+        platform,
+        step,
+        pendingDataToken: pendingToken,
+        options: [],
+        loading: true
+      });
+      fetch(`/api/v1/connect/${platform.toLowerCase()}/selection-options?pendingDataToken=${encodeURIComponent(pendingToken)}`)
+        .then(res => res.json())
+        .then(data => {
+          const opts = (data.options || []).map((o: any) => ({
+            id: o.id || o.pageId || o.boardId || o._id,
+            name: o.name || o.title || o.username || 'Selected Profile'
+          }));
+          setSecondarySelectionData(prev => prev ? { ...prev, options: opts, loading: false } : null);
+        })
+        .catch(err => {
+          console.warn('[Selection Options Fetch Error]:', err);
+          setSecondarySelectionData(prev => prev ? { ...prev, loading: false } : null);
+        });
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (urlParams.get('account_connected') === 'true' || urlParams.get('connected') === '1') {
+      setCheckoutSuccessMsg(`Successfully authenticated and connected your ${platform} account to Rockyt!`);
       window.history.replaceState({}, document.title, window.location.pathname);
       fetchLiveData();
     }
@@ -466,6 +627,35 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
       setCheckoutError(err.message || `Failed to connect ${platformName} account.`);
     } finally {
       setConnectingPlatform(null);
+    }
+  };
+
+  // Confirm Headless Secondary Selection
+  const handleConfirmSecondarySelection = async () => {
+    if (!secondarySelectionData?.selectedId) return;
+    setIsSavingSelection(true);
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch(`/api/v1/connect/${secondarySelectionData.platform.toLowerCase()}/select-option`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          pendingDataToken: secondarySelectionData.pendingDataToken,
+          selectedId: secondarySelectionData.selectedId,
+          selectedName: secondarySelectionData.selectedName
+        })
+      });
+      if (res.ok) {
+        setCheckoutSuccessMsg(`Successfully connected ${secondarySelectionData.selectedName || secondarySelectionData.platform} to Rockyt!`);
+        setSecondarySelectionData(null);
+        fetchLiveData();
+      } else {
+        throw new Error('Failed to save selection.');
+      }
+    } catch (err: any) {
+      setCheckoutError(err.message || 'Secondary selection failed.');
+    } finally {
+      setIsSavingSelection(false);
     }
   };
 
@@ -1188,22 +1378,46 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
               </div>
             </div>
 
-            {/* Empty State — No Messages Table Yet */}
-            <div className="bg-zinc-950 border border-white/10 rounded-lg p-12 text-center space-y-4">
-              <MessageSquare size={48} className="mx-auto text-white/15" />
-              <div>
-                <h3 className="font-bold text-base text-white">No messages yet</h3>
-                <p className="text-xs text-white/50 mt-2 max-w-md mx-auto leading-relaxed">
-                  Connect a social account with messaging capabilities (WhatsApp Business, Instagram, Facebook) to start receiving and managing messages from your unified inbox.
-                </p>
+            {conversations.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-zinc-950 border border-white/15 rounded-lg overflow-hidden min-h-[400px]">
+                <div className="border-r border-white/10 p-4 space-y-3">
+                  <h3 className="font-bold text-xs uppercase text-white/60 tracking-wider">Conversations</h3>
+                  <div className="space-y-2">
+                    {conversations.map(conv => (
+                      <div key={conv.id} className="p-3 bg-zinc-900/80 border border-white/10 rounded-lg cursor-pointer hover:border-brand transition-all">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-bold text-white">{conv.senderName || 'Customer'}</span>
+                          <span className="text-[10px] text-white/40">{conv.platform || 'DM'}</span>
+                        </div>
+                        <p className="text-[11px] text-white/60 truncate mt-1">{conv.lastMessage || 'Hello...'}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="md:col-span-2 p-6 flex flex-col justify-between">
+                  <div className="space-y-3">
+                    <span className="text-[10px] uppercase font-bold text-brand bg-brand/10 px-2 py-0.5 rounded">Active Thread</span>
+                    <p className="text-xs text-white/80 leading-relaxed">Select a conversation on the left to read messages and reply directly.</p>
+                  </div>
+                </div>
               </div>
-              <button
-                onClick={() => setShowNewConnectionModal(true)}
-                className="bg-brand text-white text-xs font-bold px-5 py-2.5 rounded shadow-glow uppercase flex items-center gap-2 mx-auto"
-              >
-                <Plus size={16} /> Connect Messaging Platform
-              </button>
-            </div>
+            ) : (
+              <div className="bg-zinc-950 border border-white/10 rounded-lg p-12 text-center space-y-4">
+                <MessageSquare size={48} className="mx-auto text-white/15" />
+                <div>
+                  <h3 className="font-bold text-base text-white">No messages yet</h3>
+                  <p className="text-xs text-white/50 mt-2 max-w-md mx-auto leading-relaxed">
+                    Connect a social account with messaging capabilities (WhatsApp Business, Instagram, Facebook) to start receiving and managing messages from your unified inbox.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowNewConnectionModal(true)}
+                  className="bg-brand text-white text-xs font-bold px-5 py-2.5 rounded shadow-glow uppercase flex items-center gap-2 mx-auto"
+                >
+                  <Plus size={16} /> Connect Messaging Platform
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -1215,22 +1429,38 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
               <p className="text-xs text-white/50 mt-1">Meta Ads, Google Ads, LinkedIn Ads &amp; TikTok Ads management</p>
             </div>
 
-            {/* Empty State — No Ad Campaigns Table Yet */}
-            <div className="bg-zinc-950 border border-white/10 rounded-lg p-12 text-center space-y-4">
-              <Megaphone size={48} className="mx-auto text-white/15" />
-              <div>
-                <h3 className="font-bold text-base text-white">No active ad campaigns</h3>
-                <p className="text-xs text-white/50 mt-2 max-w-md mx-auto leading-relaxed">
-                  Connect your Meta Ads Manager, Google Ads, or other advertising platform to view and manage campaign performance, spend, and ROAS from this dashboard.
-                </p>
+            {adCampaigns.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {adCampaigns.map(ad => (
+                  <div key={ad.id} className="bg-zinc-950 border border-white/15 rounded-lg p-5 space-y-3">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-white">{ad.name || 'Ad Campaign'}</span>
+                      <span className="bg-brand/20 text-brand px-2 py-0.5 rounded text-[10px] uppercase font-bold">{ad.platform}</span>
+                    </div>
+                    <div className="flex justify-between text-[11px] text-white/60">
+                      <span>Spend: ${ad.spend || 0}</span>
+                      <span>Budget: ${ad.budget || 0}</span>
+                    </div>
+                  </div>
+                ))}
               </div>
-              <button
-                onClick={() => setShowNewConnectionModal(true)}
-                className="bg-brand text-white text-xs font-bold px-5 py-2.5 rounded shadow-glow uppercase flex items-center gap-2 mx-auto"
-              >
-                <Plus size={16} /> Connect Ad Platform
-              </button>
-            </div>
+            ) : (
+              <div className="bg-zinc-950 border border-white/10 rounded-lg p-12 text-center space-y-4">
+                <Megaphone size={48} className="mx-auto text-white/15" />
+                <div>
+                  <h3 className="font-bold text-base text-white">No active ad campaigns</h3>
+                  <p className="text-xs text-white/50 mt-2 max-w-md mx-auto leading-relaxed">
+                    Connect your Meta Ads Manager, Google Ads, or other advertising platform to view and manage campaign performance, spend, and ROAS from this dashboard.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowNewConnectionModal(true)}
+                  className="bg-brand text-white text-xs font-bold px-5 py-2.5 rounded shadow-glow uppercase flex items-center gap-2 mx-auto"
+                >
+                  <Plus size={16} /> Connect Ad Platform
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -1358,14 +1588,16 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  <tr>
-                    <td className="p-3 font-bold text-white flex items-center gap-2">
-                      <img src={userAvatar} className="w-6 h-6 rounded-full" /> {userEmail}
-                    </td>
-                    <td className="p-3 text-emerald-400 font-bold">Owner / Admin</td>
-                    <td className="p-3 text-brand font-bold uppercase">{profile?.plan || 'Growth'}</td>
-                    <td className="p-3 text-white/50">{profile?.created_at ? new Date(profile.created_at).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : '—'}</td>
-                  </tr>
+                  {(teamMembers.length > 0 ? teamMembers : [{ id: '1', email: userEmail, role: 'Owner / Admin', plan: profile?.plan || 'Growth', created_at: profile?.created_at }]).map(u => (
+                    <tr key={u.id}>
+                      <td className="p-3 font-bold text-white flex items-center gap-2">
+                        <img src={userAvatar} className="w-6 h-6 rounded-full" /> {u.email}
+                      </td>
+                      <td className="p-3 text-emerald-400 font-bold">{u.role || 'Member'}</td>
+                      <td className="p-3 text-brand font-bold uppercase">{u.plan || profile?.plan || 'Growth'}</td>
+                      <td className="p-3 text-white/50">{u.created_at ? new Date(u.created_at).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : '—'}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -1572,6 +1804,85 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── MODAL: HEADLESS SECONDARY SELECTION ─── */}
+      {secondarySelectionData && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-zinc-950 border-2 border-brand/50 shadow-glow rounded-xl max-w-lg w-full p-6 relative space-y-4">
+            <div className="flex items-center justify-between border-b border-white/10 pb-4">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-brand bg-brand/10 px-2 py-0.5 rounded">
+                  Rockyt Connect
+                </span>
+                <h3 className="font-bold text-lg text-white mt-1">Select {secondarySelectionData.platform} Account</h3>
+                <p className="text-xs text-white/50">Choose which page or profile you want to link to your Rockyt dashboard</p>
+              </div>
+              <button onClick={() => setSecondarySelectionData(null)} className="text-white/60 hover:text-white">
+                <X size={20} />
+              </button>
+            </div>
+
+            {secondarySelectionData.loading ? (
+              <div className="py-8 flex flex-col items-center justify-center gap-3 text-white/60">
+                <Loader2 className="animate-spin text-brand" size={28} />
+                <p className="text-xs">Fetching available {secondarySelectionData.platform} options...</p>
+              </div>
+            ) : secondarySelectionData.options.length === 0 ? (
+              <div className="py-6 text-center space-y-3">
+                <p className="text-xs text-white/60">No additional profiles were found for this connection, or default profile was automatically assigned.</p>
+                <button
+                  onClick={() => {
+                    setCheckoutSuccessMsg(`Connected ${secondarySelectionData.platform} account to Rockyt!`);
+                    setSecondarySelectionData(null);
+                    fetchLiveData();
+                  }}
+                  className="w-full py-2.5 bg-brand text-black font-bold text-xs rounded-lg hover:brightness-110"
+                >
+                  Continue to Dashboard
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
+                  {secondarySelectionData.options.map(opt => (
+                    <div
+                      key={opt.id}
+                      onClick={() => setSecondarySelectionData(prev => prev ? { ...prev, selectedId: opt.id, selectedName: opt.name } : null)}
+                      className={`p-3 rounded-lg border cursor-pointer transition-all flex items-center justify-between ${
+                        secondarySelectionData.selectedId === opt.id
+                          ? 'bg-brand/15 border-brand text-white'
+                          : 'bg-zinc-900/80 border-white/10 hover:border-white/30 text-white/80'
+                      }`}
+                    >
+                      <div className="font-medium text-xs truncate max-w-[80%]">{opt.name}</div>
+                      {secondarySelectionData.selectedId === opt.id && (
+                        <CheckCircle2 size={16} className="text-brand flex-shrink-0" />
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="pt-2 flex gap-3">
+                  <button
+                    onClick={() => setSecondarySelectionData(null)}
+                    className="w-1/3 py-2.5 border border-white/20 text-white/80 hover:text-white rounded-lg text-xs font-semibold"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    disabled={!secondarySelectionData.selectedId || isSavingSelection}
+                    onClick={handleConfirmSecondarySelection}
+                    className="w-2/3 py-2.5 bg-brand text-black font-bold text-xs rounded-lg hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {isSavingSelection ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={14} />}
+                    Connect Selected Profile
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
