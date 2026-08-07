@@ -400,12 +400,16 @@ function startServer() {
           const profilesList = (listRes.data as any)?.profiles || (listRes.data as any) || [];
           
           if (Array.isArray(profilesList) && profilesList.length > 0) {
+            // 1st priority: Match exact email or existing zernio_profile_id
             const match = profilesList.find((p: any) => 
               (p.name && p.name.trim().toLowerCase() === cleanEmail) || 
               (p._id && p._id === profile.zernio_profile_id)
             );
             if (match?._id) {
               realZernioId = match._id;
+            } else if (profilesList.length === 1 && profilesList[0]?._id) {
+              // 2nd priority: If team has 1 profile, reuse it directly to prevent duplicates
+              realZernioId = profilesList[0]._id;
             }
           }
 
@@ -577,10 +581,11 @@ function startServer() {
           const { data: profileRow } = await query;
           if (profileRow) {
             req.user = { id: profileRow.id, email: profileRow.email };
-            req.zernioProfileId = profileRow.zernio_profile_id || null;
-            req.plan = profileRow.plan || 'Growth';
-            req.maxAccounts = getMaxAccountsForUser(profileRow);
-            req.connectedCount = profileRow.connected_accounts_count || 0;
+            const fullProfile = await ensureUserProfile(req.user);
+            req.zernioProfileId = fullProfile?.zernio_profile_id || profileRow.zernio_profile_id || null;
+            req.plan = fullProfile?.plan || profileRow.plan || 'Growth';
+            req.maxAccounts = getMaxAccountsForUser(fullProfile || profileRow);
+            req.connectedCount = fullProfile?.connected_accounts_count || profileRow.connected_accounts_count || 0;
             return next();
           }
         }
@@ -1609,9 +1614,12 @@ function startServer() {
       }
     }
 
-    // 3. Fallback URL
+    // 3. Fail gracefully if zernioProfileId could not be resolved
     if (!targetOAuthUrl) {
-      targetOAuthUrl = `https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId || 'default')}&redirectUrl=${encodeURIComponent(callbackUrl)}&headless=true&reconnect=true&prompt=consent&force_reconnect=true`;
+      if (!zernioProfileId) {
+        return res.status(400).json({ error: 'Zernio profile ID could not be resolved for your account.' });
+      }
+      targetOAuthUrl = `https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId)}&redirectUrl=${encodeURIComponent(callbackUrl)}&headless=true&reconnect=true&prompt=consent&force_reconnect=true`;
     }
 
     // If client requested JSON response
@@ -1812,9 +1820,12 @@ function startServer() {
       }
     }
 
-    // 3. Fallback direct OAuth initiation URL if SDK/HTTP did not return authUrl
+    // 3. Fail gracefully if zernioProfileId could not be resolved
     if (!targetOAuthUrl) {
-      targetOAuthUrl = `https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId || 'default')}&redirect_url=${encodeURIComponent(callbackUrl)}&headless=true&reconnect=true&prompt=consent&force_reconnect=true`;
+      if (!zernioProfileId) {
+        return res.status(400).json({ error: 'Zernio profile ID could not be resolved for your account.' });
+      }
+      targetOAuthUrl = `https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}?profileId=${encodeURIComponent(zernioProfileId)}&redirect_url=${encodeURIComponent(callbackUrl)}&headless=true&reconnect=true&prompt=consent&force_reconnect=true`;
     }
 
     // If user has balance for paid platform, charge pass-through fee from wallet on successful URL generation
