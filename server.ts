@@ -1869,13 +1869,24 @@ function startServer() {
     }
 
     // 1. Delete account from Zernio if accountId is passed
-    if (accountId && targetProfileId) {
-      const cleanAccId = accountId.replace(/^acc_/, '');
+    if (accountId) {
+      const cleanAccId = String(accountId).replace(/^acc_/, '');
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+
+      if (apiKey && cleanAccId && cleanAccId !== 'disconnect') {
+        try {
+          await fetch(`https://zernio.com/api/v1/accounts/${encodeURIComponent(cleanAccId)}?profileId=${encodeURIComponent(targetProfileId || '')}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${apiKey}` }
+          });
+        } catch (httpDelErr: any) {
+          console.warn('[disconnectSocialAccount] Zernio HTTP DELETE warning:', httpDelErr.message);
+        }
+      }
+
       try {
         if (typeof (zernio.accounts as any).deleteAccount === 'function') {
-          await (zernio.accounts as any).deleteAccount({ path: { id: cleanAccId } });
-        } else if (typeof (zernio.accounts as any).disconnectAccount === 'function') {
-          await (zernio.accounts as any).disconnectAccount({ path: { id: cleanAccId } });
+          await (zernio.accounts as any).deleteAccount({ path: { accountId: cleanAccId, id: cleanAccId } });
         }
       } catch (zErr: any) {
         console.warn('[disconnectSocialAccount] Zernio deleteAccount warning:', zErr.message);
