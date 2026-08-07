@@ -175,6 +175,9 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     platform: string;
     step: string;
     pendingDataToken: string;
+    tempToken?: string;
+    userProfile?: any;
+    profileId?: string;
     options: Array<{ id: string; name: string }>;
     loading: boolean;
     selectedId?: string;
@@ -511,29 +514,55 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     const urlParams = new URLSearchParams(window.location.search);
     const step = urlParams.get('step');
     const pendingToken = urlParams.get('pendingDataToken');
+    const tempToken = urlParams.get('tempToken');
+    const profileId = urlParams.get('profileId');
+    const userProfileStr = urlParams.get('userProfile');
     const platform = urlParams.get('platform') || 'Social Channel';
 
-    if (step && pendingToken) {
+    let parsedUserProfile: any = null;
+    if (userProfileStr) {
+      try {
+        parsedUserProfile = JSON.parse(decodeURIComponent(userProfileStr));
+      } catch {
+        parsedUserProfile = userProfileStr;
+      }
+    }
+
+    if (step && (pendingToken || tempToken)) {
       setSecondarySelectionData({
         platform,
         step,
-        pendingDataToken: pendingToken,
+        pendingDataToken: pendingToken || '',
+        tempToken: tempToken || undefined,
+        userProfile: parsedUserProfile,
+        profileId: profileId || undefined,
         options: [],
         loading: true
       });
-      fetch(`/api/v1/connect/${platform.toLowerCase()}/selection-options?pendingDataToken=${encodeURIComponent(pendingToken)}`)
-        .then(res => res.json())
-        .then(data => {
-          const opts = (data.options || []).map((o: any) => ({
-            id: o.id || o.pageId || o.boardId || o._id,
-            name: o.name || o.title || o.username || 'Selected Profile'
-          }));
-          setSecondarySelectionData(prev => prev ? { ...prev, options: opts, loading: false } : null);
+
+      getAuthHeaders().then(authHeaders => {
+        const queryParams = new URLSearchParams();
+        if (pendingToken) queryParams.set('pendingDataToken', pendingToken);
+        if (tempToken) queryParams.set('tempToken', tempToken);
+        if (profileId) queryParams.set('profileId', profileId);
+
+        fetch(`/api/v1/connect/${platform.toLowerCase()}/selection-options?${queryParams.toString()}`, {
+          headers: authHeaders
         })
-        .catch(err => {
-          console.warn('[Selection Options Fetch Error]:', err);
-          setSecondarySelectionData(prev => prev ? { ...prev, loading: false } : null);
-        });
+          .then(res => res.json())
+          .then(data => {
+            const rawOpts = data.options || data.pages || data.boards || data.locations || [];
+            const opts = (Array.isArray(rawOpts) ? rawOpts : []).map((o: any) => ({
+              id: o.id || o.pageId || o.boardId || o._id,
+              name: o.name || o.title || o.username || 'Selected Profile'
+            }));
+            setSecondarySelectionData(prev => prev ? { ...prev, options: opts, loading: false } : null);
+          })
+          .catch(err => {
+            console.warn('[Selection Options Fetch Error]:', err);
+            setSecondarySelectionData(prev => prev ? { ...prev, loading: false } : null);
+          });
+      });
       window.history.replaceState({}, document.title, window.location.pathname);
     } else if (urlParams.get('account_connected') === 'true' || urlParams.get('connected') === '1') {
       setCheckoutSuccessMsg(`Successfully authenticated and connected your ${platform} account to Rockyt!`);
@@ -638,6 +667,9 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
         headers,
         body: JSON.stringify({
           pendingDataToken: secondarySelectionData.pendingDataToken,
+          tempToken: secondarySelectionData.tempToken,
+          userProfile: secondarySelectionData.userProfile,
+          profileId: secondarySelectionData.profileId,
           selectedId: secondarySelectionData.selectedId,
           selectedName: secondarySelectionData.selectedName
         })
@@ -647,7 +679,8 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
         setSecondarySelectionData(null);
         fetchLiveData();
       } else {
-        throw new Error('Failed to save selection.');
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to save selection.');
       }
     } catch (err: any) {
       setCheckoutError(err.message || 'Secondary selection failed.');

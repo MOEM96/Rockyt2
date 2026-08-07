@@ -1020,7 +1020,8 @@ function startServer() {
         createdAt: Date.now()
       });
 
-      const redirectUrl = `/dashboard?step=${encodeURIComponent(stepParam)}&pendingDataToken=${encodeURIComponent(tokenKey)}&platform=${encodeURIComponent(formattedPlatform)}&profileId=${encodeURIComponent(profileId || '')}`;
+      const userProfStr = userProfile ? (typeof userProfile === 'string' ? userProfile : JSON.stringify(userProfile)) : '';
+      const redirectUrl = `/dashboard?step=${encodeURIComponent(stepParam)}&pendingDataToken=${encodeURIComponent(tokenKey)}&tempToken=${encodeURIComponent(tempToken ? String(tempToken) : '')}&profileId=${encodeURIComponent(profileId ? String(profileId) : '')}&userProfile=${encodeURIComponent(userProfStr)}&platform=${encodeURIComponent(formattedPlatform)}`;
       return res.redirect(redirectUrl);
     }
 
@@ -1069,6 +1070,11 @@ function startServer() {
     let targetTempToken = (tempToken || session?.tempToken) as string | undefined;
     let targetProfileId = (profileId || session?.profileId || req.zernioProfileId) as string | undefined;
 
+    if (!targetProfileId && req.user) {
+      const fullProf = await ensureUserProfile(req.user);
+      if (fullProf?.zernio_profile_id) targetProfileId = fullProf.zernio_profile_id;
+    }
+
     try {
       if (cleanPlatform === 'facebook') {
         if (targetTempToken && targetProfileId) {
@@ -1077,21 +1083,41 @@ function startServer() {
               query: { profileId: targetProfileId, tempToken: targetTempToken }
             });
             const pages = fbRes.data?.pages || fbRes.data?.options || fbRes.data || [];
-            return res.json({ success: true, options: pages });
-          } catch {}
+            if (Array.isArray(pages) && pages.length > 0) {
+              return res.json({ success: true, options: pages });
+            }
+          } catch (sdkErr: any) {
+            console.warn('[selection-options] Facebook SDK listFacebookPages notice:', sdkErr.message);
+          }
         }
-        const fbResDirect = await fetch(`https://zernio.com/api/v1/connect/facebook/select-page?profileId=${encodeURIComponent(targetProfileId || '')}&tempToken=${encodeURIComponent(targetTempToken || '')}`, {
-          headers: { 'Authorization': `Bearer ${apiKey}` }
-        });
-        if (fbResDirect.ok) {
-          const fbData = await fbResDirect.json();
-          return res.json({ success: true, options: fbData.pages || fbData.options || [] });
+
+        if (targetProfileId && targetTempToken) {
+          const reqHeaders: Record<string, string> = {
+            'Authorization': `Bearer ${apiKey}`
+          };
+          if (targetTempToken) {
+            reqHeaders['X-Connect-Token'] = targetTempToken;
+          }
+          const fbResDirect = await fetch(`https://zernio.com/api/v1/connect/facebook/select-page?profileId=${encodeURIComponent(targetProfileId)}&tempToken=${encodeURIComponent(targetTempToken)}`, {
+            headers: reqHeaders
+          });
+          if (fbResDirect.ok) {
+            const fbData = await fbResDirect.json();
+            const pages = fbData.pages || fbData.options || (Array.isArray(fbData) ? fbData : []);
+            return res.json({ success: true, options: pages });
+          } else {
+            const errBody = await fbResDirect.text().catch(() => '');
+            console.warn('[selection-options] Direct GET Facebook pages warning:', fbResDirect.status, errBody);
+          }
         }
       }
 
       if (cleanPlatform === 'pinterest') {
         const pinRes = await fetch(`https://zernio.com/api/v1/connect/pinterest/select-board?profileId=${encodeURIComponent(targetProfileId || '')}&tempToken=${encodeURIComponent(targetTempToken || '')}`, {
-          headers: { 'Authorization': `Bearer ${apiKey}` }
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            ...(targetTempToken ? { 'X-Connect-Token': targetTempToken } : {})
+          }
         });
         if (pinRes.ok) {
           const pinData = await pinRes.json();
@@ -1101,7 +1127,10 @@ function startServer() {
 
       if (cleanPlatform === 'linkedin') {
         const liRes = await fetch(`https://zernio.com/api/v1/connect/linkedin/organizations?profileId=${encodeURIComponent(targetProfileId || '')}&tempToken=${encodeURIComponent(targetTempToken || '')}`, {
-          headers: { 'Authorization': `Bearer ${apiKey}` }
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            ...(targetTempToken ? { 'X-Connect-Token': targetTempToken } : {})
+          }
         });
         if (liRes.ok) {
           const liData = await liRes.json();
@@ -1135,9 +1164,14 @@ function startServer() {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
 
     let session = pendingDataToken ? pendingHeadlessSessions.get(String(pendingDataToken)) : null;
-    let targetTempToken = session?.tempToken;
-    let targetProfileId = profileId || session?.profileId || req.zernioProfileId;
-    let targetUserProfile = session?.userProfile;
+    let targetTempToken = req.body?.tempToken || session?.tempToken;
+    let targetProfileId = profileId || req.body?.profileId || session?.profileId || req.zernioProfileId;
+    let targetUserProfile = req.body?.userProfile || session?.userProfile;
+
+    if (!targetProfileId && req.user) {
+      const fullProf = await ensureUserProfile(req.user);
+      if (fullProf?.zernio_profile_id) targetProfileId = fullProf.zernio_profile_id;
+    }
 
     const appBaseUrl = process.env.APP_BASE_URL || (req.headers.origin || `https://${req.headers.host}`);
     const callbackUrl = `${appBaseUrl}/oauth/callback?platform=${encodeURIComponent(cleanPlatform)}`;
@@ -1161,14 +1195,19 @@ function startServer() {
       }
     }
 
-    if (!createdAccountId && apiKey) {
+    if (!createdAccountId && apiKey && targetProfileId) {
       try {
+        const reqHeaders: Record<string, string> = {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        };
+        if (targetTempToken) {
+          reqHeaders['X-Connect-Token'] = targetTempToken;
+        }
+
         const directRes = await fetch(`https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}/select-page`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
-          },
+          headers: reqHeaders,
           body: JSON.stringify({
             profileId: targetProfileId,
             pageId: selectedId,
@@ -1180,9 +1219,12 @@ function startServer() {
         if (directRes.ok) {
           const directData = await directRes.json();
           createdAccountId = directData.account?.accountId || directData.accountId || directData.id;
+        } else {
+          const errText = await directRes.text().catch(() => '');
+          console.warn('[select-option] Direct POST Facebook page warning:', directRes.status, errText);
         }
       } catch (err: any) {
-        console.warn('[select-option] Direct POST fetch warning:', err.message);
+        console.warn('[select-option] Direct POST fetch error:', err.message);
       }
     }
 
