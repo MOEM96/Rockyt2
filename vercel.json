@@ -2,8 +2,8 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" },
-    { "source": "/oauth/callback", "destination": "/api/oauth/callback" },
+    { "source": "/api/(.*)", "destination": "/api" },
+    { "source": "/oauth/callback", "destination": "/api" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

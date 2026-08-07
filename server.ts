@@ -32,11 +32,12 @@ function startServer() {
   }));
   // Normalize Vercel serverless rewritten API URLs
   app.use((req, _res, next) => {
-    const rawPath = req.headers['x-matched-path'] || req.headers['x-invoke-path'] || req.headers['x-forwarded-uri'];
-    if (rawPath && typeof rawPath === 'string' && rawPath.startsWith('/api') && !req.url.startsWith(rawPath.split('?')[0])) {
-      const cleanPath = rawPath.split('?')[0];
-      const queryStr = req.url.includes('?') ? '?' + req.url.split('?')[1] : '';
-      req.url = cleanPath + queryStr;
+    const candidate = req.headers['x-forwarded-uri'] || req.headers['x-invoke-path'] || req.headers['x-matched-path'] || req.headers['x-now-route-matches'];
+    if (candidate && typeof candidate === 'string') {
+      const uriStr = candidate.trim();
+      if (uriStr.startsWith('/api') || uriStr.startsWith('/oauth') || uriStr.startsWith('/connect')) {
+        req.url = uriStr;
+      }
     }
     next();
   });
