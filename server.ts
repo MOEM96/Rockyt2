@@ -1752,8 +1752,8 @@ function startServer() {
 
   // Secure Dodo Payments Checkout Endpoint
   // ---------------------------------------------------------------------------
-  app.post('/api/v1/checkouts', supabaseAuth, async (req: any, res: any) => {
-    const { productId, trialPeriodDays, amount } = req.body;
+  app.post(['/api/v1/checkouts', '/api/billing/create-checkout', '/api/v1/billing/create-checkout', '/api/create-checkout'], combinedAuth, asyncHandler(async (req: any, res: any) => {
+    const { productId, trialPeriodDays, amount } = req.body || {};
     const targetProductId = productId || 'pdt_0Nk1w4r59DXb7GepY1sqA';
     const numAmount = Number(amount) || 0;
     const isDeposit = numAmount > 0 || targetProductId.includes('metered');

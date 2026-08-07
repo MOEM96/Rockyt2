@@ -483,7 +483,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
         throw new Error('Please enter a valid deposit amount.');
       }
 
-      const res = await fetch('/api/billing/create-checkout', {
+      let res = await fetch('/api/v1/checkouts', {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -494,14 +494,28 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
         })
       });
 
+      if (!res.ok) {
+        res = await fetch('/api/billing/create-checkout', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            productId: productId || 'pdt_0NWDjzl0TS6LNFrVdFZYQ',
+            amount: finalAmount,
+            currency: 'USD',
+            planName: 'Wallet Top-Up'
+          })
+        });
+      }
+
       const data = await safeFetchJson(res);
 
       if (!res.ok) {
         throw new Error(data.error || 'Failed to create checkout session with Dodo Payments.');
       }
 
-      if (data.checkoutUrl) {
-        setOverlayCheckoutUrl(data.checkoutUrl);
+      const checkoutUrl = data.checkout_url || data.checkoutUrl;
+      if (checkoutUrl) {
+        window.open(checkoutUrl, '_blank');
       } else {
         throw new Error('No checkout URL returned from payment server.');
       }
