@@ -921,25 +921,8 @@ function startServer() {
     res.status(204).send();
   }));
 
-  function generateCustomOrZernioOAuthUrl(cleanPlatform: string, zernioProfileId: string | null, callbackUrl: string): string | null {
-    if (cleanPlatform === 'tiktok' && process.env.TIKTOK_CLIENT_KEY) {
-      return `https://www.tiktok.com/v2/auth/authorize/?client_key=${encodeURIComponent(process.env.TIKTOK_CLIENT_KEY)}&redirect_uri=${encodeURIComponent(callbackUrl)}&scope=user.info.basic%2Cuser.info.profile%2Cuser.info.stats%2Cvideo.publish%2Cvideo.upload%2Cvideo.list&response_type=code&state=${encodeURIComponent(zernioProfileId || 'rockyt')}`;
-    }
-    if (cleanPlatform === 'facebook' && process.env.META_APP_ID) {
-      return `https://www.facebook.com/v19.0/dialog/oauth?client_id=${encodeURIComponent(process.env.META_APP_ID)}&redirect_uri=${encodeURIComponent(callbackUrl)}&scope=public_profile,pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish&state=${encodeURIComponent(zernioProfileId || 'rockyt')}`;
-    }
-    if (cleanPlatform === 'linkedin' && process.env.LINKEDIN_CLIENT_ID) {
-      return `https://www.linkedin.com/oauth/v2/authorization?response_type=code&client_id=${encodeURIComponent(process.env.LINKEDIN_CLIENT_ID)}&redirect_uri=${encodeURIComponent(callbackUrl)}&scope=openid%20profile%20w_member_social%20email&state=${encodeURIComponent(zernioProfileId || 'rockyt')}`;
-    }
-    if (cleanPlatform === 'twitter' && process.env.TWITTER_CLIENT_ID) {
-      return `https://twitter.com/i/oauth2/authorize?response_type=code&client_id=${encodeURIComponent(process.env.TWITTER_CLIENT_ID)}&redirect_uri=${encodeURIComponent(callbackUrl)}&scope=tweet.read%20tweet.write%20users.read%20offline.access&state=${encodeURIComponent(zernioProfileId || 'rockyt')}&code_challenge=challenge&code_challenge_method=plain`;
-    }
-    return null;
-  }
-
   // ---------------------------------------------------------------------------
-  // Connect flow — via SDK, with our own redirect_url so Zernio sends
-  // profileId/accountId back to us directly, no state table needed.
+  // Connect flow — via SDK in Headless Mode with redirect_url to Rockyt callback
   // ---------------------------------------------------------------------------
   app.get('/api/v1/connect/:platform', authenticate, asyncHandler(async (req: any, res: any) => {
     if (req.connectedCount >= req.maxAccounts) {
@@ -948,11 +931,6 @@ function startServer() {
     const cleanPlatform = getCanonicalZernioPlatform(req.params.platform);
     const appBaseUrl = process.env.APP_BASE_URL || (req.headers.origin || `https://${req.headers.host}`);
     const callbackUrl = `${appBaseUrl}/oauth/callback?platform=${encodeURIComponent(cleanPlatform)}`;
-
-    const customUrl = generateCustomOrZernioOAuthUrl(cleanPlatform, req.zernioProfileId, callbackUrl);
-    if (customUrl) {
-      return res.json({ url: customUrl, authUrl: customUrl });
-    }
 
     try {
       const result = await zernio.connect.getConnectUrl({
@@ -971,63 +949,9 @@ function startServer() {
   }));
 
   app.get('/oauth/callback', asyncHandler(async (req: any, res: any) => {
-    const { code, profileId, accountId, platform, username, returnTo, step, pendingDataToken, tempToken, userProfile, connect_token } = req.query;
+    const { profileId, accountId, platform, username, returnTo, step, pendingDataToken, tempToken, userProfile, connect_token } = req.query;
     const cleanPlatform = platform ? getCanonicalZernioPlatform(platform) : 'Social Channel';
     const formattedPlatform = cleanPlatform.charAt(0).toUpperCase() + cleanPlatform.slice(1);
-
-    // Direct Custom Developer App OAuth Token Exchange (if code param present from custom developer app)
-    if (code && cleanPlatform === 'tiktok' && process.env.TIKTOK_CLIENT_KEY && process.env.TIKTOK_CLIENT_SECRET) {
-      try {
-        const appBaseUrl = process.env.APP_BASE_URL || (req.headers.origin || `https://${req.headers.host}`);
-        const callbackUrl = `${appBaseUrl}/oauth/callback?platform=tiktok`;
-
-        const tokenRes = await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            client_key: process.env.TIKTOK_CLIENT_KEY,
-            client_secret: process.env.TIKTOK_CLIENT_SECRET,
-            code: String(code),
-            grant_type: 'authorization_code',
-            redirect_uri: callbackUrl
-          }).toString()
-        });
-
-        if (tokenRes.ok) {
-          const tokenData = await tokenRes.json();
-          const openId = tokenData.open_id || tokenData.data?.open_id;
-          const accessToken = tokenData.access_token || tokenData.data?.access_token;
-
-          let displayName = 'TikTok Account';
-          if (accessToken) {
-            try {
-              const uRes = await fetch('https://open.tiktokapis.com/v2/user/info/?fields=open_id,avatar_url,display_name', {
-                headers: { 'Authorization': `Bearer ${accessToken}` }
-              });
-              if (uRes.ok) {
-                const uData = await uRes.json();
-                if (uData.data?.user?.display_name) {
-                  displayName = uData.data.user.display_name;
-                }
-              }
-            } catch {}
-          }
-
-          if (supabase && req.user?.id) {
-            await supabase.rpc('save_connected_account', {
-              p_user_id: req.user.id,
-              p_platform: 'TikTok',
-              p_username: `@${displayName.toLowerCase().replace(/\s+/g, '_')}`,
-              p_profile_name: displayName,
-              p_account_id: openId ? `acc_tt_${openId}` : `acc_tt_${Date.now()}`
-            });
-          }
-          return res.redirect('/dashboard?account_connected=true&platform=TikTok');
-        }
-      } catch (ttErr: any) {
-        console.warn('Direct TikTok token exchange warning:', ttErr.message);
-      }
-    }
 
     // If headless mode returned a secondary selection step (e.g. select_page, select_board, select_location)
     if (step || pendingDataToken || tempToken || userProfile) {
@@ -1622,28 +1546,26 @@ function startServer() {
     const clientRedirectUrl = req.query.redirectUrl || req.query.redirect_url || `${appBaseUrl}/dashboard?account_connected=true&platform=${encodeURIComponent(cleanPlatform)}`;
     const callbackUrl = `${appBaseUrl}/oauth/callback?platform=${encodeURIComponent(cleanPlatform)}&returnTo=${encodeURIComponent(clientRedirectUrl)}`;
 
-    let targetOAuthUrl: string | null = generateCustomOrZernioOAuthUrl(cleanPlatform, zernioProfileId, callbackUrl);
+    let targetOAuthUrl: string | null = null;
 
-    // 1. Generate underlying OAuth consent URL with force re-auth parameters and Headless Mode
-    if (!targetOAuthUrl) {
-      try {
-        if (zernioProfileId && typeof zernio?.connect?.getConnectUrl === 'function') {
-          const connectRes = await zernio.connect.getConnectUrl({
-            path: { platform: cleanPlatform as any },
-            query: {
-              profileId: zernioProfileId,
-              redirect_url: callbackUrl,
-              headless: 'true',
-              reconnect: 'true',
-              prompt: 'consent',
-              force_reconnect: 'true'
-            } as any
-          });
-          targetOAuthUrl = (connectRes?.data as any)?.authUrl || (connectRes?.data as any)?.url || null;
-        }
-      } catch (err: any) {
-        console.warn(`[Rockyt Connect Gateway] Zernio SDK connect warning for ${cleanPlatform}:`, err.message);
+    // 1. Generate underlying OAuth consent URL in Headless Mode (headless=true)
+    try {
+      if (zernioProfileId && typeof zernio?.connect?.getConnectUrl === 'function') {
+        const connectRes = await zernio.connect.getConnectUrl({
+          path: { platform: cleanPlatform as any },
+          query: {
+            profileId: zernioProfileId,
+            redirect_url: callbackUrl,
+            headless: 'true',
+            reconnect: 'true',
+            prompt: 'consent',
+            force_reconnect: 'true'
+          } as any
+        });
+        targetOAuthUrl = (connectRes?.data as any)?.authUrl || (connectRes?.data as any)?.url || null;
       }
+    } catch (err: any) {
+      console.warn(`[Rockyt Connect Gateway] Zernio SDK connect warning for ${cleanPlatform}:`, err.message);
     }
 
     // 2. Direct HTTP fallback if SDK returned null
