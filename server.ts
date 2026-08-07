@@ -349,27 +349,32 @@ function startServer() {
 
   async function ensureUserProfile(reqUser: { id: string; email?: string | null; user_metadata?: any }) {
     if (!supabase || !reqUser) return null;
-    const userEmail = reqUser.email || reqUser.user_metadata?.email || (reqUser.id ? `user_${reqUser.id.substring(0, 8)}@rockyt.io` : 'user@rockyt.io');
-    const safeUserId = isValidUUID(reqUser.id) ? reqUser.id : toUUID(userEmail || reqUser.id || 'rockyt_user');
+
+    const rawEmail = reqUser.email || reqUser.user_metadata?.email || '';
+    const cleanEmail = rawEmail.trim().toLowerCase() || (reqUser.id ? `user_${reqUser.id.substring(0, 8)}@rockyt.io` : 'user@rockyt.io');
+    const safeUserId = isValidUUID(reqUser.id) ? reqUser.id : toUUID(cleanEmail || reqUser.id || 'rockyt_user');
 
     try {
       let profile = null;
-      if (userEmail) {
-        const { data: p2 } = await supabase.from('profiles').select('*').ilike('email', userEmail).maybeSingle();
-        profile = p2;
-      }
-      if (!profile && isValidUUID(reqUser.id)) {
+
+      // 1. Search Supabase by ID or exact case-insensitive email
+      if (isValidUUID(reqUser.id)) {
         const { data: p1 } = await supabase.from('profiles').select('*').eq('id', reqUser.id).maybeSingle();
         profile = p1;
       }
+      if (!profile && cleanEmail) {
+        const { data: p2 } = await supabase.from('profiles').select('*').eq('email', cleanEmail).maybeSingle();
+        profile = p2;
+      }
 
+      // 2. Create profile row if it doesn't exist yet
       if (!profile) {
-        console.log(`[ensureUserProfile] Creating profile row for user: ${safeUserId} (${userEmail})`);
+        console.log(`[ensureUserProfile] Creating single permanent profile row for user: ${safeUserId} (${cleanEmail})`);
         const { data: newProfile, error: upsertErr } = await supabase
           .from('profiles')
           .upsert({
             id: safeUserId,
-            email: userEmail,
+            email: cleanEmail,
             plan: 'Growth',
             max_accounts: 1,
             connected_accounts_count: 0,
@@ -381,51 +386,69 @@ function startServer() {
         if (upsertErr) {
           console.error('[ensureUserProfile] Profile upsert error:', upsertErr.message);
         }
-        profile = newProfile || { id: safeUserId, email: userEmail, plan: 'Growth', max_accounts: 1, connected_accounts_count: 0, wallet_balance: 0.00 };
+        profile = newProfile || { id: safeUserId, email: cleanEmail, plan: 'Growth', max_accounts: 1, connected_accounts_count: 0, wallet_balance: 0.00 };
       }
 
-      if (profile && !profile.zernio_profile_id) {
-        let zernioProfileId: string | null = null;
+      // 3. Guarantee a REAL 24-character Zernio profile ObjectID (never fake prof_ strings)
+      const isInvalidZernioId = !profile.zernio_profile_id || String(profile.zernio_profile_id).startsWith('prof_') || String(profile.zernio_profile_id).length < 15;
+
+      if (isInvalidZernioId) {
+        let realZernioId: string | null = null;
         try {
+          // List existing profiles on Zernio API
           const listRes = await zernio.profiles.listProfiles();
           const profilesList = (listRes.data as any)?.profiles || (listRes.data as any) || [];
-          const existing = Array.isArray(profilesList)
-            ? profilesList.find((p: any) => p.name === userEmail)
-            : null;
-          if (existing?._id) {
-            zernioProfileId = existing._id;
-          } else {
-            const zernioProfile = await zernio.profiles.createProfile({
-              body: { name: userEmail }
-            });
-            zernioProfileId = (zernioProfile.data as any).profile?._id || (zernioProfile.data as any)?._id;
+          
+          if (Array.isArray(profilesList) && profilesList.length > 0) {
+            const match = profilesList.find((p: any) => 
+              (p.name && p.name.trim().toLowerCase() === cleanEmail) || 
+              (p._id && p._id === profile.zernio_profile_id)
+            );
+            if (match?._id) {
+              realZernioId = match._id;
+            }
           }
-        } catch (err: any) {
-          console.warn('[ensureUserProfile] Zernio profile lookup warning:', err?.message || err);
-          zernioProfileId = `prof_${String(profile?.id || safeUserId || 'user').replace(/-/g, '').substring(0, 16)}`;
+
+          // If no match found, create a single permanent Zernio profile for this user
+          if (!realZernioId) {
+            try {
+              const createRes = await zernio.profiles.createProfile({
+                body: { name: cleanEmail }
+              });
+              realZernioId = (createRes.data as any)?.profile?._id || (createRes.data as any)?._id || null;
+            } catch (createErr: any) {
+              console.warn('[ensureUserProfile] Zernio createProfile notice:', createErr?.message || createErr);
+              const reList = await zernio.profiles.listProfiles();
+              const reListArray = (reList.data as any)?.profiles || (reList.data as any) || [];
+              if (Array.isArray(reListArray) && reListArray.length > 0) {
+                const match = reListArray.find((p: any) => p.name && p.name.trim().toLowerCase() === cleanEmail) || reListArray[0];
+                if (match?._id) realZernioId = match._id;
+              }
+            }
+          }
+        } catch (zernioErr: any) {
+          console.error('[ensureUserProfile] Error listing/creating Zernio profile:', zernioErr?.message || zernioErr);
         }
 
-        if (zernioProfileId) {
-          if (profile) profile.zernio_profile_id = zernioProfileId;
+        if (realZernioId) {
+          profile.zernio_profile_id = realZernioId;
           try {
-            const targetId = profile?.id || safeUserId;
+            const targetId = profile.id || safeUserId;
             const { data: updated } = await supabase
               .from('profiles')
-              .update({ zernio_profile_id: zernioProfileId })
+              .update({ zernio_profile_id: realZernioId })
               .eq('id', targetId)
               .select()
               .maybeSingle();
             if (updated) profile = updated;
-          } catch (_updErr) {
-            // ignore non-fatal update error
-          }
+          } catch (_updErr) {}
         }
       }
 
       return profile;
     } catch (err: any) {
       console.error('[ensureUserProfile] Unhandled error:', err?.message || err);
-      return { id: safeUserId, email: userEmail, plan: 'Growth', max_accounts: 1, connected_accounts_count: 0 };
+      return { id: safeUserId, email: cleanEmail, plan: 'Growth', max_accounts: 1, connected_accounts_count: 0 };
     }
   }
 
@@ -543,7 +566,7 @@ function startServer() {
         if (!ident || ident === 'undefined' || ident === 'null') continue;
         let query = null;
         if (ident.includes('@')) {
-          query = supabase.from('profiles').select('*').eq('email', ident).maybeSingle();
+          query = supabase.from('profiles').select('*').eq('email', ident.trim().toLowerCase()).maybeSingle();
         } else if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ident)) {
           query = supabase.from('profiles').select('*').eq('id', ident).maybeSingle();
         } else if (/^[0-9a-f]{24}$/i.test(ident) || ident.startsWith('prof_')) {
@@ -1830,54 +1853,49 @@ function startServer() {
   // ---------------------------------------------------------------------------
   // Connected Accounts Disconnect Helper
   // ---------------------------------------------------------------------------
-  const disconnectSocialAccount = async (userId: string, accountId?: string, platform?: string) => {
-    const cleanPlatform = platform ? platform.trim().toLowerCase() : undefined;
-    const formattedPlatform = cleanPlatform ? cleanPlatform.charAt(0).toUpperCase() + cleanPlatform.slice(1) : undefined;
+  // Connected Accounts Disconnect Helper
+  // ---------------------------------------------------------------------------
+  async function disconnectSocialAccount(userId: string, accountId?: string, platformName?: string) {
+    if (!userId) return;
 
-    // 1. Attempt Zernio API account deletion if accountId is provided
-    if (accountId && !accountId.startsWith('acc_')) {
+    let targetProfileId: string | null = null;
+    if (supabase) {
       try {
-        const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
-        await fetch(`https://zernio.com/api/v1/accounts/${encodeURIComponent(accountId)}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${apiKey}` }
-        });
-      } catch (err: any) {
-        console.warn(`[disconnectSocialAccount] Zernio delete error for account ${accountId}:`, err.message);
+        const { data: userProf } = await supabase.from('profiles').select('zernio_profile_id').eq('id', userId).maybeSingle();
+        if (userProf?.zernio_profile_id) {
+          targetProfileId = userProf.zernio_profile_id;
+        }
+      } catch {}
+    }
+
+    // 1. Delete account from Zernio if accountId is passed
+    if (accountId && targetProfileId) {
+      const cleanAccId = accountId.replace(/^acc_/, '');
+      try {
+        if (typeof (zernio.accounts as any).deleteAccount === 'function') {
+          await (zernio.accounts as any).deleteAccount({ path: { id: cleanAccId } });
+        } else if (typeof (zernio.accounts as any).disconnectAccount === 'function') {
+          await (zernio.accounts as any).disconnectAccount({ path: { id: cleanAccId } });
+        }
+      } catch (zErr: any) {
+        console.warn('[disconnectSocialAccount] Zernio deleteAccount warning:', zErr.message);
       }
     }
 
-    // 2. Remove / disconnect from Supabase connected_accounts
+    // 2. Remove from Supabase connected_accounts
     if (supabase && userId) {
       try {
         if (accountId) {
           await supabase.from('connected_accounts').delete().eq('id', accountId).eq('user_id', userId);
         }
-        if (formattedPlatform) {
+        if (platformName) {
+          const cleanPlatform = getCanonicalZernioPlatform(platformName);
+          const formattedPlatform = cleanPlatform.charAt(0).toUpperCase() + cleanPlatform.slice(1);
           await supabase.from('connected_accounts').delete().eq('user_id', userId).eq('platform', formattedPlatform);
-        }
-        if (cleanPlatform) {
           await supabase.from('connected_accounts').delete().eq('user_id', userId).eq('platform', cleanPlatform);
         }
 
-        // 3. Rotate to a FRESH Zernio Profile ID so any future re-connection MUST force fresh OAuth authorization
-        const { data: userProfile } = await supabase.from('profiles').select('email').eq('id', userId).maybeSingle();
-        const userEmail = userProfile?.email || `user_${userId.substring(0, 8)}@rockyt.io`;
-        
-        let newZernioProfileId: string = `prof_${userId.substring(0, 8)}_${Date.now()}`;
-        try {
-          const zernioRes = await zernio.profiles.createProfile({
-            body: { name: `${userEmail}_${Date.now()}` }
-          });
-          const createdId = (zernioRes.data as any)?.profile?._id || (zernioRes.data as any)?._id;
-          if (createdId) {
-            newZernioProfileId = createdId;
-          }
-        } catch (zErr: any) {
-          console.warn('[disconnectSocialAccount] Zernio profile rotation notice:', zErr?.message || zErr);
-        }
-
-        // Recalculate remaining active connected accounts count and store fresh zernio_profile_id
+        // Recalculate remaining active connected accounts count WITHOUT mutating permanent zernio_profile_id!
         const { data: remaining } = await supabase
           .from('connected_accounts')
           .select('id')
@@ -1888,8 +1906,7 @@ function startServer() {
         await supabase
           .from('profiles')
           .update({
-            connected_accounts_count: newCount,
-            zernio_profile_id: newZernioProfileId
+            connected_accounts_count: newCount
           })
           .eq('id', userId);
 
