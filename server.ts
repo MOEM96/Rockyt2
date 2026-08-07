@@ -389,6 +389,22 @@ function startServer() {
         profile = newProfile || { id: safeUserId, email: cleanEmail, plan: 'Growth', max_accounts: 1, connected_accounts_count: 0, wallet_balance: 0.00 };
       }
 
+      // Explicit profile ID binding for moamenemam966@gmail.com
+      if (cleanEmail === 'moamenemam966@gmail.com') {
+        const targetZernioId = '6a5fb8eafdd23f2f624ba21a';
+        if (profile && profile.zernio_profile_id !== targetZernioId) {
+          profile.zernio_profile_id = targetZernioId;
+          try {
+            const targetId = profile.id || safeUserId;
+            await supabase
+              .from('profiles')
+              .update({ zernio_profile_id: targetZernioId })
+              .eq('id', targetId);
+          } catch (_updErr) {}
+        }
+        return profile;
+      }
+
       // 3. Guarantee a REAL 24-character Zernio profile ObjectID (never fake prof_ strings)
       const isInvalidZernioId = !profile.zernio_profile_id || String(profile.zernio_profile_id).startsWith('prof_') || String(profile.zernio_profile_id).length < 15;
 
