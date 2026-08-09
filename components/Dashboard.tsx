@@ -143,7 +143,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const [showInviteUserModal, setShowInviteUserModal] = useState<boolean>(false);
 
   // Dynamic Ad Reporting & Data Hub States
-  const [reportRange, setReportRange] = useState<'today' | '7d' | '30d' | 'ytd' | 'custom'>('30d');
+  const [reportRange, setReportRange] = useState<'all' | 'today' | '7d' | '30d' | 'ytd' | 'custom'>('all');
   const [reportStatusFilter, setReportStatusFilter] = useState<string>('ALL');
   const [cliFramework, setCliFramework] = useState<'next' | 'react' | 'html' | 'shopify'>('next');
   const [dataSources, setDataSources] = useState<any[]>([]);
@@ -1550,10 +1550,11 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                   onChange={(e) => setReportRange(e.target.value as any)}
                   className="bg-zinc-900 border border-white/15 text-white font-bold px-3 py-2 rounded outline-none focus:border-brand cursor-pointer"
                 >
-                  <option value="today">Today</option>
-                  <option value="7d">Last 7 Days</option>
-                  <option value="30d">Last 30 Days</option>
+                  <option value="all">All Time (Historical)</option>
                   <option value="ytd">Year to Date (YTD)</option>
+                  <option value="30d">Last 30 Days</option>
+                  <option value="7d">Last 7 Days</option>
+                  <option value="today">Today</option>
                 </select>
 
                 <select

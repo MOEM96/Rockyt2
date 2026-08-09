@@ -1482,11 +1482,17 @@ function startServer() {
   app.get('/api/v1/ads/campaigns', supabaseAuth, asyncHandler(async (req: any, res: any) => {
     let campaigns: any[] = [];
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    const zernioProfileId = req.zernioProfileId;
 
-    // 1. Fetch live campaigns from Zernio Ads API
+    // 1. Fetch live historical campaigns from Zernio Ads API (730-day max date range to capture all past/paused campaigns)
     if (apiKey) {
       try {
-        const zRes = await fetch('https://zernio.com/api/v1/ads/campaigns', {
+        const fromDate = new Date(Date.now() - 730 * 86400000).toISOString().split('T')[0];
+        const toDate = new Date().toISOString().split('T')[0];
+        const queryParams = new URLSearchParams({ source: 'all', fromDate, toDate });
+        if (zernioProfileId) queryParams.set('profileId', zernioProfileId);
+
+        const zRes = await fetch(`https://zernio.com/api/v1/ads/campaigns?${queryParams.toString()}`, {
           headers: { 'Authorization': `Bearer ${apiKey}` }
         });
         if (zRes.ok) {
@@ -1526,11 +1532,15 @@ function startServer() {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     const zernioProfileId = req.zernioProfileId;
 
-    // 1. Fetch live historical campaigns from Zernio Ads API
+    // 1. Fetch live historical campaigns from Zernio Ads API using 730-day window
     if (apiKey) {
       try {
-        const queryParam = zernioProfileId ? `?source=all&profileId=${encodeURIComponent(zernioProfileId)}` : '?source=all';
-        const zRes = await fetch(`https://zernio.com/api/v1/ads/campaigns${queryParam}`, {
+        const fromDate = new Date(Date.now() - 730 * 86400000).toISOString().split('T')[0];
+        const toDate = new Date().toISOString().split('T')[0];
+        const queryParams = new URLSearchParams({ source: 'all', fromDate, toDate });
+        if (zernioProfileId) queryParams.set('profileId', zernioProfileId);
+
+        const zRes = await fetch(`https://zernio.com/api/v1/ads/campaigns?${queryParams.toString()}`, {
           headers: { 'Authorization': `Bearer ${apiKey}` }
         });
         if (zRes.ok) {
@@ -1883,7 +1893,7 @@ function startServer() {
   }));
 
   app.get('/api/v1/ads/analytics', supabaseAuth, asyncHandler(async (req: any, res: any) => {
-    const { range = '30d', startDate, endDate, status = 'ALL', format } = req.query || {};
+    const { range = 'all', startDate, endDate, status = 'ALL', format } = req.query || {};
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
 
     let totalSpend = 0;
@@ -1893,10 +1903,13 @@ function startServer() {
     let totalAttributedRevenue = 0;
     const platformBreakdown: Record<string, { spend: number; revenue: number; roas: number; conversions: number }> = {};
 
-    // 1. Attempt to fetch real aggregate analytics from Zernio Ads API
+    const fromDate = startDate || new Date(Date.now() - 730 * 86400000).toISOString().split('T')[0];
+    const toDate = endDate || new Date().toISOString().split('T')[0];
+
+    // 1. Attempt to fetch real aggregate analytics from Zernio Ads API using 730-day range
     if (apiKey) {
       try {
-        const zRes = await fetch(`https://zernio.com/api/v1/ads/analytics?range=${range}`, {
+        const zRes = await fetch(`https://zernio.com/api/v1/ads/analytics?range=${range}&fromDate=${fromDate}&toDate=${toDate}`, {
           headers: { 'Authorization': `Bearer ${apiKey}` }
         });
         if (zRes.ok) {
@@ -1917,7 +1930,7 @@ function startServer() {
       }
     }
 
-    // 2. Compute exact metrics from Supabase database for the user
+    // 2. Compute exact metrics from Supabase database for all historical campaigns (active & paused)
     const campaignBreakdown: any[] = [];
 
     if (supabase && req.user?.id) {
