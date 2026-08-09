@@ -2507,13 +2507,140 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                   </div>
                 </div>
 
-                {/* Demographic Breakdowns */}
-                {selectedCampaignAnalyticsModal.analytics?.breakdowns && Object.keys(selectedCampaignAnalyticsModal.analytics.breakdowns).length > 0 && (
-                  <div className="bg-black p-4 rounded border border-white/10 space-y-3">
-                    <span className="font-bold text-white uppercase text-xs block">Live Meta/LinkedIn Demographic Breakdowns</span>
-                    <pre className="text-[10px] text-emerald-400 overflow-x-auto">
-                      {JSON.stringify(selectedCampaignAnalyticsModal.analytics.breakdowns, null, 2)}
-                    </pre>
+                {/* Demographic & Audience Breakdowns */}
+                {selectedCampaignAnalyticsModal.analytics?.breakdowns && (
+                  <div className="space-y-4 pt-3 border-t border-white/10 font-mono">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-bold text-white uppercase text-xs tracking-wider flex items-center gap-1.5">
+                        <Sparkles size={14} className="text-brand" /> Live Demographic &amp; Placement Breakdowns
+                      </h4>
+                      <span className="text-[10px] text-white/40">Powered by Zernio Ads API</span>
+                    </div>
+
+                    <div className="space-y-4">
+                      {/* 1. AGE BREAKDOWN */}
+                      {Array.isArray(selectedCampaignAnalyticsModal.analytics.breakdowns.age) && (
+                        <div className="bg-black/60 p-3.5 rounded-lg border border-white/10 space-y-2.5">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-brand text-[11px] uppercase tracking-wider">Age Distribution</span>
+                            <span className="text-[9px] text-white/40">Target Audience Groups</span>
+                          </div>
+                          <div className="space-y-2">
+                            {selectedCampaignAnalyticsModal.analytics.breakdowns.age.map((item: any, idx: number) => {
+                              const leads = item.funnel?.leads || item.actions?.lead || 0;
+                              return (
+                                <div key={idx} className="bg-zinc-900/90 p-2.5 rounded border border-white/5 space-y-1.5">
+                                  <div className="flex items-center justify-between text-xs">
+                                    <span className="font-bold text-white">{item.age || 'Age N/A'}</span>
+                                    <div className="flex items-center gap-3 text-[10px]">
+                                      <span className="text-white/60">Spend: <strong className="text-white">${Number(item.spend || 0).toFixed(2)}</strong></span>
+                                      <span className="text-cyan-300">Imps: <strong>{Number(item.impressions || 0).toLocaleString()}</strong></span>
+                                      <span className="text-emerald-400 font-bold">Leads: {leads}</span>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-4 text-[10px] text-white/50 border-t border-white/5 pt-1">
+                                    <span>Reach: <strong className="text-white/80">{Number(item.reach || 0).toLocaleString()}</strong></span>
+                                    <span>Clicks: <strong className="text-white/80">{Number(item.clicks || 0).toLocaleString()}</strong></span>
+                                    <span>CTR: <strong className="text-cyan-300">{Number(item.ctr || 0).toFixed(2)}%</strong></span>
+                                    <span>CPC: <strong className="text-white/80">${Number(item.cpc || 0).toFixed(2)}</strong></span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 2. GENDER BREAKDOWN */}
+                      {Array.isArray(selectedCampaignAnalyticsModal.analytics.breakdowns.gender) && (
+                        <div className="bg-black/60 p-3.5 rounded-lg border border-white/10 space-y-2.5">
+                          <span className="font-bold text-brand text-[11px] uppercase tracking-wider block">Gender Distribution</span>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            {selectedCampaignAnalyticsModal.analytics.breakdowns.gender.map((item: any, idx: number) => (
+                              <div key={idx} className="bg-zinc-900/90 p-2.5 rounded border border-white/5 space-y-1">
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="font-bold text-white capitalize">{item.gender || 'Unknown'}</span>
+                                  <span className="text-brand font-bold text-[10px]">${Number(item.spend || 0).toFixed(2)}</span>
+                                </div>
+                                <div className="text-[10px] text-white/60 flex items-center justify-between">
+                                  <span>Imps: {Number(item.impressions || 0).toLocaleString()}</span>
+                                  <span>Clicks: {Number(item.clicks || 0).toLocaleString()}</span>
+                                </div>
+                                <div className="text-[10px] text-cyan-300 font-bold">
+                                  CTR: {Number(item.ctr || 0).toFixed(2)}%
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 3. DEVICE PLATFORM */}
+                      {Array.isArray(selectedCampaignAnalyticsModal.analytics.breakdowns.device_platform) && (
+                        <div className="bg-black/60 p-3.5 rounded-lg border border-white/10 space-y-2.5">
+                          <span className="font-bold text-brand text-[11px] uppercase tracking-wider block">Device Platform Split</span>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            {selectedCampaignAnalyticsModal.analytics.breakdowns.device_platform.map((item: any, idx: number) => (
+                              <div key={idx} className="bg-zinc-900/90 p-2.5 rounded border border-white/5 space-y-1">
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="font-bold text-white uppercase">{String(item.device_platform || 'device').replace(/_/g, ' ')}</span>
+                                  <span className="text-emerald-400 font-bold text-[10px]">${Number(item.spend || 0).toFixed(2)}</span>
+                                </div>
+                                <div className="text-[10px] text-white/60 flex items-center justify-between">
+                                  <span>Imps: {Number(item.impressions || 0).toLocaleString()}</span>
+                                  <span>Clicks: {Number(item.clicks || 0).toLocaleString()}</span>
+                                </div>
+                                <div className="text-[10px] text-cyan-300 font-bold">
+                                  CTR: {Number(item.ctr || 0).toFixed(2)}%
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 4. PUBLISHER PLATFORM */}
+                      {Array.isArray(selectedCampaignAnalyticsModal.analytics.breakdowns.publisher_platform) && (
+                        <div className="bg-black/60 p-3.5 rounded-lg border border-white/10 space-y-2.5">
+                          <span className="font-bold text-brand text-[11px] uppercase tracking-wider block">Publisher Network Placement</span>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {selectedCampaignAnalyticsModal.analytics.breakdowns.publisher_platform.map((item: any, idx: number) => (
+                              <div key={idx} className="bg-zinc-900/90 p-2.5 rounded border border-white/5 flex items-center justify-between">
+                                <div>
+                                  <span className="font-bold text-white text-xs uppercase block">{item.publisher_platform || 'Placement'}</span>
+                                  <span className="text-[10px] text-white/50">{Number(item.impressions || 0).toLocaleString()} imps • {Number(item.clicks || 0).toLocaleString()} clicks</span>
+                                </div>
+                                <div className="text-right">
+                                  <span className="text-brand font-bold text-xs block">${Number(item.spend || 0).toFixed(2)}</span>
+                                  <span className="text-cyan-300 text-[10px] font-bold">CTR: {Number(item.ctr || 0).toFixed(2)}%</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 5. COUNTRY / GEOGRAPHY */}
+                      {Array.isArray(selectedCampaignAnalyticsModal.analytics.breakdowns.country) && (
+                        <div className="bg-black/60 p-3.5 rounded-lg border border-white/10 space-y-2.5">
+                          <span className="font-bold text-brand text-[11px] uppercase tracking-wider block">Country / Geography</span>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {selectedCampaignAnalyticsModal.analytics.breakdowns.country.map((item: any, idx: number) => (
+                              <div key={idx} className="bg-zinc-900/90 p-2.5 rounded border border-white/5 flex items-center justify-between">
+                                <div>
+                                  <span className="font-bold text-white text-xs block">Country: {item.country || 'Global'}</span>
+                                  <span className="text-[10px] text-white/50">{Number(item.reach || 0).toLocaleString()} reach • {item.funnel?.leads || item.actions?.lead || 0} leads</span>
+                                </div>
+                                <div className="text-right">
+                                  <span className="text-emerald-400 font-bold text-xs block">${Number(item.spend || 0).toFixed(2)}</span>
+                                  <span className="text-cyan-300 text-[10px] font-bold">{Number(item.clicks || 0).toLocaleString()} clicks</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
