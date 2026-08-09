@@ -180,6 +180,26 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const [boostPostGoal, setBoostPostGoal] = useState<string>('conversions');
   const [boostPostBudget, setBoostPostBudget] = useState<string>('200.00');
 
+  // Per-Campaign Deep Analytics Modal State & Handlers
+  const [selectedCampaignAnalyticsModal, setSelectedCampaignAnalyticsModal] = useState<any | null>(null);
+  const [isLoadingCampaignAnalytics, setIsLoadingCampaignAnalytics] = useState<boolean>(false);
+
+  const handleInspectCampaignAnalytics = async (campaignId: string, platform?: string) => {
+    setIsLoadingCampaignAnalytics(true);
+    setSelectedCampaignAnalyticsModal({ loading: true, campaignId });
+    try {
+      const headers = await getAuthHeaders();
+      const platParam = platform ? `?platform=${encodeURIComponent(platform)}` : '';
+      const res = await fetch(`/api/v1/ads/campaigns/${encodeURIComponent(campaignId)}/analytics${platParam}`, { headers });
+      const data = await safeFetchJson(res);
+      setSelectedCampaignAnalyticsModal(data);
+    } catch (e: any) {
+      setSelectedCampaignAnalyticsModal({ error: e.message });
+    } finally {
+      setIsLoadingCampaignAnalytics(false);
+    }
+  };
+
   // Historical Campaigns Import State & Handlers
   const [isImportingCampaigns, setIsImportingCampaigns] = useState<boolean>(false);
   const [importStatusMsg, setImportStatusMsg] = useState<string | null>(null);
@@ -1633,6 +1653,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                         <th className="pb-2">CTR / CPC</th>
                         <th className="pb-2">Conversions</th>
                         <th className="pb-2">ROAS (x)</th>
+                        <th className="pb-2 text-right">Analytics</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5 text-white/80">
@@ -1652,8 +1673,10 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                             roas: c.roas ? `${c.roas}x` : '0.00x'
                           }))
                       ).map(item => (
-                        <tr key={item.id} className="hover:bg-white/5">
-                          <td className="py-2.5 font-bold text-white">{item.name}</td>
+                        <tr key={item.id} className="hover:bg-white/5 cursor-pointer" onClick={() => handleInspectCampaignAnalytics(item.id, item.platform)}>
+                          <td className="py-2.5 font-bold text-white flex items-center gap-2">
+                            <span>{item.name}</span>
+                          </td>
                           <td className="py-2.5 text-brand">{item.platform}</td>
                           <td className="py-2.5">
                             <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${
@@ -1671,6 +1694,17 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                           <td className="py-2.5 text-cyan-300">{item.ctr || '0.00%'} / {item.cpc || '$0.00'}</td>
                           <td className="py-2.5 text-emerald-400 font-bold">{item.conversions || 0}</td>
                           <td className="py-2.5 text-brand font-bold">{item.roas || '0.00x'}</td>
+                          <td className="py-2.5 text-right">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleInspectCampaignAnalytics(item.id, item.platform);
+                              }}
+                              className="bg-brand/20 text-brand border border-brand/30 hover:bg-brand/30 text-[10px] font-bold px-2.5 py-1 rounded uppercase tracking-wider transition-all"
+                            >
+                              Deep Analytics
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -2407,6 +2441,83 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
               )}
 
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── MODAL: SINGLE CAMPAIGN DEEP ANALYTICS ─── */}
+      {selectedCampaignAnalyticsModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-zinc-950 border border-brand/40 shadow-glow rounded-xl max-w-2xl w-full p-6 relative animate-in fade-in zoom-in duration-200 space-y-5 max-h-[90vh] flex flex-col font-mono">
+            <div className="flex items-center justify-between border-b border-white/10 pb-4 shrink-0">
+              <div>
+                <h3 className="font-bold text-base text-white uppercase tracking-wider flex items-center gap-2">
+                  <BarChart2 size={18} className="text-brand" /> Single Campaign Performance Analytics
+                </h3>
+                <p className="text-xs text-white/50 mt-1">
+                  {selectedCampaignAnalyticsModal.campaign?.name || 'Campaign'} ({selectedCampaignAnalyticsModal.campaign?.platform || 'Ad Network'})
+                </p>
+              </div>
+              <button onClick={() => setSelectedCampaignAnalyticsModal(null)} className="text-white/60 hover:text-white p-1 cursor-pointer">
+                <X size={18} />
+              </button>
+            </div>
+
+            {selectedCampaignAnalyticsModal.loading ? (
+              <div className="p-8 text-center text-white/50 text-xs animate-pulse">
+                Fetching campaign summary metrics, timeline, and demographic breakdowns from Zernio Ads API...
+              </div>
+            ) : (
+              <div className="overflow-y-auto space-y-4 text-xs pr-1">
+                {/* KPI Summary Cards */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <div className="bg-black p-3 rounded border border-white/10">
+                    <span className="text-[9px] text-white/40 uppercase block">Total Spend</span>
+                    <span className="text-sm font-bold text-white">${Number(selectedCampaignAnalyticsModal.analytics?.summary?.spend || 0).toFixed(2)}</span>
+                  </div>
+                  <div className="bg-black p-3 rounded border border-white/10">
+                    <span className="text-[9px] text-white/40 uppercase block">Impressions / Reach</span>
+                    <span className="text-sm font-bold text-cyan-300">
+                      {Number(selectedCampaignAnalyticsModal.analytics?.summary?.impressions || 0).toLocaleString()} / {Number(selectedCampaignAnalyticsModal.analytics?.summary?.reach || 0).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="bg-black p-3 rounded border border-white/10">
+                    <span className="text-[9px] text-white/40 uppercase block">Conversions</span>
+                    <span className="text-sm font-bold text-emerald-400">{Number(selectedCampaignAnalyticsModal.analytics?.summary?.conversions || 0)}</span>
+                  </div>
+                  <div className="bg-black p-3 rounded border border-white/10">
+                    <span className="text-[9px] text-white/40 uppercase block">ROAS</span>
+                    <span className="text-sm font-bold text-brand">{selectedCampaignAnalyticsModal.analytics?.summary?.roas ? `${selectedCampaignAnalyticsModal.analytics.summary.roas}x` : '0.00x'}</span>
+                  </div>
+                </div>
+
+                {/* Additional Metrics Row */}
+                <div className="grid grid-cols-3 gap-2.5 bg-black/60 p-3 rounded border border-white/5 text-[11px]">
+                  <div>
+                    <span className="text-white/40 text-[9px] uppercase block">CTR</span>
+                    <span className="text-white font-bold">{selectedCampaignAnalyticsModal.analytics?.summary?.ctr ? `${selectedCampaignAnalyticsModal.analytics.summary.ctr}%` : '0.00%'}</span>
+                  </div>
+                  <div>
+                    <span className="text-white/40 text-[9px] uppercase block">CPC</span>
+                    <span className="text-white font-bold">${Number(selectedCampaignAnalyticsModal.analytics?.summary?.cpc || 0).toFixed(2)}</span>
+                  </div>
+                  <div>
+                    <span className="text-white/40 text-[9px] uppercase block">Purchase Value</span>
+                    <span className="text-emerald-400 font-bold">${Number(selectedCampaignAnalyticsModal.analytics?.summary?.purchaseValue || 0).toFixed(2)}</span>
+                  </div>
+                </div>
+
+                {/* Demographic Breakdowns */}
+                {selectedCampaignAnalyticsModal.analytics?.breakdowns && Object.keys(selectedCampaignAnalyticsModal.analytics.breakdowns).length > 0 && (
+                  <div className="bg-black p-4 rounded border border-white/10 space-y-3">
+                    <span className="font-bold text-white uppercase text-xs block">Live Meta/LinkedIn Demographic Breakdowns</span>
+                    <pre className="text-[10px] text-emerald-400 overflow-x-auto">
+                      {JSON.stringify(selectedCampaignAnalyticsModal.analytics.breakdowns, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

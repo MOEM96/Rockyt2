@@ -1547,19 +1547,47 @@ function startServer() {
           const zData = await zRes.json();
           const rawCamps = zData.campaigns || zData.data || [];
           for (const raw of rawCamps) {
+            const platformCampId = raw.platformCampaignId || raw.id || raw._id;
+            let summaryMetrics = raw.metrics || {};
+            let breakdownsData = {};
+
+            // Fetch live de-duplicated campaign analytics per campaign (730-day window)
+            if (platformCampId && apiKey) {
+              try {
+                const platParam = raw.platform ? `&platform=${encodeURIComponent(raw.platform)}` : '';
+                const cAnalyticsRes = await fetch(`https://zernio.com/api/v1/ads/campaigns/${encodeURIComponent(platformCampId)}/analytics?fromDate=${fromDate}&toDate=${toDate}${platParam}&breakdowns=age,gender,country,device_platform,publisher_platform`, {
+                  headers: { 'Authorization': `Bearer ${apiKey}` }
+                });
+                if (cAnalyticsRes.ok) {
+                  const cData = await cAnalyticsRes.json();
+                  if (cData.analytics?.summary) {
+                    summaryMetrics = { ...summaryMetrics, ...cData.analytics.summary };
+                  }
+                  if (cData.analytics?.breakdowns) {
+                    breakdownsData = cData.analytics.breakdowns;
+                  }
+                }
+              } catch (cErr: any) {
+                console.warn(`[campaigns/import] Per-campaign analytics notice for ${platformCampId}:`, cErr.message);
+              }
+            }
+
             const campObj = {
-              id: raw.platformCampaignId || raw.id || raw._id || `camp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+              id: platformCampId || `camp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
               user_id: req.user?.id || '00000000-0000-0000-0000-000000000001',
               name: raw.campaignName || raw.name || 'Historical Campaign',
               platform: raw.platform || 'Meta Ads',
               objective: raw.platformObjective || raw.objective || 'CONVERSIONS',
               status: String(raw.status || raw.platformCampaignStatus || 'ACTIVE').toUpperCase(),
               daily_budget: Number(raw.budget?.amount || raw.campaignBudget?.amount || raw.daily_budget || 100),
-              spend: Number(raw.metrics?.spend || raw.spend || 0),
-              impressions: Number(raw.metrics?.impressions || raw.impressions || 0),
-              clicks: Number(raw.metrics?.clicks || raw.clicks || 0),
-              conversions: Number(raw.metrics?.conversions || raw.conversions || 0),
-              roas: Number(raw.metrics?.roas || raw.roas || 0),
+              spend: Number(summaryMetrics.spend || raw.spend || 0),
+              impressions: Number(summaryMetrics.impressions || raw.impressions || 0),
+              clicks: Number(summaryMetrics.clicks || raw.clicks || 0),
+              conversions: Number(summaryMetrics.conversions || raw.conversions || 0),
+              roas: Number(summaryMetrics.roas || raw.roas || 0),
+              reach: Number(summaryMetrics.reach || 0),
+              purchase_value: Number(summaryMetrics.purchaseValue || 0),
+              breakdowns: breakdownsData,
               created_at: raw.createdAt || raw.created_at || new Date().toISOString(),
               updated_at: new Date().toISOString()
             };
@@ -1594,9 +1622,70 @@ function startServer() {
 
     return res.json({
       success: true,
-      message: `Successfully imported ${importedCampaigns.length} historical campaigns and performance data.`,
+      message: `Successfully imported ${importedCampaigns.length} historical campaigns with full per-campaign analytics.`,
       importedCount: importedCampaigns.length,
       campaigns: importedCampaigns
+    });
+  }));
+
+  // Per-Campaign Analytics API Endpoint (/api/v1/ads/campaigns/:campaignId/analytics)
+  app.get('/api/v1/ads/campaigns/:campaignId/analytics', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { campaignId } = req.params;
+    const { platform, breakdowns = 'age,gender,country,device_platform,publisher_platform', startDate, endDate } = req.query || {};
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+
+    const fromDate = startDate || new Date(Date.now() - 730 * 86400000).toISOString().split('T')[0];
+    const toDate = endDate || new Date().toISOString().split('T')[0];
+
+    if (apiKey) {
+      try {
+        const platParam = platform ? `&platform=${encodeURIComponent(String(platform))}` : '';
+        const zRes = await fetch(`https://zernio.com/api/v1/ads/campaigns/${encodeURIComponent(campaignId)}/analytics?fromDate=${fromDate}&toDate=${toDate}&breakdowns=${breakdowns}${platParam}`, {
+          headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        if (zRes.ok || zRes.status === 202) {
+          const zData = await zRes.json();
+          return res.json({ success: true, ...zData });
+        }
+      } catch (e: any) {
+        console.warn(`[GET /api/v1/ads/campaigns/${campaignId}/analytics] Zernio fetch notice:`, e.message);
+      }
+    }
+
+    // DB Fallback for Campaign Analytics
+    let campData: any = null;
+    if (supabase && req.user?.id) {
+      try {
+        const { data } = await supabase.from('ad_campaigns').select('*').eq('id', campaignId).maybeSingle();
+        if (data) campData = data;
+      } catch (e) {}
+    }
+
+    const summary = {
+      spend: Number(campData?.spend || 0),
+      impressions: Number(campData?.impressions || 0),
+      clicks: Number(campData?.clicks || 0),
+      conversions: Number(campData?.conversions || 0),
+      ctr: campData?.impressions > 0 ? Number(((campData.clicks / campData.impressions) * 100).toFixed(2)) : 0,
+      cpc: campData?.clicks > 0 ? Number((campData.spend / campData.clicks).toFixed(2)) : 0,
+      roas: Number(campData?.roas || 0),
+      reach: Number(campData?.reach || 0),
+      purchaseValue: Number(campData?.purchase_value || 0)
+    };
+
+    return res.json({
+      success: true,
+      campaign: {
+        id: campaignId,
+        name: campData?.name || 'Campaign',
+        platform: campData?.platform || 'Meta Ads',
+        status: campData?.status || 'ACTIVE'
+      },
+      analytics: {
+        summary,
+        daily: [],
+        breakdowns: campData?.breakdowns || {}
+      }
     });
   }));
 
