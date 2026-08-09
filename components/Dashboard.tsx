@@ -1237,29 +1237,50 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
               </div>
             </div>
 
-            {/* Platform Filter Buttons */}
-            <div className="flex items-center gap-2 overflow-x-auto pb-2 border-b border-white/5 text-xs font-mono scrollbar-none">
-              <span className="text-white/40 text-[10px] uppercase font-bold mr-2">Filter Network:</span>
-              {['ALL', 'Meta Ads', 'Google Ads', 'TikTok Ads', 'LinkedIn Ads', 'Pinterest Ads', 'X Ads', 'OpenAI Ads'].map(plat => (
-                <button
-                  key={plat}
-                  onClick={() => setSelectedAdsPlatform(plat)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-bold uppercase transition-all whitespace-nowrap cursor-pointer ${
-                    selectedAdsPlatform === plat
-                      ? 'bg-brand text-white shadow-glow border border-brand/40'
-                      : 'bg-zinc-900 text-white/60 hover:text-white hover:bg-zinc-800 border border-white/10'
-                  }`}
+            {/* Filter Controls Bar: Platform & Status */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-white/5 text-xs font-mono">
+              <div className="flex items-center gap-2 overflow-x-auto scrollbar-none">
+                <span className="text-white/40 text-[10px] uppercase font-bold mr-1">Network:</span>
+                {['ALL', 'Meta Ads', 'Google Ads', 'TikTok Ads', 'LinkedIn Ads', 'Pinterest Ads', 'X Ads', 'OpenAI Ads'].map(plat => (
+                  <button
+                    key={plat}
+                    onClick={() => setSelectedAdsPlatform(plat)}
+                    className={`px-3 py-1 rounded-full text-xs font-bold uppercase transition-all whitespace-nowrap cursor-pointer ${
+                      selectedAdsPlatform === plat
+                        ? 'bg-brand text-white shadow-glow border border-brand/40'
+                        : 'bg-zinc-900 text-white/60 hover:text-white hover:bg-zinc-800 border border-white/10'
+                    }`}
+                  >
+                    {plat}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-white/40 text-[10px] uppercase font-bold">Status:</span>
+                <select
+                  value={reportStatusFilter}
+                  onChange={(e) => setReportStatusFilter(e.target.value)}
+                  className="bg-zinc-900 border border-white/15 text-white font-bold px-3 py-1 rounded outline-none focus:border-brand cursor-pointer text-xs"
                 >
-                  {plat}
-                </button>
-              ))}
+                  <option value="ALL">All Statuses (Historical)</option>
+                  <option value="ACTIVE">Active Only</option>
+                  <option value="PAUSED">Paused Only</option>
+                  <option value="COMPLETED">Completed Only</option>
+                  <option value="ARCHIVED">Archived Only</option>
+                  <option value="DRAFT">Draft Only</option>
+                </select>
+              </div>
             </div>
 
-            {/* Campaign Grid */}
+            {/* Historical Campaign Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {adCampaigns.filter(ad => selectedAdsPlatform === 'ALL' || (typeof ad.platform === 'string' && ad.platform.toLowerCase().includes(selectedAdsPlatform.toLowerCase().replace(' ads', '')))).length > 0 ? (
+              {adCampaigns
+                .filter(ad => selectedAdsPlatform === 'ALL' || (typeof ad.platform === 'string' && ad.platform.toLowerCase().includes(selectedAdsPlatform.toLowerCase().replace(' ads', ''))))
+                .filter(ad => reportStatusFilter === 'ALL' || String(ad.status || 'ACTIVE').toUpperCase() === reportStatusFilter.toUpperCase()).length > 0 ? (
                 adCampaigns
                   .filter(ad => selectedAdsPlatform === 'ALL' || (typeof ad.platform === 'string' && ad.platform.toLowerCase().includes(selectedAdsPlatform.toLowerCase().replace(' ads', ''))))
+                  .filter(ad => reportStatusFilter === 'ALL' || String(ad.status || 'ACTIVE').toUpperCase() === reportStatusFilter.toUpperCase())
                   .map(ad => (
                     <div key={ad.id} className="bg-zinc-950 border border-white/15 rounded-xl p-5 space-y-4 shadow-xl hover:border-brand/50 transition-all flex flex-col justify-between">
                       <div className="space-y-3">
@@ -1268,7 +1289,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                             <span className="font-bold text-white text-sm block leading-snug">{typeof ad.name === 'string' ? ad.name : 'Ad Campaign'}</span>
                             <span className="text-[10px] text-white/40 font-mono">ID: {ad.id}</span>
                           </div>
-                          <span className="bg-brand/20 text-brand px-2 py-0.5 rounded text-[10px] uppercase font-bold border border-brand/30 shrink-0">
+                          <span className="bg-brand/20 text-brand px-2 py-0.5 rounded text-[10px] uppercase font-bold border border-brand/30 shrink-0 font-mono">
                             {typeof ad.platform === 'string' ? ad.platform : 'Meta Ads'}
                           </span>
                         </div>
@@ -1298,10 +1319,10 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                           </div>
                           <div>
                             <span className="text-white/40 text-[9px] uppercase block font-mono">Total Spend</span>
-                            <span className="text-white font-semibold">${typeof ad.spend === 'number' || typeof ad.spend === 'string' ? ad.spend : 0}</span>
+                            <span className="text-white font-semibold">${typeof ad.spend === 'number' || typeof ad.spend === 'string' ? Number(ad.spend).toFixed(2) : '0.00'}</span>
                           </div>
                           <div>
-                            <span className="text-white/40 text-[9px] uppercase block font-mono">Target ROAS</span>
+                            <span className="text-white/40 text-[9px] uppercase block font-mono">ROAS</span>
                             <span className="text-brand font-bold">{ad.roas ? `${ad.roas}x` : '0.00x'}</span>
                           </div>
                         </div>
@@ -1312,7 +1333,11 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
                             ad.status === 'ACTIVE'
                               ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                              : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                              : ad.status === 'PAUSED'
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                : ad.status === 'COMPLETED'
+                                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+                                  : 'bg-zinc-800 text-white/50 border border-white/10'
                           }`}>
                             {typeof ad.status === 'string' ? ad.status : 'ACTIVE'}
                           </span>
@@ -1340,9 +1365,9 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                 <div className="col-span-full bg-zinc-950 border border-white/10 rounded-lg p-10 text-center space-y-4">
                   <Megaphone size={36} className="mx-auto text-white/20" />
                   <div>
-                    <h3 className="font-bold text-base text-white">No Ad Campaigns Found</h3>
+                    <h3 className="font-bold text-base text-white">No Historical Campaigns Found</h3>
                     <p className="text-xs text-white/50 mt-1 max-w-md mx-auto">
-                      No campaigns exist for the selected network filter. Launch a new campaign to begin tracking.
+                      No campaigns match the selected network or status filter. Launch a new campaign to populate real API data.
                     </p>
                   </div>
                   <button
@@ -1366,7 +1391,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                   <BarChart2 className="text-brand" size={24} /> Ad Analytics &amp; ROAS
                 </h1>
                 <p className="text-xs text-white/50 mt-1">
-                  Real-time performance analytics calculated directly from Zernio Ads API &amp; database
+                  Real-time performance analytics calculated directly from Zernio Ads API &amp; connected ad accounts
                 </p>
               </div>
 
@@ -1388,9 +1413,10 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                   onChange={(e) => setReportStatusFilter(e.target.value)}
                   className="bg-zinc-900 border border-white/15 text-white font-bold px-3 py-2 rounded outline-none focus:border-brand cursor-pointer"
                 >
-                  <option value="ALL">All Campaigns</option>
+                  <option value="ALL">All Statuses</option>
                   <option value="ACTIVE">Active Only</option>
                   <option value="PAUSED">Paused Only</option>
+                  <option value="COMPLETED">Completed Only</option>
                 </select>
 
                 <button
@@ -1438,30 +1464,73 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
               </div>
             </div>
 
-            {/* Platform Performance Breakdown */}
-            <div className="bg-zinc-950 border border-white/10 rounded-lg p-5">
-              <h4 className="font-bold text-sm text-white mb-4 uppercase tracking-wider">Live Ad Network Performance Breakdown</h4>
-              {analyticsData?.byPlatform && Object.keys(analyticsData.byPlatform).length > 0 ? (
-                <div className="space-y-4 text-xs">
-                  {Object.entries(analyticsData.byPlatform).map(([plat, metrics]) => (
-                    <div key={plat} className="bg-black/40 p-4 rounded border border-white/5 space-y-2">
-                      <div className="flex justify-between items-center text-white/90 font-mono">
-                        <span className="font-bold text-white text-sm">{plat}</span>
-                        <span className="text-emerald-400 font-bold">
-                          ${metrics.spend.toFixed(2)} Spend / ${metrics.revenue.toFixed(2)} Revenue ({metrics.roas.toFixed(2)}x ROAS)
-                        </span>
-                      </div>
-                      <div className="w-full bg-black h-2 rounded overflow-hidden">
-                        <div
-                          className="bg-brand h-full rounded"
-                          style={{ width: `${Math.min(100, Math.max(5, (metrics.spend / (analyticsData.totalSpend || 1)) * 100))}%` }}
-                        />
-                      </div>
-                    </div>
-                  ))}
+            {/* Campaign-by-Campaign Analytics Table */}
+            <div className="bg-zinc-950 border border-white/15 rounded-lg p-5 space-y-4">
+              <h4 className="font-bold text-sm text-white uppercase tracking-wider flex items-center justify-between">
+                <span>Campaign-by-Campaign Historical Analytics Breakdown</span>
+                <span className="text-[10px] text-white/40 font-mono">Fetched via Connected Ad Accounts API</span>
+              </h4>
+
+              {(analyticsData?.campaignBreakdown && analyticsData.campaignBreakdown.length > 0) || adCampaigns.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs font-mono">
+                    <thead>
+                      <tr className="border-b border-white/10 text-white/40 uppercase">
+                        <th className="pb-2">Campaign Name</th>
+                        <th className="pb-2">Network</th>
+                        <th className="pb-2">Status</th>
+                        <th className="pb-2">Spend ($)</th>
+                        <th className="pb-2">Impressions / Clicks</th>
+                        <th className="pb-2">CTR / CPC</th>
+                        <th className="pb-2">Conversions</th>
+                        <th className="pb-2">ROAS (x)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5 text-white/80">
+                      {((analyticsData?.campaignBreakdown && analyticsData.campaignBreakdown.length > 0)
+                        ? analyticsData.campaignBreakdown
+                        : adCampaigns.map(c => ({
+                            id: c.id,
+                            name: c.name,
+                            platform: c.platform,
+                            status: c.status,
+                            spend: c.spend || 0,
+                            impressions: c.impressions || 0,
+                            clicks: c.clicks || 0,
+                            conversions: c.conversions || 0,
+                            ctr: c.impressions > 0 ? ((c.clicks / c.impressions) * 100).toFixed(2) + '%' : '0.00%',
+                            cpc: c.clicks > 0 ? '$' + (c.spend / c.clicks).toFixed(2) : '$0.00',
+                            roas: c.roas ? `${c.roas}x` : '0.00x'
+                          }))
+                      ).map(item => (
+                        <tr key={item.id} className="hover:bg-white/5">
+                          <td className="py-2.5 font-bold text-white">{item.name}</td>
+                          <td className="py-2.5 text-brand">{item.platform}</td>
+                          <td className="py-2.5">
+                            <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${
+                              item.status === 'ACTIVE'
+                                ? 'bg-emerald-500/20 text-emerald-400'
+                                : item.status === 'PAUSED'
+                                  ? 'bg-amber-500/20 text-amber-300'
+                                  : 'bg-zinc-800 text-white/40'
+                            }`}>
+                              {item.status || 'ACTIVE'}
+                            </span>
+                          </td>
+                          <td className="py-2.5 font-bold text-white">${Number(item.spend || 0).toFixed(2)}</td>
+                          <td className="py-2.5 text-white/60">{item.impressions?.toLocaleString() || 0} / {item.clicks?.toLocaleString() || 0}</td>
+                          <td className="py-2.5 text-cyan-300">{item.ctr || '0.00%'} / {item.cpc || '$0.00'}</td>
+                          <td className="py-2.5 text-emerald-400 font-bold">{item.conversions || 0}</td>
+                          <td className="py-2.5 text-brand font-bold">{item.roas || '0.00x'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               ) : (
-                <p className="text-xs text-white/40 italic font-mono">No network breakdown metrics recorded yet for this date range.</p>
+                <div className="p-8 text-center text-white/40 text-xs font-mono border border-white/5 rounded">
+                  No campaign analytics returned from connected ad accounts yet.
+                </div>
               )}
             </div>
           </div>

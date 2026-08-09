@@ -1674,12 +1674,15 @@ function startServer() {
     }
 
     // 2. Compute exact metrics from Supabase database for the user
+    const campaignBreakdown: any[] = [];
+
     if (supabase && req.user?.id) {
       try {
         const { data: camps } = await supabase
           .from('ad_campaigns')
           .select('*')
-          .eq('user_id', req.user.id);
+          .eq('user_id', req.user.id)
+          .order('created_at', { ascending: false });
 
         if (camps && camps.length > 0) {
           for (const c of camps) {
@@ -1698,6 +1701,25 @@ function startServer() {
             }
             platformBreakdown[plat].spend += s;
             platformBreakdown[plat].conversions += conv;
+
+            const ctr = imp > 0 ? ((clk / imp) * 100).toFixed(2) + '%' : '0.00%';
+            const cpc = clk > 0 ? '$' + (s / clk).toFixed(2) : '$0.00';
+            const roasVal = s > 0 ? (Number(c.roas || 0)).toFixed(2) + 'x' : '0.00x';
+
+            campaignBreakdown.push({
+              id: c.id,
+              name: c.name || 'Ad Campaign',
+              platform: c.platform || 'Meta Ads',
+              status: c.status || 'ACTIVE',
+              spend: s,
+              impressions: imp,
+              clicks: clk,
+              conversions: conv,
+              ctr,
+              cpc,
+              roas: roasVal,
+              created_at: c.created_at
+            });
           }
         }
 
@@ -1733,15 +1755,16 @@ function startServer() {
       avgCpc: totalClicks > 0 ? '$' + (totalSpend / totalClicks).toFixed(2) : '$0',
       avgRoas: totalSpend > 0 ? (totalAttributedRevenue / totalSpend).toFixed(2) + 'x' : '0x',
       totalAttributedRevenue: Number(totalAttributedRevenue.toFixed(2)),
-      byPlatform: platformBreakdown
+      byPlatform: platformBreakdown,
+      campaignBreakdown
     };
 
     if (format === 'csv') {
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', 'attachment; filename="rockyt-ad-analytics.csv"');
-      const csvLines = ['Platform,Spend,Attributed Revenue,ROAS,Conversions'];
-      for (const p in platformBreakdown) {
-        csvLines.push(`${p},${platformBreakdown[p].spend},${platformBreakdown[p].revenue},${platformBreakdown[p].roas},${platformBreakdown[p].conversions}`);
+      const csvLines = ['Campaign Name,Platform,Status,Spend,Impressions,Clicks,Conversions,CTR,CPC,ROAS'];
+      for (const cb of campaignBreakdown) {
+        csvLines.push(`"${cb.name}",${cb.platform},${cb.status},${cb.spend},${cb.impressions},${cb.clicks},${cb.conversions},${cb.ctr},${cb.cpc},${cb.roas}`);
       }
       return res.send(csvLines.join('\n'));
     }
