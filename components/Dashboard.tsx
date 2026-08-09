@@ -180,10 +180,39 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const [boostPostGoal, setBoostPostGoal] = useState<string>('conversions');
   const [boostPostBudget, setBoostPostBudget] = useState<string>('200.00');
 
+  // Historical Campaigns Import State & Handlers
+  const [isImportingCampaigns, setIsImportingCampaigns] = useState<boolean>(false);
+  const [importStatusMsg, setImportStatusMsg] = useState<string | null>(null);
+
+  const handleImportHistoricalCampaigns = async () => {
+    setIsImportingCampaigns(true);
+    setImportStatusMsg('Importing all historical campaigns & real performance data from connected ad networks...');
+    try {
+      const headers = await getAuthHeaders();
+      const res = await fetch('/api/v1/ads/campaigns/import', {
+        method: 'POST',
+        headers
+      });
+      const data = await safeFetchJson(res);
+      if (data.success && Array.isArray(data.campaigns)) {
+        setAdCampaigns(data.campaigns);
+        setImportStatusMsg(`✅ ${data.message || `Successfully imported ${data.importedCount} historical campaigns!`}`);
+        await fetchLiveData();
+      } else {
+        setImportStatusMsg(`❌ Import notice: ${data.error || 'No historical campaigns returned.'}`);
+      }
+    } catch (e: any) {
+      setImportStatusMsg(`❌ Import error: ${e.message}`);
+    } finally {
+      setIsImportingCampaigns(false);
+    }
+  };
+
   const handleFetchAdsTree = async () => {
     setExplorerStatusMsg('Fetching Ad Hierarchy Tree via GET /api/v1/ads/tree...');
     try {
-      const res = await fetch('/api/v1/ads/tree');
+      const headers = await getAuthHeaders();
+      const res = await fetch('/api/v1/ads/tree', { headers });
       const data = await safeFetchJson(res);
       if (data.tree) {
         setApiTreeData(data.tree);
@@ -197,7 +226,8 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const handleFetchAudiences = async () => {
     setExplorerStatusMsg('Fetching audiences via GET /api/v1/ads/audiences...');
     try {
-      const res = await fetch('/api/v1/ads/audiences');
+      const headers = await getAuthHeaders();
+      const res = await fetch('/api/v1/ads/audiences', { headers });
       const data = await safeFetchJson(res);
       if (data.audiences) {
         setApiAudiencesData(data.audiences);
@@ -209,7 +239,8 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const handleSearchTargeting = async (queryStr: string) => {
     setExplorerStatusMsg(`Searching geo/interests via GET /api/v1/ads/targeting/search?q=${queryStr}...`);
     try {
-      const res = await fetch(`/api/v1/ads/targeting/search?q=${encodeURIComponent(queryStr)}`);
+      const headers = await getAuthHeaders();
+      const res = await fetch(`/api/v1/ads/targeting/search?q=${encodeURIComponent(queryStr)}`, { headers });
       const data = await safeFetchJson(res);
       if (data.results) {
         setTargetingSearchResults(data.results);
@@ -225,9 +256,10 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     }
     setExplorerStatusMsg(`Executing POST /api/v1/ads/campaigns/bulk-status for ${bulkSelectedCampaignIds.length} campaigns...`);
     try {
+      const headers = await getAuthHeaders();
       const res = await fetch('/api/v1/ads/campaigns/bulk-status', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ status: targetStatus, campaigns: bulkSelectedCampaignIds })
       });
       const data = await safeFetchJson(res);
@@ -244,9 +276,10 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     e.preventDefault();
     setExplorerStatusMsg('Executing POST /api/v1/ads/boost...');
     try {
+      const headers = await getAuthHeaders();
       const res = await fetch('/api/v1/ads/boost', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           name: boostPostName,
           platform: boostPostPlatform,
@@ -265,9 +298,10 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     const nextStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
     setAdCampaigns(prev => prev.map(c => c.id === campaignId ? { ...c, status: nextStatus } : c));
     try {
+      const headers = await getAuthHeaders();
       await fetch(`/api/v1/ads/campaigns/${campaignId}/status`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ status: nextStatus })
       });
     } catch (e) {
@@ -283,9 +317,10 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
 
     setAdCampaigns(prev => prev.map(c => c.id === campaignId ? { ...c, daily_budget: numBudget } : c));
     try {
+      const headers = await getAuthHeaders();
       await fetch(`/api/v1/ads/campaigns/${campaignId}/status`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ dailyBudget: numBudget })
       });
     } catch (e) {}
@@ -295,9 +330,10 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     e.preventDefault();
     if (!newCampName) return;
     try {
+      const headers = await getAuthHeaders();
       const res = await fetch('/api/v1/ads/campaigns', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           name: newCampName,
           platform: newCampPlatform,
@@ -1326,13 +1362,12 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
 
               <div className="flex flex-wrap items-center gap-3">
                 <button
-                  onClick={() => {
-                    setShowAdsApiExplorerModal(true);
-                    handleFetchAdsTree();
-                  }}
-                  className="bg-zinc-900 border border-brand/40 text-brand hover:bg-brand/10 text-xs font-bold px-4 py-2.5 rounded shadow-glow flex items-center gap-2 uppercase tracking-wider cursor-pointer transition-all"
+                  onClick={handleImportHistoricalCampaigns}
+                  disabled={isImportingCampaigns}
+                  className="bg-brand/20 hover:bg-brand/30 border border-brand/40 text-white text-xs font-bold px-4 py-2.5 rounded shadow-glow flex items-center gap-2 uppercase tracking-wider cursor-pointer transition-all disabled:opacity-50"
                 >
-                  <Sparkles size={16} /> Execute Ads API &amp; Deep Insights
+                  <Download size={16} className={isImportingCampaigns ? 'animate-bounce text-brand' : 'text-brand'} />
+                  <span>{isImportingCampaigns ? 'Importing Historical Data...' : 'Import All Historical Campaigns & Data'}</span>
                 </button>
                 <button
                   onClick={() => setShowCreateCampaignModal(true)}
@@ -1342,6 +1377,13 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                 </button>
               </div>
             </div>
+
+            {importStatusMsg && (
+              <div className="p-3 bg-zinc-900 border border-brand/30 rounded text-xs font-mono text-white flex items-center justify-between animate-in fade-in">
+                <span>{importStatusMsg}</span>
+                <button onClick={() => setImportStatusMsg(null)} className="text-white/40 hover:text-white ml-3">✕</button>
+              </div>
+            )}
 
             {/* Filter Controls Bar: Platform & Status */}
             <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-white/5 text-xs font-mono">

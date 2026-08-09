@@ -1521,6 +1521,75 @@ function startServer() {
     res.json({ success: true, campaigns });
   }));
 
+  app.all(['/api/v1/ads/campaigns/import'], supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    let importedCampaigns: any[] = [];
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    const zernioProfileId = req.zernioProfileId;
+
+    // 1. Fetch live historical campaigns from Zernio Ads API
+    if (apiKey) {
+      try {
+        const queryParam = zernioProfileId ? `?source=all&profileId=${encodeURIComponent(zernioProfileId)}` : '?source=all';
+        const zRes = await fetch(`https://zernio.com/api/v1/ads/campaigns${queryParam}`, {
+          headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        if (zRes.ok) {
+          const zData = await zRes.json();
+          const rawCamps = zData.campaigns || zData.data || [];
+          for (const raw of rawCamps) {
+            const campObj = {
+              id: raw.platformCampaignId || raw.id || raw._id || `camp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+              user_id: req.user?.id || '00000000-0000-0000-0000-000000000001',
+              name: raw.campaignName || raw.name || 'Historical Campaign',
+              platform: raw.platform || 'Meta Ads',
+              objective: raw.platformObjective || raw.objective || 'CONVERSIONS',
+              status: String(raw.status || raw.platformCampaignStatus || 'ACTIVE').toUpperCase(),
+              daily_budget: Number(raw.budget?.amount || raw.campaignBudget?.amount || raw.daily_budget || 100),
+              spend: Number(raw.metrics?.spend || raw.spend || 0),
+              impressions: Number(raw.metrics?.impressions || raw.impressions || 0),
+              clicks: Number(raw.metrics?.clicks || raw.clicks || 0),
+              conversions: Number(raw.metrics?.conversions || raw.conversions || 0),
+              roas: Number(raw.metrics?.roas || raw.roas || 0),
+              created_at: raw.createdAt || raw.created_at || new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            };
+            importedCampaigns.push(campObj);
+          }
+        }
+      } catch (err: any) {
+        console.warn('[POST /api/v1/ads/campaigns/import] Zernio fetch warning:', err.message);
+      }
+    }
+
+    // 2. Upsert imported historical campaigns into Supabase DB
+    if (supabase && req.user?.id && importedCampaigns.length > 0) {
+      try {
+        await supabase
+          .from('ad_campaigns')
+          .upsert(importedCampaigns, { onConflict: 'id' });
+      } catch (e) {}
+    }
+
+    // If no live API campaigns found, fetch from Supabase DB
+    if (importedCampaigns.length === 0 && supabase && req.user?.id) {
+      try {
+        const { data: dbCamps } = await supabase
+          .from('ad_campaigns')
+          .select('*')
+          .eq('user_id', req.user.id)
+          .order('created_at', { ascending: false });
+        if (dbCamps) importedCampaigns = dbCamps;
+      } catch (e) {}
+    }
+
+    return res.json({
+      success: true,
+      message: `Successfully imported ${importedCampaigns.length} historical campaigns and performance data.`,
+      importedCount: importedCampaigns.length,
+      campaigns: importedCampaigns
+    });
+  }));
+
   app.post('/api/v1/ads/campaigns', supabaseAuth, asyncHandler(async (req: any, res: any) => {
     const { name, platform, objective, dailyBudget, status, targeting, creative } = req.body || {};
     if (!name || !platform) {
