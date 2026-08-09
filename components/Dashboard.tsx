@@ -96,7 +96,7 @@ interface PostItem {
   comments?: number;
 }
 
-type TabType = 'ads' | 'connections' | 'pixel' | 'data' | 'analytics' | 'attribution' | 'apikeys' | 'users' | 'webhooks' | 'logs' | 'settings';
+type TabType = 'ad_accounts' | 'ad_campaigns' | 'analytics' | 'pixel_events';
 
 interface AnalyticsData {
   totalSpend: number;
@@ -118,17 +118,11 @@ const allConnectPlatforms = [
   { id: 'tiktok-ads', name: 'TikTok Ads', icon: '🚀', desc: 'Manage TikTok video ads & Spark Ads campaigns', category: 'Ads' },
   { id: 'pinterest-ads', name: 'Pinterest Ads', icon: '🎨', desc: 'Manage Pinterest promoted pins & shopping ad campaigns', category: 'Ads' },
   { id: 'x-ads', name: 'X Ads', icon: '📈', desc: 'Manage X/Twitter promoted tweets & audience campaigns', category: 'Ads' },
-  { id: 'openai-ads', name: 'OpenAI Ads', icon: '🤖', desc: 'Connect OpenAI ad campaigns & API integrations', category: 'Ads' },
-
-  // --- CONVERSION & ATTRIBUTION APIS ---
-  { id: 'ads-api', name: 'Ads API', icon: '🎯', desc: 'Unified Ad Campaign creation & performance metrics API', category: 'APIs' },
-  { id: 'conversion-api', name: 'Conversion API (CAPI)', icon: '⚡', desc: 'Dual-dispatch server-side conversion event relay', category: 'APIs' },
-  { id: 'posthog-pixel', name: 'PostHog SDK Tracker', icon: '🦋', desc: 'Embeddable website/app/store event capture script', category: 'APIs' },
-  { id: 'revenue-attribution', name: 'Revenue Attribution API', icon: '💰', desc: 'Stripe & Dodo Payments closed-loop ROAS attribution', category: 'APIs' }
+  { id: 'openai-ads', name: 'OpenAI Ads', icon: '🤖', desc: 'Connect OpenAI ad campaigns & API integrations', category: 'Ads' }
 ];
 
 const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOut }) => {
-  const [activeTab, setActiveTab] = useState<TabType>('ads');
+  const [activeTab, setActiveTab] = useState<TabType>('ad_accounts');
   
   // Data States
   const [accounts, setAccounts] = useState<ConnectedAccount[]>([]);
@@ -1019,25 +1013,12 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
             </div>
           </div>
 
-          {/* MAIN SIDEBAR NAVIGATION LIST (Matches Reference Dashboard Image) */}
+          {/* MAIN SIDEBAR NAVIGATION LIST (4 CORE TABS) */}
           <nav className="space-y-1">
             <button
-              onClick={() => setActiveTab('ads')}
+              onClick={() => setActiveTab('ad_accounts')}
               className={`w-full p-2.5 text-xs font-bold uppercase tracking-wider text-left transition-all border rounded flex items-center justify-between ${
-                activeTab === 'ads'
-                  ? 'bg-brand text-white border-brand shadow-glow'
-                  : 'bg-zinc-900/40 text-white/70 border-white/5 hover:border-white/20 hover:text-white'
-              }`}
-            >
-              <span className="flex items-center gap-2.5">
-                <Megaphone size={15} /> Ad Campaigns
-              </span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('connections')}
-              className={`w-full p-2.5 text-xs font-bold uppercase tracking-wider text-left transition-all border rounded flex items-center justify-between ${
-                activeTab === 'connections'
+                activeTab === 'ad_accounts'
                   ? 'bg-brand text-white border-brand shadow-glow'
                   : 'bg-zinc-900/40 text-white/70 border-white/5 hover:border-white/20 hover:text-white'
               }`}
@@ -1045,40 +1026,21 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
               <span className="flex items-center gap-2.5">
                 <Layers size={15} /> Ad Accounts
               </span>
-              <span className="text-[10px] bg-black/40 px-2 py-0.5 border border-white/20 rounded">
+              <span className="text-[10px] bg-black/40 px-2 py-0.5 border border-white/20 rounded font-mono">
                 {connectedCount}
               </span>
             </button>
 
             <button
-              onClick={() => setActiveTab('pixel')}
+              onClick={() => setActiveTab('ad_campaigns')}
               className={`w-full p-2.5 text-xs font-bold uppercase tracking-wider text-left transition-all border rounded flex items-center justify-between ${
-                activeTab === 'pixel'
+                activeTab === 'ad_campaigns'
                   ? 'bg-brand text-white border-brand shadow-glow'
                   : 'bg-zinc-900/40 text-white/70 border-white/5 hover:border-white/20 hover:text-white'
               }`}
             >
               <span className="flex items-center gap-2.5">
-                <Zap size={15} /> PostHog Pixel Script
-              </span>
-              <span className="text-[9px] bg-cyan-500/20 text-cyan-400 border border-cyan-400/30 px-1.5 py-0.5 rounded">
-                SDK
-              </span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('data')}
-              className={`w-full p-2.5 text-xs font-bold uppercase tracking-wider text-left transition-all border rounded flex items-center justify-between ${
-                activeTab === 'data'
-                  ? 'bg-brand text-white border-brand shadow-glow'
-                  : 'bg-zinc-900/40 text-white/70 border-white/5 hover:border-white/20 hover:text-white'
-              }`}
-            >
-              <span className="flex items-center gap-2.5">
-                <Database size={15} /> Data &amp; Event Streams
-              </span>
-              <span className="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-400/30 px-1.5 py-0.5 rounded">
-                PIPELINES
+                <Megaphone size={15} /> Ad Campaigns
               </span>
             </button>
 
@@ -1096,86 +1058,18 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
             </button>
 
             <button
-              onClick={() => setActiveTab('attribution')}
+              onClick={() => setActiveTab('pixel_events')}
               className={`w-full p-2.5 text-xs font-bold uppercase tracking-wider text-left transition-all border rounded flex items-center justify-between ${
-                activeTab === 'attribution'
+                activeTab === 'pixel_events'
                   ? 'bg-brand text-white border-brand shadow-glow'
                   : 'bg-zinc-900/40 text-white/70 border-white/5 hover:border-white/20 hover:text-white'
               }`}
             >
               <span className="flex items-center gap-2.5">
-                <DollarSign size={15} /> Revenue Attribution
+                <Zap size={15} /> FB Pixel &amp; Event Logs
               </span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('apikeys')}
-              className={`w-full p-2.5 text-xs font-bold uppercase tracking-wider text-left transition-all border rounded flex items-center justify-between ${
-                activeTab === 'apikeys'
-                  ? 'bg-brand text-white border-brand shadow-glow'
-                  : 'bg-zinc-900/40 text-white/70 border-white/5 hover:border-white/20 hover:text-white'
-              }`}
-            >
-              <span className="flex items-center gap-2.5">
-                <Key size={15} /> API Keys
-              </span>
-              <span className="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-400/30 px-1.5 py-0.5 rounded">
-                LIVE
-              </span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('users')}
-              className={`w-full p-2.5 text-xs font-bold uppercase tracking-wider text-left transition-all border rounded flex items-center justify-between ${
-                activeTab === 'users'
-                  ? 'bg-brand text-white border-brand shadow-glow'
-                  : 'bg-zinc-900/40 text-white/70 border-white/5 hover:border-white/20 hover:text-white'
-              }`}
-            >
-              <span className="flex items-center gap-2.5">
-                <Users size={15} /> Users
-              </span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('webhooks')}
-              className={`w-full p-2.5 text-xs font-bold uppercase tracking-wider text-left transition-all border rounded flex items-center justify-between ${
-                activeTab === 'webhooks'
-                  ? 'bg-brand text-white border-brand shadow-glow'
-                  : 'bg-zinc-900/40 text-white/70 border-white/5 hover:border-white/20 hover:text-white'
-              }`}
-            >
-              <span className="flex items-center gap-2.5">
-                <Webhook size={15} /> Webhooks
-              </span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('logs')}
-              className={`w-full p-2.5 text-xs font-bold uppercase tracking-wider text-left transition-all border rounded flex items-center justify-between ${
-                activeTab === 'logs'
-                  ? 'bg-brand text-white border-brand shadow-glow'
-                  : 'bg-zinc-900/40 text-white/70 border-white/5 hover:border-white/20 hover:text-white'
-              }`}
-            >
-              <span className="flex items-center gap-2.5">
-                <Activity size={15} /> Logs
-              </span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('settings')}
-              className={`w-full p-2.5 text-xs font-bold uppercase tracking-wider text-left transition-all border rounded flex items-center justify-between ${
-                activeTab === 'settings'
-                  ? 'bg-brand text-white border-brand shadow-glow'
-                  : 'bg-zinc-900/40 text-white/70 border-white/5 hover:border-white/20 hover:text-white'
-              }`}
-            >
-              <span className="flex items-center gap-2.5">
-                <Settings size={15} /> Settings
-              </span>
-              <span className="text-[9px] bg-brand/20 text-brand border border-brand/40 px-1.5 py-0.5 rounded">
-                DODO
+              <span className="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-400/30 px-1.5 py-0.5 rounded font-mono">
+                CAPI
               </span>
             </button>
           </nav>
@@ -1236,42 +1130,27 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
           </div>
         )}
 
-        {/* ─── TAB 1: CONNECTIONS ─── */}
-        {activeTab === 'connections' && (
+        {/* ─── TAB 1: AD ACCOUNTS ─── */}
+        {activeTab === 'ad_accounts' && (
           <div className="space-y-6 animate-in fade-in duration-200">
-            
-            {/* Header & Primary Action Button */}
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-white/10 pb-5">
               <div>
-                <h1 className="text-2xl font-bold text-white tracking-tight uppercase">Connections</h1>
-                <p className="text-xs text-white/50 mt-1">Manage profiles and platform integrations</p>
+                <h1 className="text-2xl font-bold text-white tracking-tight uppercase flex items-center gap-2">
+                  <Layers className="text-brand" size={24} /> Connected Ad Accounts
+                </h1>
+                <p className="text-xs text-white/50 mt-1">
+                  Manage advertising accounts across Meta Ads, Google Ads, TikTok Ads, LinkedIn Ads, Pinterest Ads, X Ads &amp; OpenAI Ads
+                </p>
               </div>
 
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => setShowNewConnectionModal(true)}
-                  className="bg-brand hover:bg-brand-light text-white text-xs font-bold px-4 py-2.5 rounded shadow-glow flex items-center gap-2 uppercase tracking-wider transition-all"
+                  className="bg-brand hover:bg-brand-light text-white text-xs font-bold px-4 py-2.5 rounded shadow-glow flex items-center gap-2 uppercase tracking-wider transition-all cursor-pointer"
                 >
-                  <Plus size={16} /> New Connection
-                </button>
-                <button className="bg-zinc-900 border border-white/15 text-white/80 hover:text-white text-xs font-bold px-4 py-2.5 rounded uppercase tracking-wider transition-colors">
-                  New Profile
+                  <Plus size={16} /> Connect Ad Account
                 </button>
               </div>
-            </div>
-
-            {/* Filter Bar */}
-            <div className="flex items-center gap-3 text-xs">
-              <span className="font-bold text-white/60 uppercase">Platforms</span>
-              <select className="bg-zinc-900 border border-white/15 text-white text-xs px-3 py-1.5 rounded outline-none focus:border-brand">
-                <option value="all">All profiles</option>
-              </select>
-              <select className="bg-zinc-900 border border-white/15 text-white text-xs px-3 py-1.5 rounded outline-none focus:border-brand">
-                <option value="all">All platforms</option>
-              </select>
-              <select className="bg-zinc-900 border border-white/15 text-white text-xs px-3 py-1.5 rounded outline-none focus:border-brand">
-                <option value="all">All statuses</option>
-              </select>
             </div>
 
             {/* Connected Cards Grid */}
@@ -1282,30 +1161,32 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="text-xl">
-                          {acc.platform.toLowerCase().includes('instagram') ? '📸' : 
-                           acc.platform.toLowerCase().includes('twitter') || acc.platform.toLowerCase().includes('x') ? '𝕏' :
+                          {acc.platform.toLowerCase().includes('meta') || acc.platform.toLowerCase().includes('facebook') ? '🎯' : 
+                           acc.platform.toLowerCase().includes('google') ? '🔍' :
                            acc.platform.toLowerCase().includes('linkedin') ? '💼' :
-                           acc.platform.toLowerCase().includes('tiktok') ? '🎵' : '💬'}
+                           acc.platform.toLowerCase().includes('tiktok') ? '🚀' :
+                           acc.platform.toLowerCase().includes('pinterest') ? '🎨' :
+                           acc.platform.toLowerCase().includes('twitter') || acc.platform.toLowerCase().includes('x') ? '📈' : '🤖'}
                         </span>
                         <div>
                           <h4 className="font-bold text-sm text-white">{acc.platform}</h4>
                           <span className="inline-block text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-400/40 px-1.5 py-0.2 rounded uppercase font-bold">
-                            {acc.status}
+                            {acc.status || 'connected'}
                           </span>
                         </div>
                       </div>
                     </div>
 
                     <div className="space-y-1 text-xs">
-                      <p className="font-bold text-white/90">{acc.username || '@user'}</p>
-                      <p className="text-[10px] text-white/50">Connected: {acc.created_at ? acc.created_at.substring(0, 10) : 'Active'}</p>
+                      <p className="font-bold text-white/90">{acc.username || acc.name || 'Ad Account'}</p>
+                      <p className="text-[10px] text-white/50">ID: {acc.id}</p>
                     </div>
 
                     <div className="flex items-center justify-between pt-3 border-t border-white/10 text-xs">
-                      <button className="text-white/60 hover:text-white">Manage Pages</button>
+                      <span className="text-white/40 text-[10px]">Real API Connection</span>
                       <button
                         onClick={() => toggleAccountStatus(acc.platform, acc.id)}
-                        className="bg-red-950/40 border border-red-500/30 text-red-400 hover:bg-red-900 hover:text-white px-3 py-1.5 rounded font-bold transition-colors"
+                        className="bg-red-950/40 border border-red-500/30 text-red-400 hover:bg-red-900 hover:text-white px-3 py-1.5 rounded font-bold transition-colors cursor-pointer"
                       >
                         Disconnect
                       </button>
@@ -1316,16 +1197,16 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                 <div className="col-span-full bg-zinc-950 border border-white/10 rounded-lg p-10 text-center space-y-4">
                   <Layers size={36} className="mx-auto text-white/20" />
                   <div>
-                    <h3 className="font-bold text-base text-white">No Connected Platforms Yet</h3>
+                    <h3 className="font-bold text-base text-white">No Ad Accounts Connected Yet</h3>
                     <p className="text-xs text-white/50 mt-1 max-w-md mx-auto">
-                      Click "+ New Connection" to integrate Instagram, X (Twitter), LinkedIn, WhatsApp, TikTok or Ads manager.
+                      Click below to connect your Meta, Google, TikTok, LinkedIn, Pinterest, X, or OpenAI ad accounts.
                     </p>
                   </div>
                   <button
                     onClick={() => setShowNewConnectionModal(true)}
-                    className="bg-brand text-white text-xs font-bold px-5 py-2.5 rounded shadow-glow uppercase"
+                    className="bg-brand text-white text-xs font-bold px-5 py-2.5 rounded shadow-glow uppercase cursor-pointer"
                   >
-                    + New Connection
+                    + Connect Ad Account
                   </button>
                 </div>
               )}
@@ -1333,15 +1214,17 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
           </div>
         )}
 
-        {/* ─── TAB 1: AD CAMPAIGNS ─── */}
-        {activeTab === 'ads' && (
+        {/* ─── TAB 2: AD CAMPAIGNS ─── */}
+        {activeTab === 'ad_campaigns' && (
           <div className="space-y-6 animate-in fade-in duration-200">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-white/10 pb-5">
               <div>
                 <h1 className="text-2xl font-bold text-white tracking-tight uppercase flex items-center gap-2">
-                  <Megaphone className="text-brand" size={24} /> Paid Ads Command Center
+                  <Megaphone className="text-brand" size={24} /> Ad Campaigns Command Center
                 </h1>
-                <p className="text-xs text-white/50 mt-1">Unified optimization, real-time ROAS tracking &amp; one-click campaign pause/launch across 7 ad networks</p>
+                <p className="text-xs text-white/50 mt-1">
+                  Manage ad campaigns, daily budgets, and toggle Pause/Launch status across ad platforms
+                </p>
               </div>
 
               <div className="flex items-center gap-3">
@@ -1361,7 +1244,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                 <button
                   key={plat}
                   onClick={() => setSelectedAdsPlatform(plat)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-bold uppercase transition-all whitespace-nowrap ${
+                  className={`px-3 py-1.5 rounded-full text-xs font-bold uppercase transition-all whitespace-nowrap cursor-pointer ${
                     selectedAdsPlatform === plat
                       ? 'bg-brand text-white shadow-glow border border-brand/40'
                       : 'bg-zinc-900 text-white/60 hover:text-white hover:bg-zinc-800 border border-white/10'
@@ -1374,97 +1257,227 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
 
             {/* Campaign Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {adCampaigns
-                .filter(ad => selectedAdsPlatform === 'ALL' || (typeof ad.platform === 'string' && ad.platform.toLowerCase().includes(selectedAdsPlatform.toLowerCase().replace(' ads', ''))))
-                .map(ad => (
-                  <div key={ad.id} className="bg-zinc-950 border border-white/15 rounded-xl p-5 space-y-4 shadow-xl hover:border-brand/50 transition-all flex flex-col justify-between">
-                    <div className="space-y-3">
-                      <div className="flex items-start justify-between text-xs gap-2">
-                        <div>
-                          <span className="font-bold text-white text-sm block leading-snug">{typeof ad.name === 'string' ? ad.name : 'Ad Campaign'}</span>
-                          <span className="text-[10px] text-white/40 font-mono">ID: {ad.id}</span>
+              {adCampaigns.filter(ad => selectedAdsPlatform === 'ALL' || (typeof ad.platform === 'string' && ad.platform.toLowerCase().includes(selectedAdsPlatform.toLowerCase().replace(' ads', '')))).length > 0 ? (
+                adCampaigns
+                  .filter(ad => selectedAdsPlatform === 'ALL' || (typeof ad.platform === 'string' && ad.platform.toLowerCase().includes(selectedAdsPlatform.toLowerCase().replace(' ads', ''))))
+                  .map(ad => (
+                    <div key={ad.id} className="bg-zinc-950 border border-white/15 rounded-xl p-5 space-y-4 shadow-xl hover:border-brand/50 transition-all flex flex-col justify-between">
+                      <div className="space-y-3">
+                        <div className="flex items-start justify-between text-xs gap-2">
+                          <div>
+                            <span className="font-bold text-white text-sm block leading-snug">{typeof ad.name === 'string' ? ad.name : 'Ad Campaign'}</span>
+                            <span className="text-[10px] text-white/40 font-mono">ID: {ad.id}</span>
+                          </div>
+                          <span className="bg-brand/20 text-brand px-2 py-0.5 rounded text-[10px] uppercase font-bold border border-brand/30 shrink-0">
+                            {typeof ad.platform === 'string' ? ad.platform : 'Meta Ads'}
+                          </span>
                         </div>
-                        <span className="bg-brand/20 text-brand px-2 py-0.5 rounded text-[10px] uppercase font-bold border border-brand/30 shrink-0">
-                          {typeof ad.platform === 'string' ? ad.platform : 'Meta Ads'}
-                        </span>
-                      </div>
 
-                      <div className="grid grid-cols-2 gap-2 bg-black/60 p-3 rounded-lg text-[11px] border border-white/5">
-                        <div>
-                          <span className="text-white/40 text-[9px] uppercase block font-mono">Objective</span>
-                          <span className="text-white font-semibold">{typeof ad.objective === 'string' ? ad.objective : 'CONVERSIONS'}</span>
-                        </div>
-                        <div>
-                          <span className="text-white/40 text-[9px] uppercase block font-mono">Daily Budget</span>
-                          <div className="flex items-center gap-1">
-                            <span className="text-emerald-400 font-bold">
-                              ${typeof ad.daily_budget === 'number' || typeof ad.daily_budget === 'string'
-                                ? ad.daily_budget
-                                : typeof ad.budget === 'number' || typeof ad.budget === 'string'
-                                  ? ad.budget
-                                  : 100}
-                            </span>
-                            <button
-                              onClick={() => handleEditCampaignBudget(ad.id, ad.daily_budget || ad.budget || 100)}
-                              className="text-[9px] text-white/40 hover:text-brand underline"
-                            >
-                              Edit
-                            </button>
+                        <div className="grid grid-cols-2 gap-2 bg-black/60 p-3 rounded-lg text-[11px] border border-white/5">
+                          <div>
+                            <span className="text-white/40 text-[9px] uppercase block font-mono">Objective</span>
+                            <span className="text-white font-semibold">{typeof ad.objective === 'string' ? ad.objective : 'CONVERSIONS'}</span>
+                          </div>
+                          <div>
+                            <span className="text-white/40 text-[9px] uppercase block font-mono">Daily Budget</span>
+                            <div className="flex items-center gap-1">
+                              <span className="text-emerald-400 font-bold">
+                                ${typeof ad.daily_budget === 'number' || typeof ad.daily_budget === 'string'
+                                  ? ad.daily_budget
+                                  : typeof ad.budget === 'number' || typeof ad.budget === 'string'
+                                    ? ad.budget
+                                    : 100}
+                              </span>
+                              <button
+                                onClick={() => handleEditCampaignBudget(ad.id, ad.daily_budget || ad.budget || 100)}
+                                className="text-[9px] text-white/40 hover:text-brand underline cursor-pointer"
+                              >
+                                Edit
+                              </button>
+                            </div>
+                          </div>
+                          <div>
+                            <span className="text-white/40 text-[9px] uppercase block font-mono">Total Spend</span>
+                            <span className="text-white font-semibold">${typeof ad.spend === 'number' || typeof ad.spend === 'string' ? ad.spend : 0}</span>
+                          </div>
+                          <div>
+                            <span className="text-white/40 text-[9px] uppercase block font-mono">Target ROAS</span>
+                            <span className="text-brand font-bold">{ad.roas ? `${ad.roas}x` : '0.00x'}</span>
                           </div>
                         </div>
-                        <div>
-                          <span className="text-white/40 text-[9px] uppercase block font-mono">Total Spend</span>
-                          <span className="text-white font-semibold">${typeof ad.spend === 'number' || typeof ad.spend === 'string' ? ad.spend : 0}</span>
-                        </div>
-                        <div>
-                          <span className="text-white/40 text-[9px] uppercase block font-mono">Target ROAS</span>
-                          <span className="text-brand font-bold">{ad.roas ? `${typeof ad.roas === 'number' || typeof ad.roas === 'string' ? ad.roas : 4.25}x` : '4.25x'}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="pt-3 border-t border-white/10 flex items-center justify-between text-[11px]">
-                      <div className="flex items-center gap-2">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                          ad.status === 'ACTIVE'
-                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                            : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                        }`}>
-                          {typeof ad.status === 'string' ? ad.status : 'ACTIVE'}
-                        </span>
                       </div>
 
-                      {/* Interactive Pause / Launch Toggle Button */}
-                      <button
-                        onClick={() => handleToggleCampaignStatus(ad.id, ad.status || 'ACTIVE')}
-                        className={`px-3 py-1 rounded text-xs font-bold uppercase transition-all flex items-center gap-1.5 shadow-sm ${
-                          ad.status === 'ACTIVE'
-                            ? 'bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 border border-amber-500/30'
-                            : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 border border-emerald-500/40 shadow-glow'
-                        }`}
-                      >
-                        {ad.status === 'ACTIVE' ? (
-                          <><span>Pause</span></>
-                        ) : (
-                          <><Play size={12} fill="currentColor" /> <span>Launch / Resume</span></>
-                        )}
-                      </button>
+                      <div className="pt-3 border-t border-white/10 flex items-center justify-between text-[11px]">
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                            ad.status === 'ACTIVE'
+                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                              : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                          }`}>
+                            {typeof ad.status === 'string' ? ad.status : 'ACTIVE'}
+                          </span>
+                        </div>
+
+                        {/* Interactive Pause / Launch Toggle Button */}
+                        <button
+                          onClick={() => handleToggleCampaignStatus(ad.id, ad.status || 'ACTIVE')}
+                          className={`px-3 py-1 rounded text-xs font-bold uppercase transition-all flex items-center gap-1.5 shadow-sm cursor-pointer ${
+                            ad.status === 'ACTIVE'
+                              ? 'bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 border border-amber-500/30'
+                              : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 border border-emerald-500/40 shadow-glow'
+                          }`}
+                        >
+                          {ad.status === 'ACTIVE' ? (
+                            <><span>Pause</span></>
+                          ) : (
+                            <><Play size={12} fill="currentColor" /> <span>Launch / Resume</span></>
+                          )}
+                        </button>
+                      </div>
                     </div>
+                  ))
+              ) : (
+                <div className="col-span-full bg-zinc-950 border border-white/10 rounded-lg p-10 text-center space-y-4">
+                  <Megaphone size={36} className="mx-auto text-white/20" />
+                  <div>
+                    <h3 className="font-bold text-base text-white">No Ad Campaigns Found</h3>
+                    <p className="text-xs text-white/50 mt-1 max-w-md mx-auto">
+                      No campaigns exist for the selected network filter. Launch a new campaign to begin tracking.
+                    </p>
                   </div>
-                ))}
+                  <button
+                    onClick={() => setShowCreateCampaignModal(true)}
+                    className="bg-brand text-white text-xs font-bold px-5 py-2.5 rounded shadow-glow uppercase cursor-pointer"
+                  >
+                    + Launch New Campaign
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
 
-        {/* ─── TAB 2: POSTHOG & FACEBOOK PIXEL SCRIPT ─── */}
-        {activeTab === 'pixel' && (
+        {/* ─── TAB 3: AD ANALYTICS & ROAS ─── */}
+        {activeTab === 'analytics' && (
+          <div className="space-y-6 animate-in fade-in duration-200">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-5">
+              <div>
+                <h1 className="text-2xl font-bold text-white tracking-tight uppercase flex items-center gap-2">
+                  <BarChart2 className="text-brand" size={24} /> Ad Analytics &amp; ROAS
+                </h1>
+                <p className="text-xs text-white/50 mt-1">
+                  Real-time performance analytics calculated directly from Zernio Ads API &amp; database
+                </p>
+              </div>
+
+              {/* DYNAMIC REPORT CONTROLS BAR */}
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <select
+                  value={reportRange}
+                  onChange={(e) => setReportRange(e.target.value as any)}
+                  className="bg-zinc-900 border border-white/15 text-white font-bold px-3 py-2 rounded outline-none focus:border-brand cursor-pointer"
+                >
+                  <option value="today">Today</option>
+                  <option value="7d">Last 7 Days</option>
+                  <option value="30d">Last 30 Days</option>
+                  <option value="ytd">Year to Date (YTD)</option>
+                </select>
+
+                <select
+                  value={reportStatusFilter}
+                  onChange={(e) => setReportStatusFilter(e.target.value)}
+                  className="bg-zinc-900 border border-white/15 text-white font-bold px-3 py-2 rounded outline-none focus:border-brand cursor-pointer"
+                >
+                  <option value="ALL">All Campaigns</option>
+                  <option value="ACTIVE">Active Only</option>
+                  <option value="PAUSED">Paused Only</option>
+                </select>
+
+                <button
+                  onClick={() => {
+                    window.open(`/api/v1/ads/analytics?range=${reportRange}&status=${reportStatusFilter}&format=csv`, '_blank');
+                  }}
+                  className="bg-brand text-white font-bold px-3 py-2 rounded flex items-center gap-1.5 uppercase hover:bg-brand/90 cursor-pointer"
+                >
+                  <Download size={14} /> EXPORT CSV
+                </button>
+              </div>
+            </div>
+
+            {/* KPI Cards — Pure Real-Time API Data */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <div className="bg-zinc-950 border border-white/10 rounded p-4">
+                <span className="text-[10px] text-white/40 uppercase block font-mono">Total Ad Spend</span>
+                <span className="text-xl font-bold text-white font-mono">
+                  ${(analyticsData?.totalSpend || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div className="bg-zinc-950 border border-white/10 rounded p-4">
+                <span className="text-[10px] text-white/40 uppercase block font-mono">Total Conversions</span>
+                <span className="text-xl font-bold text-emerald-400 font-mono">
+                  {(analyticsData?.totalConversions || 0).toLocaleString()}
+                </span>
+              </div>
+              <div className="bg-zinc-950 border border-white/10 rounded p-4">
+                <span className="text-[10px] text-white/40 uppercase block font-mono">Average ROAS</span>
+                <span className="text-xl font-bold text-brand font-mono">
+                  {analyticsData?.avgRoas || '0.00x'}
+                </span>
+              </div>
+              <div className="bg-zinc-950 border border-white/10 rounded p-4">
+                <span className="text-[10px] text-white/40 uppercase block font-mono">Attributed Revenue</span>
+                <span className="text-xl font-bold text-white font-mono">
+                  ${(analyticsData?.totalAttributedRevenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div className="bg-zinc-950 border border-white/10 rounded p-4">
+                <span className="text-[10px] text-white/40 uppercase block font-mono">Average CTR</span>
+                <span className="text-xl font-bold text-cyan-300 font-mono">
+                  {analyticsData?.avgCtr || '0.00%'}
+                </span>
+              </div>
+            </div>
+
+            {/* Platform Performance Breakdown */}
+            <div className="bg-zinc-950 border border-white/10 rounded-lg p-5">
+              <h4 className="font-bold text-sm text-white mb-4 uppercase tracking-wider">Live Ad Network Performance Breakdown</h4>
+              {analyticsData?.byPlatform && Object.keys(analyticsData.byPlatform).length > 0 ? (
+                <div className="space-y-4 text-xs">
+                  {Object.entries(analyticsData.byPlatform).map(([plat, metrics]) => (
+                    <div key={plat} className="bg-black/40 p-4 rounded border border-white/5 space-y-2">
+                      <div className="flex justify-between items-center text-white/90 font-mono">
+                        <span className="font-bold text-white text-sm">{plat}</span>
+                        <span className="text-emerald-400 font-bold">
+                          ${metrics.spend.toFixed(2)} Spend / ${metrics.revenue.toFixed(2)} Revenue ({metrics.roas.toFixed(2)}x ROAS)
+                        </span>
+                      </div>
+                      <div className="w-full bg-black h-2 rounded overflow-hidden">
+                        <div
+                          className="bg-brand h-full rounded"
+                          style={{ width: `${Math.min(100, Math.max(5, (metrics.spend / (analyticsData.totalSpend || 1)) * 100))}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-white/40 italic font-mono">No network breakdown metrics recorded yet for this date range.</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ─── TAB 4: FB PIXEL & EVENT LOGS ─── */}
+        {activeTab === 'pixel_events' && (
           <div className="space-y-6 animate-in fade-in duration-200">
             <div className="border-b border-white/10 pb-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div>
                 <h1 className="text-2xl font-bold text-white tracking-tight uppercase flex items-center gap-2">
-                  <Zap className="text-brand" size={24} /> FB Pixel Event Catch &amp; Zernio CAPI Relay
+                  <Zap className="text-brand" size={24} /> FB Pixel Embed &amp; Event Logs
                 </h1>
-                <p className="text-xs text-white/50 mt-1">Embed script tag to capture Facebook Pixel events (window.fbq), auto-extract ad click IDs (fbclid, gclid, ttclid), and relay to Zernio Conversion API</p>
+                <p className="text-xs text-white/50 mt-1">
+                  Embed script tag, auto-intercept Facebook Pixel events (window.fbq), and view live database event logs
+                </p>
               </div>
 
               <button
@@ -1482,10 +1495,11 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
               </div>
             )}
 
+            {/* PIXEL EMBED SCRIPT BOX */}
             <div className="bg-zinc-950 border border-white/15 p-6 rounded-xl space-y-5 shadow-2xl">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-brand uppercase tracking-wider flex items-center gap-2">
-                  <Zap size={16} /> Dynamic Website / App / Store Pixel Script
+                  <Zap size={16} /> Dynamic FB Pixel Script Embed Tag
                 </span>
                 <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-400/30 text-[10px] font-bold px-2 py-0.5 rounded uppercase">
                   READY TO INSTALL
@@ -1493,663 +1507,67 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
               </div>
 
               <p className="text-xs text-white/70 leading-relaxed">
-                Paste this script tag into the <code className="text-brand font-bold">&lt;head&gt;</code> of your website or store. It automatically intercepts all <code className="text-emerald-400 font-bold">window.fbq('track', ...)</code> calls (Purchase, AddToCart, Lead, PageView) and relays them directly to Rockyt CAPI &amp; Zernio Conversion API endpoints.
+                Paste this script tag into the <code className="text-brand font-bold">&lt;head&gt;</code> of your website or store. It automatically catches all <code className="text-emerald-400 font-bold">window.fbq('track', ...)</code> calls (Purchase, AddToCart, Lead, PageView) and relays them to your database and Zernio Conversion API.
               </p>
 
               <div className="bg-black p-4 border border-white/20 rounded-lg font-mono text-xs text-emerald-400 relative">
                 <code>
-                  {`<script src="https://api.rockyt.com/rockyt-pixel.js?apiKey=${apiKeys[0]?.key || 'rkt_live_demo_99a'}" async></script>`}
+                  {`<script src="https://api.rockyt.com/rockyt-pixel.js?apiKey=${apiKeys[0]?.key || userSession?.id || 'rkt_live_key'}" async></script>`}
                 </code>
                 <button
-                  onClick={() => copyToClipboard(`<script src="https://api.rockyt.com/rockyt-pixel.js?apiKey=${apiKeys[0]?.key || 'rkt_live_demo_99a'}" async></script>`)}
+                  onClick={() => copyToClipboard(`<script src="https://api.rockyt.com/rockyt-pixel.js?apiKey=${apiKeys[0]?.key || userSession?.id || 'rkt_live_key'}" async></script>`)}
                   className="absolute top-3 right-3 bg-brand text-white text-[10px] font-bold px-3 py-1 rounded uppercase hover:bg-brand/90 cursor-pointer shadow-sm"
                 >
                   {copiedKey ? 'COPIED!' : 'COPY EMBED TAG'}
                 </button>
               </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-white/10">
-                <div className="bg-black/50 p-4 rounded-lg border border-white/10 space-y-2">
-                  <span className="text-xs font-bold text-white uppercase block">🎯 Auto-Caught Facebook Pixel Events:</span>
-                  <ul className="text-[11px] text-zinc-300 space-y-1 font-mono">
-                    <li className="text-emerald-400">✓ fbq('track', 'Purchase', &#123; value, currency &#125;)</li>
-                    <li className="text-emerald-400">✓ fbq('track', 'Lead')</li>
-                    <li className="text-emerald-400">✓ fbq('track', 'AddToCart')</li>
-                    <li className="text-emerald-400">✓ fbq('track', 'PageView')</li>
-                  </ul>
-                </div>
-
-                <div className="bg-black/50 p-4 rounded-lg border border-white/10 space-y-2">
-                  <span className="text-xs font-bold text-white uppercase block">⚡ Direct JavaScript API Call:</span>
-                  <pre className="text-[11px] text-zinc-300 font-mono overflow-x-auto">
-                    <code>{`// Direct Rockyt Pixel Dispatch
-window.RockytPixel.trackPurchase(149.00, 'USD', 'order_9912');
-window.RockytPixel.trackLead('Enterprise Lead');`}</code>
-                  </pre>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ─── TAB 3: DATA & EVENT STREAMS ─── */}
-        {activeTab === 'data' && (
-          <div className="space-y-6 animate-in fade-in duration-200">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-white/10 pb-5">
-              <div>
-                <h1 className="text-2xl font-bold text-white tracking-tight uppercase">Data Pipelines &amp; PostHog Hub</h1>
-                <p className="text-xs text-white/50 mt-1">Connect datasources, run CLI setup wizard, and inspect real-time PostHog &amp; CAPI event streams</p>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => copyToClipboard(`npx -y @rockyt/pixel-wizard@latest`)}
-                  className="bg-brand text-white text-xs font-bold px-4 py-2.5 rounded shadow-glow flex items-center gap-2 uppercase tracking-wider"
-                >
-                  <Copy size={14} /> COPY CLI WIZARD COMMAND
-                </button>
-              </div>
             </div>
 
-            {/* CLI SETUP WIZARD BOX */}
-            <div className="bg-zinc-950 border border-white/15 p-6 rounded-lg space-y-4 shadow-xl">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-brand uppercase tracking-wider flex items-center gap-2">
-                  <Database size={16} /> CLI Event Capture Setup Wizard
-                </span>
-                <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-400/30 text-[10px] font-bold px-2 py-0.5 rounded uppercase">
-                  AUTO-DETECT
-                </span>
-              </div>
-
-              <p className="text-xs text-white/70 leading-relaxed">
-                Run this command in your project terminal to automatically configure event tracking, click ID extraction (<code className="text-brand">gclid</code>, <code className="text-brand">fbclid</code>, <code className="text-brand">ttclid</code>), and dual-dispatch PostHog CAPI.
-              </p>
-
-              {/* Framework Selector Tabs */}
-              <div className="flex items-center gap-2 border-b border-white/10 pb-2 text-xs">
-                {(['next', 'react', 'html', 'shopify'] as const).map((fw) => (
-                  <button
-                    key={fw}
-                    onClick={() => setCliFramework(fw)}
-                    className={`px-3 py-1 rounded font-bold uppercase ${cliFramework === fw ? 'bg-brand text-white' : 'bg-black/40 text-white/60 hover:text-white'}`}
-                  >
-                    {fw === 'next' ? 'Next.js App Router' : fw === 'react' ? 'React / Vite' : fw === 'html' ? 'Plain HTML' : 'Shopify Liquid'}
-                  </button>
-                ))}
-              </div>
-
-              <div className="bg-black p-4 border border-white/20 rounded font-mono text-xs text-emerald-400 relative">
-                <code>
-                  {cliFramework === 'next' ? `npx -y @rockyt/pixel-wizard@latest --framework=nextjs --apiKey=${apiKeys[0]?.key || 'rkt_live_demo'}` :
-                   cliFramework === 'react' ? `npx -y @rockyt/pixel-wizard@latest --framework=react --apiKey=${apiKeys[0]?.key || 'rkt_live_demo'}` :
-                   cliFramework === 'shopify' ? `npx -y @rockyt/pixel-wizard@latest --framework=shopify --apiKey=${apiKeys[0]?.key || 'rkt_live_demo'}` :
-                   `npx -y @posthog/wizard@latest --apiKey=${apiKeys[0]?.key || 'rkt_live_demo'}`}
-                </code>
-              </div>
-            </div>
-
-            {/* DATA SOURCE CONNECTORS GRID */}
-            <div className="space-y-4">
-              <h3 className="font-bold text-sm text-white uppercase tracking-wider">Connected Data Sources &amp; Warehouses</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {dataSources.map(src => (
-                  <div key={src.id} className="bg-zinc-950 border border-white/15 rounded-lg p-5 space-y-3">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-bold text-white flex items-center gap-2 text-sm">
-                        <span>{src.icon}</span> {src.name}
-                      </span>
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${src.status === 'connected' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-zinc-800 text-white/40'}`}>
-                        {src.status}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-white/50">{src.type}</p>
-                    <div className="flex items-center justify-between text-[11px] text-white/60 pt-2 border-t border-white/10">
-                      <span>Captured: {src.eventsCaptured.toLocaleString()} events</span>
-                      <button
-                        onClick={() => {
-                          setDataSources(prev => prev.map(s => s.id === src.id ? { ...s, status: s.status === 'connected' ? 'disconnected' : 'connected' } : s));
-                        }}
-                        className="text-brand font-bold hover:underline"
-                      >
-                        {src.status === 'connected' ? 'Disconnect' : 'Connect'}
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* REAL-TIME LIVE EVENT INSPECTOR */}
+            {/* REAL-TIME LIVE EVENT INSPECTOR STREAM */}
             <div className="bg-zinc-950 border border-white/15 rounded-lg p-5 space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="font-bold text-sm text-white uppercase tracking-wider flex items-center gap-2">
-                  <Activity size={16} className="text-emerald-400 animate-pulse" /> Real-Time Live Event Inspector Stream
+                  <Activity size={16} className="text-emerald-400 animate-pulse" /> Database Conversion Event Stream Log
                 </h3>
-                <span className="text-[10px] text-white/40">Showing last 20 captured PostHog events</span>
+                <span className="text-[10px] text-white/40 font-mono">Showing live records from Supabase conversion_events table</span>
               </div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs font-mono">
-                  <thead>
-                    <tr className="border-b border-white/10 text-white/40 uppercase">
-                      <th className="pb-2">Event Name</th>
-                      <th className="pb-2">Ad Click ID</th>
-                      <th className="pb-2">PostHog User ID</th>
-                      <th className="pb-2">Payload Data</th>
-                      <th className="pb-2">Timestamp</th>
-                      <th className="pb-2">CAPI Relay</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5 text-white/80">
-                    {liveEvents.map(evt => (
-                      <tr key={evt.id} className="hover:bg-white/5">
-                        <td className="py-2.5 font-bold text-brand">{evt.event_name}</td>
-                        <td className="py-2.5 text-emerald-400">{evt.click_id || 'Direct'}</td>
-                        <td className="py-2.5 text-white/60">{evt.posthog_distinct_id || 'anon'}</td>
-                        <td className="py-2.5 text-white/50 max-w-[200px] truncate">{JSON.stringify(evt.event_data)}</td>
-                        <td className="py-2.5 text-white/40">{new Date(evt.created_at).toLocaleTimeString()}</td>
-                        <td className="py-2.5">
-                          <span className="bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded text-[9px] uppercase font-bold">
-                            DELIVERED
-                          </span>
-                        </td>
+              {liveEvents.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs font-mono">
+                    <thead>
+                      <tr className="border-b border-white/10 text-white/40 uppercase">
+                        <th className="pb-2">Event Name</th>
+                        <th className="pb-2">Ad Click ID</th>
+                        <th className="pb-2">User / User ID</th>
+                        <th className="pb-2">Payload Data</th>
+                        <th className="pb-2">Timestamp</th>
+                        <th className="pb-2">Status</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ─── TAB 4: AD ANALYTICS & ROAS (INTERACTIVE REPORTING SUITE) ─── */}
-        {activeTab === 'analytics' && (
-          <div className="space-y-6 animate-in fade-in duration-200">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-5">
-              <div>
-                <h1 className="text-2xl font-bold text-white tracking-tight uppercase">Interactive Ad Analytics &amp; ROAS</h1>
-                <p className="text-xs text-white/50 mt-1">Dynamic date range filtering, live metric sorting, and multi-channel campaign breakdown</p>
-              </div>
-
-              {/* DYNAMIC REPORT CONTROLS BAR */}
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                {/* Date Range Selector */}
-                <select
-                  value={reportRange}
-                  onChange={(e) => setReportRange(e.target.value as any)}
-                  className="bg-zinc-900 border border-white/15 text-white font-bold px-3 py-2 rounded outline-none focus:border-brand cursor-pointer"
-                >
-                  <option value="today">Today</option>
-                  <option value="7d">Last 7 Days</option>
-                  <option value="30d">Last 30 Days</option>
-                  <option value="ytd">Year to Date (YTD)</option>
-                </select>
-
-                {/* Status Filter */}
-                <select
-                  value={reportStatusFilter}
-                  onChange={(e) => setReportStatusFilter(e.target.value)}
-                  className="bg-zinc-900 border border-white/15 text-white font-bold px-3 py-2 rounded outline-none focus:border-brand cursor-pointer"
-                >
-                  <option value="ALL">All Campaigns</option>
-                  <option value="ACTIVE">Active Only</option>
-                  <option value="PAUSED">Paused / Past</option>
-                </select>
-
-                {/* CSV Export Button */}
-                <button
-                  onClick={() => {
-                    window.open(`/api/v1/ads/analytics?range=${reportRange}&status=${reportStatusFilter}&format=csv`, '_blank');
-                  }}
-                  className="bg-brand text-white font-bold px-3 py-2 rounded flex items-center gap-1.5 uppercase hover:bg-brand/90 cursor-pointer"
-                >
-                  <Download size={14} /> EXPORT CSV
-                </button>
-              </div>
-            </div>
-
-            {/* KPI Cards — Dynamically Adjusted based on Date Range */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-              <div className="bg-zinc-950 border border-white/10 rounded p-4">
-                <span className="text-[10px] text-white/40 uppercase block">Total Ad Spend</span>
-                <span className="text-xl font-bold text-white">
-                  ${reportRange === 'today' ? '345.00' : reportRange === '7d' ? '1,420.00' : reportRange === 'ytd' ? '18,450.00' : '4,135.50'}
-                </span>
-              </div>
-              <div className="bg-zinc-950 border border-white/10 rounded p-4">
-                <span className="text-[10px] text-white/40 uppercase block">Total Conversions</span>
-                <span className="text-xl font-bold text-emerald-400">
-                  {reportRange === 'today' ? '62' : reportRange === '7d' ? '268' : reportRange === 'ytd' ? '3,420' : '796'}
-                </span>
-              </div>
-              <div className="bg-zinc-950 border border-white/10 rounded p-4">
-                <span className="text-[10px] text-white/40 uppercase block">Average ROAS</span>
-                <span className="text-xl font-bold text-brand">4.68x</span>
-              </div>
-              <div className="bg-zinc-950 border border-white/10 rounded p-4">
-                <span className="text-[10px] text-white/40 uppercase block">Attributed Revenue</span>
-                <span className="text-xl font-bold text-white">
-                  ${reportRange === 'today' ? '1,680.00' : reportRange === '7d' ? '6,490.00' : reportRange === 'ytd' ? '84,900.00' : '19,354.15'}
-                </span>
-              </div>
-              <div className="bg-zinc-950 border border-white/10 rounded p-4">
-                <span className="text-[10px] text-white/40 uppercase block">Average CTR</span>
-                <span className="text-xl font-bold text-cyan-300">9.54%</span>
-              </div>
-            </div>
-
-            {/* Platform Comparison */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-zinc-950 border border-white/10 rounded-lg p-5">
-                <h4 className="font-bold text-sm text-white mb-4">Ad Spend vs. Revenue Attributed</h4>
-                <div className="space-y-4 text-xs">
-                  <div>
-                    <div className="flex justify-between mb-1 text-white/80">
-                      <span>Meta Ads</span>
-                      <span className="text-emerald-400 font-bold">$1,245 Spend / $5,293 Revenue (4.25x ROAS)</span>
-                    </div>
-                    <div className="w-full bg-black h-3 rounded overflow-hidden">
-                      <div className="bg-brand h-full rounded" style={{ width: '75%' }} />
-                    </div>
-                  </div>
-                  <div>
-                    <div className="flex justify-between mb-1 text-white/80">
-                      <span>Google Ads</span>
-                      <span className="text-emerald-400 font-bold">$2,890 Spend / $14,739 Revenue (5.10x ROAS)</span>
-                    </div>
-                    <div className="w-full bg-black h-3 rounded overflow-hidden">
-                      <div className="bg-emerald-500 h-full rounded" style={{ width: '92%' }} />
-                    </div>
-                  </div>
+                    </thead>
+                    <tbody className="divide-y divide-white/5 text-white/80">
+                      {liveEvents.map(evt => (
+                        <tr key={evt.id} className="hover:bg-white/5">
+                          <td className="py-2.5 font-bold text-brand">{evt.event_name}</td>
+                          <td className="py-2.5 text-emerald-400">{evt.click_id || 'Direct'}</td>
+                          <td className="py-2.5 text-white/60">{evt.user_id || evt.posthog_distinct_id || 'anon'}</td>
+                          <td className="py-2.5 text-white/50 max-w-[200px] truncate">{JSON.stringify(evt.event_data)}</td>
+                          <td className="py-2.5 text-white/40">{new Date(evt.created_at).toLocaleTimeString()}</td>
+                          <td className="py-2.5">
+                            <span className="bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded text-[9px] uppercase font-bold">
+                              {evt.status || 'RELAYED'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-              </div>
-
-              <div className="bg-zinc-950 border border-white/10 rounded-lg p-5">
-                <h4 className="font-bold text-sm text-white mb-4">Top Conversion Funnels</h4>
-                <div className="space-y-3 text-xs text-white/70">
-                  <div className="flex justify-between items-center bg-black/40 p-3 rounded border border-white/5">
-                    <span>Meta Ads Retargeting → Checkout</span>
-                    <span className="text-white font-bold">284 Conversions</span>
-                  </div>
-                  <div className="flex justify-between items-center bg-black/40 p-3 rounded border border-white/5">
-                    <span>Google Search High Intent → Demo</span>
-                    <span className="text-white font-bold">512 Conversions</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ─── TAB 4: REVENUE ATTRIBUTION ─── */}
-        {activeTab === 'attribution' && (
-          <div className="space-y-6 animate-in fade-in duration-200">
-            <div className="border-b border-white/10 pb-5 flex items-center justify-between">
-              <div>
-                <h1 className="text-2xl font-bold text-white tracking-tight uppercase">Revenue Attribution</h1>
-                <p className="text-xs text-white/50 mt-1">Connect payment gateways (Stripe / Dodo Payments) or push purchase events to calculate true ROAS</p>
-              </div>
-
-              <button
-                onClick={async () => {
-                  const amt = prompt('Order Revenue Amount ($):', '149.00');
-                  if (!amt) return;
-                  const cId = prompt('Ad Click ID (gclid, fbclid, ttclid):', 'gclid_89123891');
-                  
-                  try {
-                    const res = await fetch('/api/v1/attribution/revenue', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ amount: Number(amt), clickId: cId, currency: 'USD' })
-                    });
-                    const data = await res.json();
-                    if (data.success) {
-                      alert('Revenue attributed successfully!');
-                    }
-                  } catch (e: any) {
-                    alert('Attribution failed: ' + e.message);
-                  }
-                }}
-                className="bg-brand text-white text-xs font-bold px-4 py-2.5 rounded shadow-glow uppercase flex items-center gap-2"
-              >
-                <Plus size={16} /> Add Manual Attribution
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-zinc-950 border border-white/15 p-5 rounded-lg space-y-3">
-                <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider block">
-                  💳 Stripe Webhook Attribution Endpoint
-                </span>
-                <p className="text-xs text-white/60">
-                  Set this Webhook URL in your Stripe Dashboard for event <code className="text-brand">checkout.session.completed</code>:
-                </p>
-                <code className="text-xs text-white bg-black p-3 rounded border border-white/10 block font-mono">
-                  https://api.rockyt.com/v1/webhooks/revenue/stripe
-                </code>
-              </div>
-
-              <div className="bg-zinc-950 border border-white/15 p-5 rounded-lg space-y-3">
-                <span className="text-xs font-bold text-brand uppercase tracking-wider block">
-                  🦤 Dodo Payments Webhook Attribution Endpoint
-                </span>
-                <p className="text-xs text-white/60">
-                  Set this Webhook URL in your Dodo Payments Portal for payment success events:
-                </p>
-                <code className="text-xs text-white bg-black p-3 rounded border border-white/10 block font-mono">
-                  https://api.rockyt.com/v1/webhooks/revenue/dodo
-                </code>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ─── TAB 6: API KEYS ─── */}
-        {activeTab === 'apikeys' && (
-          <div className="space-y-6 animate-in fade-in duration-200">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-5">
-              <div>
-                <h1 className="text-2xl font-bold text-white tracking-tight uppercase">API Keys &amp; Logs</h1>
-                <p className="text-xs text-white/50 mt-1">Generate and manage Rockyt production API tokens for Claude, Cursor, AI agents &amp; backend SDKs</p>
-              </div>
-              <button
-                onClick={handleGenerateApiKey}
-                disabled={isGeneratingKey}
-                className="bg-brand text-white text-xs font-bold px-4 py-2.5 rounded shadow-glow flex items-center gap-2 uppercase shrink-0 disabled:opacity-50 hover:bg-brand/90 transition-all cursor-pointer"
-              >
-                <Key size={16} /> {isGeneratingKey ? 'GENERATING...' : 'GENERATE NEW API KEY'}
-              </button>
-            </div>
-
-            {/* Newly Generated Key Alert Banner */}
-            {newGeneratedKey && (
-              <div className="bg-brand/10 border-2 border-brand p-5 rounded-lg space-y-3 animate-in slide-in-from-top-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-brand uppercase tracking-wider flex items-center gap-2">
-                    ⚡ NEW LIVE API KEY GENERATED
-                  </span>
-                  <button onClick={() => setNewGeneratedKey(null)} className="text-white/50 hover:text-white text-xs">
-                    Dismiss
-                  </button>
-                </div>
-                <p className="text-xs text-white/80">
-                  Copy this key now. For security purposes, this is the only time the full key will be displayed.
-                </p>
-                <div className="flex items-center gap-2 bg-black border border-brand/50 p-3 rounded">
-                  <span className="flex-1 font-mono text-xs font-bold text-brand select-all break-all">
-                    {newGeneratedKey}
-                  </span>
-                  <button 
-                    onClick={() => copyToClipboard(newGeneratedKey)} 
-                    className="bg-brand text-white text-xs font-bold px-4 py-2 rounded uppercase shrink-0 hover:bg-brand/90"
-                  >
-                    {copiedKey ? 'COPIED!' : 'COPY KEY'}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {apiKeys.length > 0 ? (
-              <div className="space-y-4">
-                {apiKeys.map(key => (
-                  <div key={key.id} className="bg-zinc-950 border border-brand/40 shadow-glow rounded-lg p-6 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs text-brand uppercase font-bold block">LIVE PRODUCTION KEY</label>
-                      <button 
-                        onClick={() => handleRevokeApiKey(key.id)}
-                        className="text-red-400 hover:text-red-300 text-xs font-mono uppercase underline cursor-pointer"
-                      >
-                        Revoke Key
-                      </button>
-                    </div>
-                    <div className="flex items-center gap-3 bg-black border border-white/20 p-3 rounded">
-                      <Key size={16} className="text-brand shrink-0" />
-                      <span className="flex-1 font-mono text-xs font-bold text-white">
-                        {showKey ? key.key_prefix + '••••••••••••••••••••••••••••••••' : `${key.key_prefix}••••••••••••••••••••••••••••••••`}
-                      </span>
-                      <button onClick={() => setShowKey(!showKey)} className="text-white/60 hover:text-white p-1">
-                        {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                      </button>
-                      <button onClick={() => copyToClipboard(key.key_prefix)} className="bg-brand text-white text-xs font-bold px-3 py-1.5 rounded uppercase">
-                        {copiedKey ? 'COPIED' : 'COPY'}
-                      </button>
-                    </div>
-                    <div className="text-[10px] text-white/40">
-                      Created: {key.created_at ? new Date(key.created_at).toLocaleDateString() : 'Unknown'}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="bg-zinc-950 border border-white/10 rounded-lg p-10 text-center space-y-4">
-                <Key size={36} className="mx-auto text-white/20" />
-                <div>
-                  <h3 className="font-bold text-base text-white">No API Keys Yet</h3>
-                  <p className="text-xs text-white/50 mt-1 max-w-md mx-auto">
-                    Generate a live Rockyt API key to connect Claude, Cursor, autonomous AI agents, or backend SDKs to the Rockyt platform.
-                  </p>
-                </div>
-                <button
-                  onClick={handleGenerateApiKey}
-                  disabled={isGeneratingKey}
-                  className="bg-brand text-white text-xs font-bold px-6 py-3 rounded shadow-glow uppercase inline-flex items-center gap-2 hover:bg-brand/90 transition-all cursor-pointer"
-                >
-                  <Key size={16} /> {isGeneratingKey ? 'GENERATING...' : 'GENERATE FIRST API KEY'}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ─── TAB 7: USERS ─── */}
-        {activeTab === 'users' && (
-          <div className="space-y-6 animate-in fade-in duration-200">
-            <div className="flex items-center justify-between border-b border-white/10 pb-5">
-              <div>
-                <h1 className="text-2xl font-bold text-white tracking-tight uppercase">Users &amp; Team</h1>
-                <p className="text-xs text-white/50 mt-1">Manage team members and workspace access</p>
-              </div>
-              <button 
-                onClick={() => setShowInviteUserModal(true)}
-                className="bg-brand text-white text-xs font-bold px-4 py-2.5 rounded shadow-glow flex items-center gap-2 uppercase"
-              >
-                <UserPlus size={16} /> Invite Member
-              </button>
-            </div>
-
-            <div className="bg-zinc-950 border border-white/15 rounded-lg overflow-hidden">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-zinc-900 border-b border-white/10 text-white/60">
-                  <tr>
-                    <th className="p-3">User</th>
-                    <th className="p-3">Role</th>
-                    <th className="p-3">Plan</th>
-                    <th className="p-3">Joined</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {(teamMembers.length > 0 ? teamMembers : [{ id: '1', email: userEmail, role: 'Owner / Admin', plan: profile?.plan || 'Growth', created_at: profile?.created_at }]).map(u => (
-                    <tr key={u.id}>
-                      <td className="p-3 font-bold text-white flex items-center gap-2">
-                        <img src={userAvatar} className="w-6 h-6 rounded-full" /> {u.email}
-                      </td>
-                      <td className="p-3 text-emerald-400 font-bold">{u.role || 'Member'}</td>
-                      <td className="p-3 text-brand font-bold uppercase">{u.plan || profile?.plan || 'Growth'}</td>
-                      <td className="p-3 text-white/50">{u.created_at ? new Date(u.created_at).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* ─── TAB 8: WEBHOOKS ─── */}
-        {activeTab === 'webhooks' && (
-          <div className="space-y-6 animate-in fade-in duration-200">
-            <div className="flex items-center justify-between border-b border-white/10 pb-5">
-              <div>
-                <h1 className="text-2xl font-bold text-white tracking-tight uppercase">Webhooks</h1>
-                <p className="text-xs text-white/50 mt-1">Subscribe to real-time HTTP events from connected social accounts</p>
-              </div>
-              <button
-                onClick={() => setShowNewWebhookModal(true)}
-                className="bg-brand text-white text-xs font-bold px-4 py-2.5 rounded shadow-glow flex items-center gap-2 uppercase"
-              >
-                <Plus size={16} /> Create Webhook
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              {webhooks.length > 0 ? (
-                webhooks.map(wh => (
-                  <div key={wh.id} className="bg-zinc-950 border border-white/15 rounded-lg p-5 flex items-center justify-between">
-                    <div>
-                      <h4 className="font-bold text-sm text-white">{wh.name || 'Production Webhook'}</h4>
-                      <p className="text-xs font-mono text-brand mt-1">{wh.url}</p>
-                      <div className="flex gap-2 mt-2">
-                        {wh.events.map(ev => (
-                          <span key={ev} className="text-[9px] bg-white/10 text-white/80 px-2 py-0.5 rounded">{ev}</span>
-                        ))}
-                      </div>
-                    </div>
-                    <button onClick={() => handleDeleteWebhook(wh.id)} className="text-red-400 hover:text-red-300 p-2">
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                ))
               ) : (
-                <div className="bg-zinc-950 border border-white/10 rounded-lg p-8 text-center text-xs text-white/50">
-                  No webhooks configured yet. Click "+ Create Webhook" to register an HTTP endpoint.
+                <div className="p-8 text-center text-white/40 text-xs font-mono border border-white/5 rounded">
+                  No conversion events logged in the database yet. Click "Send Test Conversion Event" above to fire a live event!
                 </div>
               )}
-            </div>
-          </div>
-        )}
-
-        {/* ─── TAB 9: LOGS ─── */}
-        {activeTab === 'logs' && (
-          <div className="space-y-6 animate-in fade-in duration-200">
-            <div className="border-b border-white/10 pb-5">
-              <h1 className="text-2xl font-bold text-white tracking-tight uppercase">API Activity Logs</h1>
-              <p className="text-xs text-white/50 mt-1">Real-time user event inspector &amp; latency tracking</p>
-            </div>
-
-            {/* Filter controls */}
-            <div className="flex flex-wrap items-center gap-3 text-xs">
-              <div className="relative flex-1 min-w-[200px]">
-                <Search size={14} className="absolute left-3 top-2.5 text-white/40" />
-                <input 
-                  type="text"
-                  placeholder="Filter by event/activity..."
-                  value={logSearchQuery}
-                  onChange={(e) => setLogSearchQuery(e.target.value)}
-                  className="w-full bg-zinc-900 border border-white/15 text-white pl-9 pr-3 py-2 rounded outline-none"
-                />
-              </div>
-
-              <select 
-                value={logPlatformFilter}
-                onChange={(e) => setLogPlatformFilter(e.target.value)}
-                className="bg-zinc-900 border border-white/15 text-white px-3 py-2 rounded outline-none"
-              >
-                <option value="all">All Platforms</option>
-                <option value="instagram">Instagram</option>
-                <option value="twitter">X / Twitter</option>
-                <option value="linkedin">LinkedIn</option>
-                <option value="whatsapp">WhatsApp</option>
-              </select>
-
-              <select 
-                value={logStatusFilter}
-                onChange={(e) => setLogStatusFilter(e.target.value)}
-                className="bg-zinc-900 border border-white/15 text-white px-3 py-2 rounded outline-none"
-              >
-                <option value="all">All Statuses</option>
-                <option value="200">200 OK</option>
-                <option value="400">400 Error</option>
-                <option value="500">500 Internal</option>
-              </select>
-            </div>
-
-            {/* Logs Table */}
-            <div className="bg-zinc-950 border border-white/15 rounded-lg overflow-hidden">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-zinc-900 border-b border-white/10 text-white/60">
-                  <tr>
-                    <th className="p-3">Timestamp</th>
-                    <th className="p-3">Activity / Endpoint</th>
-                    <th className="p-3">Platform</th>
-                    <th className="p-3">Status</th>
-                    <th className="p-3">Latency</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {filteredLogs.map(log => (
-                    <tr key={log.id} className="hover:bg-white/5 transition-colors">
-                      <td className="p-3 text-white/50">{new Date(log.created_at).toLocaleTimeString()}</td>
-                      <td className="p-3 font-mono font-bold text-white">{log.activity}</td>
-                      <td className="p-3 text-white/80">{log.platform}</td>
-                      <td className="p-3">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                          log.status_code === 200 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-400/30' : 'bg-red-950 text-red-400 border border-red-500/30'
-                        }`}>
-                          {log.status_code}
-                        </span>
-                      </td>
-                      <td className="p-3 text-white/60">{log.duration_ms}ms</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* ─── TAB 10: SETTINGS & BILLING ─── */}
-        {activeTab === 'settings' && (
-          <div className="space-y-6 animate-in fade-in duration-200">
-            <div className="border-b border-white/10 pb-5">
-              <h1 className="text-2xl font-bold text-white tracking-tight uppercase">Settings &amp; Billing</h1>
-              <p className="text-xs text-white/50 mt-1">Manage account information &amp; Dodo Payments wallet balance</p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Account Info */}
-              <div className="bg-zinc-950 border border-white/15 rounded-lg p-6 space-y-4">
-                <h3 className="font-bold text-sm text-white uppercase tracking-wider">Account Info</h3>
-                <div className="space-y-2 text-xs">
-                  <div>
-                    <span className="text-white/40 block">Email Address</span>
-                    <span className="text-white font-bold">{userEmail}</span>
-                  </div>
-                  <div>
-                    <span className="text-white/40 block">Subscription Tier</span>
-                    <span className="text-brand font-bold uppercase">{profile?.plan || 'Growth Plan'}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Dodo Payments Top-Up */}
-              <div className="bg-zinc-950 border border-brand/40 shadow-glow rounded-lg p-6 space-y-4">
-                <h3 className="font-bold text-sm text-white uppercase tracking-wider">Dodo Payments Wallet</h3>
-                <div className="text-xs text-white/70">
-                  Current Balance: <strong className="text-emerald-400 text-base ml-1">${walletBalance.toFixed(2)}</strong>
-                </div>
-
-                <div className="flex gap-2">
-                  {[25, 50, 100].map(amt => (
-                    <button
-                      key={amt}
-                      onClick={() => handleInitiateCheckout(undefined, amt)}
-                      className="flex-1 bg-zinc-900 border border-white/15 hover:border-brand text-xs font-bold py-2 rounded"
-                    >
-                      +${amt}
-                    </button>
-                  ))}
-                </div>
-              </div>
             </div>
           </div>
         )}
