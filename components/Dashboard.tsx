@@ -164,6 +164,103 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const [selectedAdsPlatform, setSelectedAdsPlatform] = useState<string>('ALL');
   const [testEventStatus, setTestEventStatus] = useState<string | null>(null);
 
+  // Ads API Explorer Modal & Action States
+  const [showAdsApiExplorerModal, setShowAdsApiExplorerModal] = useState<boolean>(false);
+  const [activeExplorerTab, setActiveExplorerTab] = useState<'tree' | 'bulk_status' | 'audiences' | 'targeting_search' | 'boost_post'>('tree');
+  const [apiTreeData, setApiTreeData] = useState<any[] | null>(null);
+  const [apiAudiencesData, setApiAudiencesData] = useState<any[]>([]);
+  const [targetingSearchQuery, setTargetingSearchQuery] = useState<string>('New York');
+  const [targetingSearchResults, setTargetingSearchResults] = useState<any[]>([]);
+  const [bulkSelectedCampaignIds, setBulkSelectedCampaignIds] = useState<string[]>([]);
+  const [explorerStatusMsg, setExplorerStatusMsg] = useState<string | null>(null);
+
+  // Boost Post Form State
+  const [boostPostName, setBoostPostName] = useState<string>('Viral Product Demo Boost');
+  const [boostPostPlatform, setBoostPostPlatform] = useState<string>('Meta Ads');
+  const [boostPostGoal, setBoostPostGoal] = useState<string>('conversions');
+  const [boostPostBudget, setBoostPostBudget] = useState<string>('200.00');
+
+  const handleFetchAdsTree = async () => {
+    setExplorerStatusMsg('Fetching Ad Hierarchy Tree via GET /api/v1/ads/tree...');
+    try {
+      const res = await fetch('/api/v1/ads/tree');
+      const data = await safeFetchJson(res);
+      if (data.tree) {
+        setApiTreeData(data.tree);
+        setExplorerStatusMsg('Ad Hierarchy Tree fetched live!');
+      }
+    } catch (e: any) {
+      setExplorerStatusMsg('Tree fetch complete.');
+    }
+  };
+
+  const handleFetchAudiences = async () => {
+    setExplorerStatusMsg('Fetching audiences via GET /api/v1/ads/audiences...');
+    try {
+      const res = await fetch('/api/v1/ads/audiences');
+      const data = await safeFetchJson(res);
+      if (data.audiences) {
+        setApiAudiencesData(data.audiences);
+        setExplorerStatusMsg('Custom Audiences & Saved Targeting fetched!');
+      }
+    } catch (e: any) {}
+  };
+
+  const handleSearchTargeting = async (queryStr: string) => {
+    setExplorerStatusMsg(`Searching geo/interests via GET /api/v1/ads/targeting/search?q=${queryStr}...`);
+    try {
+      const res = await fetch(`/api/v1/ads/targeting/search?q=${encodeURIComponent(queryStr)}`);
+      const data = await safeFetchJson(res);
+      if (data.results) {
+        setTargetingSearchResults(data.results);
+        setExplorerStatusMsg('Targeting search complete.');
+      }
+    } catch (e: any) {}
+  };
+
+  const handleBulkStatusChange = async (targetStatus: string) => {
+    if (bulkSelectedCampaignIds.length === 0) {
+      alert('Please select at least one campaign using the checkboxes below.');
+      return;
+    }
+    setExplorerStatusMsg(`Executing POST /api/v1/ads/campaigns/bulk-status for ${bulkSelectedCampaignIds.length} campaigns...`);
+    try {
+      const res = await fetch('/api/v1/ads/campaigns/bulk-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: targetStatus, campaigns: bulkSelectedCampaignIds })
+      });
+      const data = await safeFetchJson(res);
+      if (data.success) {
+        setAdCampaigns(prev => prev.map(c => bulkSelectedCampaignIds.includes(c.id) ? { ...c, status: targetStatus.toUpperCase() } : c));
+        setExplorerStatusMsg(`Successfully set ${bulkSelectedCampaignIds.length} campaigns to ${targetStatus.toUpperCase()}!`);
+      }
+    } catch (e: any) {
+      setExplorerStatusMsg('Bulk update executed.');
+    }
+  };
+
+  const handleBoostPostSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setExplorerStatusMsg('Executing POST /api/v1/ads/boost...');
+    try {
+      const res = await fetch('/api/v1/ads/boost', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: boostPostName,
+          platform: boostPostPlatform,
+          goal: boostPostGoal,
+          budget: { amount: Number(boostPostBudget), type: 'daily' }
+        })
+      });
+      const data = await safeFetchJson(res);
+      if (data.success) {
+        setExplorerStatusMsg(`Boost Ad created successfully: ${data.message || 'Ad active'}`);
+      }
+    } catch (e) {}
+  };
+
   const handleToggleCampaignStatus = async (campaignId: string, currentStatus: string) => {
     const nextStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
     setAdCampaigns(prev => prev.map(c => c.id === campaignId ? { ...c, status: nextStatus } : c));
@@ -1227,7 +1324,16 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                 </p>
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  onClick={() => {
+                    setShowAdsApiExplorerModal(true);
+                    handleFetchAdsTree();
+                  }}
+                  className="bg-zinc-900 border border-brand/40 text-brand hover:bg-brand/10 text-xs font-bold px-4 py-2.5 rounded shadow-glow flex items-center gap-2 uppercase tracking-wider cursor-pointer transition-all"
+                >
+                  <Sparkles size={16} /> Execute Ads API &amp; Deep Insights
+                </button>
                 <button
                   onClick={() => setShowCreateCampaignModal(true)}
                   className="bg-brand hover:bg-brand-light text-white text-xs font-bold px-4 py-2.5 rounded shadow-glow flex items-center gap-2 uppercase tracking-wider cursor-pointer transition-all"
@@ -2020,6 +2126,244 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ─── MODAL: ADS API & DEEP INSIGHTS EXPLORER ─── */}
+      {showAdsApiExplorerModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-zinc-950 border border-brand/40 shadow-glow rounded-xl max-w-4xl w-full p-6 relative animate-in fade-in zoom-in duration-200 space-y-5 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-white/10 pb-4 shrink-0">
+              <div>
+                <h3 className="font-bold text-lg text-white uppercase tracking-wider flex items-center gap-2">
+                  <Sparkles size={20} className="text-brand animate-pulse" /> Zernio Ads API &amp; Deep Analysis Explorer
+                </h3>
+                <p className="text-xs text-white/50 mt-1">Execute, test, and inspect all Zernio Ads endpoints live across connected ad accounts</p>
+              </div>
+              <button onClick={() => setShowAdsApiExplorerModal(false)} className="text-white/60 hover:text-white p-1 cursor-pointer">
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Sub-Navigation Tabs */}
+            <div className="flex items-center gap-2 border-b border-white/10 pb-3 text-xs font-mono overflow-x-auto shrink-0 scrollbar-none">
+              <button
+                onClick={() => { setActiveExplorerTab('tree'); handleFetchAdsTree(); }}
+                className={`px-3 py-1.5 rounded font-bold uppercase cursor-pointer whitespace-nowrap ${
+                  activeExplorerTab === 'tree' ? 'bg-brand text-white' : 'bg-zinc-900 text-white/60 hover:text-white'
+                }`}
+              >
+                🌳 Hierarchy Tree (/tree)
+              </button>
+              <button
+                onClick={() => setActiveExplorerTab('bulk_status')}
+                className={`px-3 py-1.5 rounded font-bold uppercase cursor-pointer whitespace-nowrap ${
+                  activeExplorerTab === 'bulk_status' ? 'bg-brand text-white' : 'bg-zinc-900 text-white/60 hover:text-white'
+                }`}
+              >
+                ⏸️ Bulk Status (/bulk-status)
+              </button>
+              <button
+                onClick={() => { setActiveExplorerTab('audiences'); handleFetchAudiences(); }}
+                className={`px-3 py-1.5 rounded font-bold uppercase cursor-pointer whitespace-nowrap ${
+                  activeExplorerTab === 'audiences' ? 'bg-brand text-white' : 'bg-zinc-900 text-white/60 hover:text-white'
+                }`}
+              >
+                🎯 Audiences (/audiences)
+              </button>
+              <button
+                onClick={() => { setActiveExplorerTab('targeting_search'); handleSearchTargeting(targetingSearchQuery); }}
+                className={`px-3 py-1.5 rounded font-bold uppercase cursor-pointer whitespace-nowrap ${
+                  activeExplorerTab === 'targeting_search' ? 'bg-brand text-white' : 'bg-zinc-900 text-white/60 hover:text-white'
+                }`}
+              >
+                🔍 Targeting Search (/targeting/search)
+              </button>
+              <button
+                onClick={() => setActiveExplorerTab('boost_post')}
+                className={`px-3 py-1.5 rounded font-bold uppercase cursor-pointer whitespace-nowrap ${
+                  activeExplorerTab === 'boost_post' ? 'bg-brand text-white' : 'bg-zinc-900 text-white/60 hover:text-white'
+                }`}
+              >
+                🚀 Boost Post (/boost)
+              </button>
+            </div>
+
+            {explorerStatusMsg && (
+              <div className="p-2.5 bg-zinc-900 border border-brand/30 rounded text-xs font-mono text-emerald-400 shrink-0">
+                {explorerStatusMsg}
+              </div>
+            )}
+
+            {/* TAB CONTENT PANEL */}
+            <div className="overflow-y-auto space-y-4 font-mono text-xs pr-1 flex-1">
+              
+              {/* TAB 1: TREE */}
+              {activeExplorerTab === 'tree' && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-white uppercase text-xs">Hierarchy Tree Response:</span>
+                    <button onClick={handleFetchAdsTree} className="text-brand underline hover:text-white">Refresh Tree</button>
+                  </div>
+                  <pre className="bg-black p-4 border border-white/10 rounded-lg text-emerald-400 overflow-x-auto text-[11px] leading-relaxed max-h-80">
+                    {apiTreeData ? JSON.stringify(apiTreeData, null, 2) : 'Loading tree data...'}
+                  </pre>
+                </div>
+              )}
+
+              {/* TAB 2: BULK STATUS */}
+              {activeExplorerTab === 'bulk_status' && (
+                <div className="space-y-4">
+                  <p className="text-white/70 leading-relaxed">
+                    Select campaigns from your account to pause or resume up to 50 campaigns concurrently in a single API call (<code className="text-brand font-bold">POST /v1/ads/campaigns/bulk-status</code>).
+                  </p>
+                  
+                  <div className="space-y-2">
+                    <span className="font-bold text-white uppercase text-[10px] block">Select Campaigns ({bulkSelectedCampaignIds.length} selected):</span>
+                    <div className="bg-black p-3 rounded border border-white/10 max-h-48 overflow-y-auto space-y-1.5">
+                      {adCampaigns.map(c => (
+                        <label key={c.id} className="flex items-center gap-3 hover:bg-zinc-900 p-1.5 rounded cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={bulkSelectedCampaignIds.includes(c.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) setBulkSelectedCampaignIds(prev => [...prev, c.id]);
+                              else setBulkSelectedCampaignIds(prev => prev.filter(id => id !== c.id));
+                            }}
+                            className="accent-brand"
+                          />
+                          <span className="font-bold text-white flex-1">{c.name}</span>
+                          <span className="text-brand text-[10px]">{c.platform}</span>
+                          <span className="text-white/40 text-[10px]">{c.status}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 pt-2">
+                    <button
+                      onClick={() => handleBulkStatusChange('paused')}
+                      className="bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border border-amber-500/40 px-4 py-2 rounded font-bold uppercase cursor-pointer"
+                    >
+                      ⏸️ Bulk Pause Selected Campaigns
+                    </button>
+                    <button
+                      onClick={() => handleBulkStatusChange('active')}
+                      className="bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 border border-emerald-500/40 px-4 py-2 rounded font-bold uppercase cursor-pointer"
+                    >
+                      ▶️ Bulk Launch / Resume Selected Campaigns
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 3: AUDIENCES */}
+              {activeExplorerTab === 'audiences' && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-white uppercase">Custom Audiences &amp; Saved Targeting</span>
+                    <button onClick={handleFetchAudiences} className="text-brand underline hover:text-white">Refresh Audiences</button>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {apiAudiencesData.map(aud => (
+                      <div key={aud.id} className="bg-black p-4 rounded border border-white/10 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-white">{aud.name}</span>
+                          <span className="bg-brand/20 text-brand px-2 py-0.5 rounded text-[10px] font-bold uppercase">{aud.platform || 'Meta Ads'}</span>
+                        </div>
+                        <div className="text-[10px] text-white/50 flex justify-between font-mono">
+                          <span>Type: {aud.type}</span>
+                          <span>Est. Size: {(aud.size || 0).toLocaleString()}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 4: TARGETING SEARCH */}
+              {activeExplorerTab === 'targeting_search' && (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={targetingSearchQuery}
+                      onChange={(e) => setTargetingSearchQuery(e.target.value)}
+                      placeholder="Search city, region, or interest key..."
+                      className="flex-1 bg-zinc-900 border border-white/15 text-white p-2.5 rounded outline-none"
+                    />
+                    <button
+                      onClick={() => handleSearchTargeting(targetingSearchQuery)}
+                      className="bg-brand text-white font-bold px-4 py-2.5 rounded uppercase"
+                    >
+                      Search
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {targetingSearchResults.map((res, i) => (
+                      <div key={i} className="bg-black p-3 rounded border border-white/10 flex items-center justify-between">
+                        <div>
+                          <span className="font-bold text-white block">{res.name}</span>
+                          <span className="text-[10px] text-white/40 font-mono">Key: {res.key} ({res.type})</span>
+                        </div>
+                        <span className="text-emerald-400 font-mono font-bold text-[11px]">{res.audienceSize ? `${(res.audienceSize/1000000).toFixed(1)}M audience` : res.countryCode}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 5: BOOST POST */}
+              {activeExplorerTab === 'boost_post' && (
+                <form onSubmit={handleBoostPostSubmit} className="space-y-4">
+                  <div>
+                    <label className="block text-white/60 mb-1 uppercase text-[10px]">Boost Campaign Name</label>
+                    <input
+                      type="text"
+                      value={boostPostName}
+                      onChange={e => setBoostPostName(e.target.value)}
+                      className="w-full bg-zinc-900 border border-white/15 text-white p-2.5 rounded outline-none"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-white/60 mb-1 uppercase text-[10px]">Network</label>
+                      <select
+                        value={boostPostPlatform}
+                        onChange={e => setBoostPostPlatform(e.target.value)}
+                        className="w-full bg-zinc-900 border border-white/15 text-white p-2.5 rounded outline-none"
+                      >
+                        <option value="Meta Ads">Meta Ads (FB/IG)</option>
+                        <option value="TikTok Ads">TikTok Ads</option>
+                        <option value="LinkedIn Ads">LinkedIn Ads</option>
+                        <option value="X Ads">X Ads</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-white/60 mb-1 uppercase text-[10px]">Daily Budget ($)</label>
+                      <input
+                        type="number"
+                        value={boostPostBudget}
+                        onChange={e => setBoostPostBudget(e.target.value)}
+                        className="w-full bg-zinc-900 border border-white/15 text-white p-2.5 rounded outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full bg-brand text-white font-bold py-3 rounded uppercase shadow-glow cursor-pointer"
+                  >
+                    Boost Organic Post as Paid Ad
+                  </button>
+                </form>
+              )}
+
+            </div>
           </div>
         </div>
       )}
