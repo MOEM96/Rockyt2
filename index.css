@@ -1,0 +1,212 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700&family=Oswald:wght@400;500;600;700&display=swap');
+
+/* GLOBAL RESETS & THEME VARS */
+:root {
+  --color-paper: #F0F0F2;
+  --color-ink: #111111;
+  --color-brand: #D35D88;
+  --color-zinc-900: #18181b;
+}
+
+html {
+  scroll-behavior: smooth;
+  background-color: #050505;
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #050505;
+  color: #F0F0F2;
+  font-family: 'Inter', sans-serif;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* NOISE OVERLAY */
+.noise-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 100;
+  opacity: 0.04;
+  background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='1'/%3E%3C/svg%3E");
+}
+
+/* TAPE STRIP DECORATIONS */
+.tape {
+  position: absolute;
+  height: 24px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(2px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+  z-index: 20;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+.tape-pink {
+  background: rgba(211, 93, 136, 0.85);
+  border: none;
+  box-shadow: 0 2px 8px rgba(211, 93, 136, 0.4);
+}
+
+/* TORN PAPER EFFECT */
+.torn-paper {
+  clip-path: polygon(0% 0%, 100% 0.5%, 99.5% 100%, 0.5% 99.2%);
+}
+
+/* GLOW SHADOWS */
+.box-shadow-glow {
+  box-shadow: 0 0 20px rgba(211, 93, 136, 0.6);
+}
+
+.shadow-hard {
+  box-shadow: 8px 8px 0px 0px #111111;
+}
+
+/* CUSTOM SELECTION */
+::selection {
+  background-color: #D35D88;
+  color: #FFFFFF;
+}
+
+/* SCROLLBAR */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #050505;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #D35D88;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #e2729c;
+}
+
+/* NO SCROLLBAR UTILITY */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* 3D PERSPECTIVE & TRANSFORMS FOR ONBOARDING & POSTERS */
+.perspective-2000 {
+  perspective: 2000px;
+}
+
+.perspective-1000 {
+  perspective: 1000px;
+}
+
+.transform-style-3d {
+  transform-style: preserve-3d;
+}
+
+.rotate-y-0 {
+  transform: rotateY(0deg);
+}
+
+.rotate-y-12 {
+  transform: rotateY(12deg);
+}
+
+.-rotate-y-12 {
+  transform: rotateY(-12deg);
+}
+
+.translate-z-0 {
+  transform: translateZ(0px);
+}
+
+.translate-z-500 {
+  transform: translateZ(500px);
+}
+
+.-translate-z-500 {
+  transform: translateZ(-500px);
+}
+
+/* SCREEN DISTORTION GLITCH ANIMATION */
+@keyframes glitch-skew {
+  0% { transform: skew(0deg); }
+  20% { transform: skew(-10deg) scaleY(1.08); }
+  40% { transform: skew(10deg) scaleX(0.92); }
+  60% { transform: skew(-6deg); }
+  80% { transform: skew(6deg); }
+  100% { transform: skew(0deg); }
+}
+
+@keyframes glitch-anim-1 {
+  0% { clip-path: inset(15% 0 35% 0); transform: translate(-4px, 1px); }
+  25% { clip-path: inset(55% 0 15% 0); transform: translate(4px, -3px); }
+  50% { clip-path: inset(5% 0 75% 0); transform: translate(-3px, 4px); }
+  75% { clip-path: inset(75% 0 5% 0); transform: translate(5px, -2px); }
+  100% { clip-path: inset(0 0 0 0); transform: translate(0, 0); }
+}
+
+.glitch-active {
+  animation: glitch-skew 0.35s ease-in-out;
+  position: relative;
+  display: inline-block;
+  color: #D35D88;
+  text-shadow: 3px 0 #00ffff, -3px 0 #ff0055;
+}
+
+.glitch-active::before,
+.glitch-active::after {
+  content: attr(data-text);
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.85;
+}
+
+.glitch-active::before {
+  color: #00ffff;
+  animation: glitch-anim-1 0.35s infinite linear alternate-reverse;
+  left: 3px;
+  text-shadow: -2px 0 #ff0055;
+  clip-path: inset(35% 0 35% 0);
+}
+
+.glitch-active::after {
+  color: #ff0055;
+  animation: glitch-anim-1 0.25s infinite linear alternate;
+  left: -3px;
+  text-shadow: 2px 0 #00ffff;
+  clip-path: inset(15% 0 55% 0);
+}
+
+/* MARQUEE ANIMATION */
+@keyframes continuous-marquee {
+  0% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(-100%);
+  }
+}
+
+.animate-marquee-continuous {
+  animation: continuous-marquee 30s linear infinite;
+}
+
+.animate-marquee-continuous:hover {
+  animation-play-state: paused;
+}

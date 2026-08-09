@@ -1,0 +1,59 @@
+# Rockyt API for AI Agents & Developers
+
+> Rockyt is the unified social media, messaging, and ads API for developers and autonomous AI agents. One REST call or MCP tool call to publish, message, advertise, and analyze across 16 channels.
+
+## Core Capabilities
+- **Unified Social Publishing**: Post and schedule text, images, carousels, and videos to Twitter/X, Instagram, TikTok, LinkedIn, Threads, Bluesky, Reddit, Pinterest, Snapchat, and Google Business Profile (`POST /v1/posts`).
+- **Unified Messaging**: Send WhatsApp business templates/DMs, Telegram bot broadcasts, Discord webhooks, and Instagram DMs (`POST /v1/whatsapp/messages`, `POST /v1/messages`).
+- **MCP Server for AI Agents**: Native Model Context Protocol server (`@rockyt/mcp-server`) for Claude Desktop, Cursor, Antigravity, LangChain, AutoGen, and CrewAI agents.
+- **Programmatic Ad Campaigns**: Create and manage Meta Ads (Facebook & Instagram) and Google Ads campaigns (`POST /v1/ads/campaigns`).
+- **Hosted OAuth**: Connect user social media accounts via hosted OAuth URLs without creating developer apps on each platform (`POST /v1/accounts/connect`).
+
+## Quick Integration Examples
+
+### Node.js SDK
+```typescript
+import Rockyt from "@rockyt/sdk";
+const rockyt = new Rockyt(process.env.ROCKYT_API_KEY!);
+
+// Publish across multiple social platforms in one call
+await rockyt.posts.create({
+  content: "Autonomous AI Agent dispatch!",
+  mediaItems: [{ type: "video", url: "https://cdn.rockyt.io/video.mp4" }],
+  platforms: [
+    { platform: "x", accountId: "acc_x" },
+    { platform: "instagram", accountId: "acc_ig" },
+    { platform: "tiktok", accountId: "acc_tt" },
+    { platform: "linkedin", accountId: "acc_li" }
+  ]
+});
+```
+
+### Model Context Protocol (MCP) Configuration
+```json
+{
+  "mcpServers": {
+    "rockyt": {
+      "command": "npx",
+      "args": ["-y", "@rockyt/mcp-server"],
+      "env": {
+        "ROCKYT_API_KEY": "YOUR_ROCKYT_LIVE_API_KEY"
+      }
+    }
+  }
+}
+```
+
+## Documentation & Platform Routes
+- Main Spec: https://rockyt.io
+- API Docs: https://rockyt.io/docs
+- Agent Quickstart: https://rockyt.io/agent-quickstart
+- MCP Server Guide: https://rockyt.io/mcp
+- Twitter / X API: https://rockyt.io/x
+- Instagram API: https://rockyt.io/instagram
+- WhatsApp API: https://rockyt.io/whatsapp
+- TikTok API: https://rockyt.io/tiktok
+- LinkedIn API: https://rockyt.io/linkedin
+- Telegram API: https://rockyt.io/telegram
+- Discord API: https://rockyt.io/discord
+- Meta Ads API: https://rockyt.io/meta-ads

@@ -1,0 +1,28 @@
+{
+  "name": "rockyt-cli",
+  "version": "1.0.0",
+  "description": "Rockyt CLI - Manage social media profiles, API keys, posts, and analytics from your command line.",
+  "main": "dist/index.js",
+  "type": "module",
+  "bin": {
+    "rockyt": "./bin/rockyt.js"
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "keywords": [
+    "rockyt",
+    "cli",
+    "social-media",
+    "api"
+  ],
+  "author": "Rockyt Team",
+  "license": "MIT",
+  "dependencies": {
+    "@rockyt/node": "file:../rockyt-node"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.2.2"
+  }
+}

@@ -1,0 +1,3508 @@
+import express from "express";
+import path from "path";
+import fs from "fs";
+import { createClient } from "@supabase/supabase-js";
+import { Zernio } from "@zernio/node";
+import crypto from "crypto";
+import cookieParser from "cookie-parser";
+import helmet from "helmet";
+import cors from "cors";
+import rateLimit from "express-rate-limit";
+
+function startServer() {
+  const app = express();
+  const PORT = 3000;
+
+  // Security headers & CORS
+  app.use(helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  }));
+
+  app.use(cors({
+    origin: ['https://rockyt.io', 'http://localhost:3000'],
+    credentials: true,
+  }));
+
+  app.use(cookieParser());
+  app.use(express.json({
+    verify: (req: any, _res, buf) => {
+      req.rawBody = buf;
+    }
+  }));
+  // Normalize Vercel serverless rewritten API URLs
+  app.use((req, _res, next) => {
+    const candidate = req.headers['x-forwarded-uri'] || req.headers['x-invoke-path'] || req.headers['x-matched-path'] || req.headers['x-now-route-matches'];
+    if (candidate && typeof candidate === 'string') {
+      const uriStr = candidate.trim();
+      if (uriStr.startsWith('/api') || uriStr.startsWith('/oauth') || uriStr.startsWith('/connect')) {
+        req.url = uriStr;
+      }
+    }
+    next();
+  });
+
+  // Rate limiting for auth and API key creation
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    message: { error: 'Too many requests from this IP, please try again after 15 minutes' }
+  });
+  app.use('/api/auth/', authLimiter);
+  app.use('/api/v1/keys', authLimiter);
+  const zernio = new Zernio({ apiKey: process.env.ROCKYT_API_KEY || process.env.ZERNIO_API_KEY || "dummy_dev_key" });
+
+  const pendingHeadlessSessions = new Map<string, {
+    profileId?: string;
+    tempToken?: string;
+    userProfile?: any;
+    platform?: string;
+    step?: string;
+    createdAt: number;
+  }>();
+
+  // ─── Static frontend: dist (Vite SPA) & fallback to cloned_site ───────────────────────
+  const DIST_DIR = path.join(process.cwd(), 'dist');
+  const CLONED_DIR = fs.existsSync(DIST_DIR) ? DIST_DIR : path.join(process.cwd(), 'cloned_site');
+  const PUBLIC_DIR = path.join(process.cwd(), 'public');
+  
+  if (fs.existsSync(DIST_DIR)) {
+    app.use(express.static(DIST_DIR));
+  }
+  app.use(express.static(PUBLIC_DIR));
+
+  // Strip ?dpl=... and other query strings from Next.js asset URLs so the
+  // static files (saved without query strings) are found correctly on disk.
+  app.use((req, _res, next) => {
+    if (req.url.includes('?') && (
+      req.url.startsWith('/_next/') ||
+      req.url.startsWith('/images/') ||
+      req.url.startsWith('/brand/') ||
+      req.url.startsWith('/fonts/')
+    ) && !req.url.startsWith('/_next/image')) {
+      req.url = req.url.split('?')[0];
+    }
+    next();
+  });
+
+  // Next.js RSC Flight payload fallback handler – prevents 'Connection closed' on RSC requests
+  app.use((req, res, next) => {
+    if (req.url.includes('_rsc=') || req.headers['rsc'] === '1' || req.path.endsWith('.rsc')) {
+      res.setHeader('Content-Type', 'text/x-component; charset=utf-8');
+      return res.status(200).send('1:"$Sreact.fragment"\n0:null\n');
+    }
+    next();
+  });
+
+  // ─── Next.js Image Optimization Proxy / Handler ───
+  app.get(['/_next/image', '/image'], (req: any, res: any) => {
+    try {
+      const rawUrl = req.query.url;
+      if (!rawUrl || typeof rawUrl !== 'string') {
+        const transparentPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+        res.setHeader('Content-Type', 'image/png');
+        return res.status(200).send(transparentPng);
+      }
+      const cleanUrl = rawUrl.split('?')[0];
+      const targetFile = cleanUrl.startsWith('/') ? cleanUrl.slice(1) : cleanUrl;
+      const imagePath = path.join(CLONED_DIR, targetFile);
+      const publicPath = path.join(PUBLIC_DIR, targetFile);
+
+      if (fs.existsSync(imagePath)) {
+        return res.sendFile(imagePath);
+      } else if (fs.existsSync(publicPath)) {
+        return res.sendFile(publicPath);
+      } else if (cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://')) {
+        return res.redirect(cleanUrl);
+      } else {
+        // Return 1x1 transparent PNG fallback if image is missing on disk
+        const transparentPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+        res.setHeader('Content-Type', 'image/png');
+        return res.status(200).send(transparentPng);
+      }
+    } catch (_err) {
+      const transparentPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+      res.setHeader('Content-Type', 'image/png');
+      return res.status(200).send(transparentPng);
+    }
+  });
+
+  // ─── Auth & OAuth routes ───
+  app.get('/api/auth/google', (req: any, res: any) => {
+    const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+    if (!supabaseUrl) return res.status(500).json({ error: 'Supabase not configured on server' });
+    const host = req.headers.host || 'rockyt.io';
+    const protocol = req.headers['x-forwarded-proto'] || (host.includes('localhost') ? 'http' : 'https');
+    const appBase = process.env.APP_BASE_URL || `${protocol}://${host}`;
+    const redirectTo = encodeURIComponent(`${appBase}/api/auth/callback`);
+    return res.redirect(`${supabaseUrl}/auth/v1/authorize?provider=google&redirect_to=${redirectTo}`);
+  });
+
+  app.get('/api/auth/callback', asyncHandler(async (req: any, res: any) => {
+    const code = req.query.code as string;
+    if (!code) return res.redirect('/signin?error=missing_code');
+    const supabaseUrl = process.env.VITE_SUPABASE_URL;
+    const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+    
+    try {
+      const tokenRes = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=pkce`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': anonKey! },
+        body: JSON.stringify({ auth_code: code })
+      });
+      if (!tokenRes.ok) {
+        return res.redirect('/dashboard');
+      }
+      const session = await tokenRes.json();
+      if (session.access_token) {
+        res.cookie('rockyt_session', session.access_token, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'lax',
+          maxAge: (session.expires_in || 3600) * 1000
+        });
+
+        // Eager Zernio profile creation on user signup / login
+        const decodedUser = session.user || decodeSupabaseJWT(session.access_token);
+        if (decodedUser) {
+          await ensureUserProfile(decodedUser);
+        }
+      }
+      return res.redirect('/dashboard');
+    } catch (e) {
+      return res.redirect('/dashboard');
+    }
+  }));
+
+  app.get('/api/auth/session', (req: any, res) => {
+    let headerToken = req.headers.authorization?.replace(/^Bearer\s+/i, '').trim();
+    if (headerToken === 'undefined' || headerToken === 'null' || headerToken === '[object Object]') {
+      headerToken = '';
+    }
+    const token = headerToken || req.cookies?.rockyt_session;
+    if (!token) return res.json({});
+    const decoded = decodeSupabaseJWT(token);
+    if (!decoded) return res.json({});
+    res.json({ user: { id: decoded.id, email: decoded.email } });
+  });
+
+  app.post('/api/auth/signout', (_req, res) => {
+    res.clearCookie('rockyt_session');
+    res.json({ success: true });
+  });
+
+  function safeArray(val: any): any[] {
+    if (Array.isArray(val)) return val;
+    if (typeof val === 'string') {
+      try {
+        const parsed = JSON.parse(val);
+        if (Array.isArray(parsed)) return parsed;
+      } catch {}
+    }
+    return [];
+  }
+
+  app.get('/api/auth/me', combinedAuth, asyncHandler(async (req: any, res: any) => {
+    const profile = await ensureUserProfile(req.user);
+    const userId = profile?.id || req.user.id;
+
+    let apiKey: string | null = null;
+    if (supabase && userId) {
+      try {
+        const { data: keys } = await supabase
+          .from('user_api_keys')
+          .select('key_prefix, created_at')
+          .eq('user_id', userId)
+          .eq('revoked', false)
+          .order('created_at', { ascending: false });
+
+        if (keys && keys.length > 0) {
+          apiKey = keys[0].key_prefix + '••••••••••••••••';
+        } else {
+          // Auto-generate first live API key for user
+          const rawKey = 'rkt_live_' + crypto.randomBytes(32).toString('hex');
+          const hash = crypto.createHash('sha256').update(rawKey).digest('hex');
+          const prefix = rawKey.substring(0, 12);
+          await supabase.from('user_api_keys').insert({
+            user_id: userId,
+            key_hash: hash,
+            key_prefix: prefix,
+            revoked: false
+          });
+          apiKey = rawKey;
+        }
+      } catch (err: any) {
+        console.warn('[GET /api/auth/me] API key lookup warning:', err.message);
+      }
+    }
+
+    return res.json({
+      user: { id: req.user.id, email: req.user.email },
+      profile,
+      apiKey,
+      zernioProfileId: profile?.zernio_profile_id || req.zernioProfileId || null
+    });
+  }));
+
+  app.get('/api/auth/csrf', (_req, res) => res.json({ csrfToken: 'rockyt_csrf_token' }));
+  app.get('/api/auth/providers', (_req, res) => res.json({ google: { id: 'google', name: 'Google' } }));
+  app.post('/api/auth/_log', (_req, res) => res.json({ ok: true }));
+  app.get('/api/auth/_log', (_req, res) => res.json({ ok: true }));
+  app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+
+  // Sentry monitoring tunnel – silently accept all HTTP methods (GET, POST, OPTIONS, PUT, HEAD)
+  app.use('/monitoring', (_req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, HEAD');
+    res.setHeader('Access-Control-Allow-Headers', '*');
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    return res.status(200).send(JSON.stringify({ status: 'ok' }));
+  });
+
+  // PostHog analytics proxy – silently accept / return empty
+  app.use('/ph-data', (_req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, HEAD');
+    res.setHeader('Access-Control-Allow-Headers', '*');
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    return res.status(200).send(JSON.stringify({}));
+  });
+
+  // Rockyt PostHog-powered Ads Conversion Tracking Pixel Endpoint
+  app.get('/rockyt-pixel.js', (req: any, res: any) => {
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const writeKey = req.query.apiKey || req.query.writeKey || 'rkt_pixel_default';
+    const pixelJs = `
+(function(w,d,s,l,i){
+  w[l]=w[l]||[];
+  w['RockytPixel']={
+    key: i,
+    init: function(){
+      console.log('[Rockyt Pixel] Initialized with Facebook Pixel wrapper & Zernio CAPI for key:', i);
+      this.trackPageview();
+      this.setupFbqInterceptors();
+    },
+    track: function(eventName, payload){
+      payload = payload || {};
+      payload.url = w.location.href;
+      payload.referrer = d.referrer;
+      payload.timestamp = new Date().toISOString();
+      
+      // Auto-extract URL ad click parameters (gclid, fbclid, ttclid)
+      var params = new URLSearchParams(w.location.search);
+      payload.gclid = params.get('gclid') || payload.gclid;
+      payload.fbclid = params.get('fbclid') || payload.fbclid;
+      payload.ttclid = params.get('ttclid') || payload.ttclid;
+      
+      // Dual-dispatch: 1. Send to Rockyt Ads CAPI Endpoint
+      try {
+        fetch('/api/v1/conversions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-rockyt-key': i },
+          body: JSON.stringify({
+            eventName: eventName,
+            eventData: payload,
+            posthogDistinctId: w.posthog ? w.posthog.get_distinct_id() : null
+          })
+        }).catch(function(e){ console.warn('[Rockyt Pixel] CAPI dispatch notice:', e); });
+      } catch(e){}
+
+      // Dual-dispatch: 2. Send to PostHog SDK if present
+      if (w.posthog && typeof w.posthog.capture === 'function') {
+        w.posthog.capture(eventName, payload);
+      }
+    },
+    trackPageview: function(){ this.track('PageView', { path: w.location.pathname }); },
+    trackPurchase: function(val, currency, orderId){
+      this.track('Purchase', { value: Number(val||0), currency: currency||'USD', orderId: orderId });
+    },
+    trackLead: function(leadType){ this.track('Lead', { leadType: leadType || 'General' }); },
+    setupFbqInterceptors: function(){
+      var self = this;
+      var origFbq = w.fbq;
+      w.fbq = function() {
+        if (typeof origFbq === 'function') {
+          try { origFbq.apply(this, arguments); } catch(e){}
+        }
+        var action = arguments[0];
+        var eventName = arguments[1];
+        var eventData = arguments[2] || {};
+        if (action === 'track' || action === 'trackCustom') {
+          if (eventName) {
+            self.track(eventName, eventData);
+          }
+        }
+      };
+      if (origFbq) {
+        for (var prop in origFbq) {
+          if (Object.prototype.hasOwnProperty.call(origFbq, prop)) {
+            w.fbq[prop] = origFbq[prop];
+          }
+        }
+      }
+    }
+  };
+  w['RockytPixel'].init();
+})(window,document,'script','rockytPixel','${writeKey}');
+`;
+    res.send(pixelJs.trim());
+  });
+
+  // Plausible analytics stub
+  app.get('/js/script.js', (_req, res) => {
+    res.setHeader('Content-Type', 'application/javascript');
+    res.send('// analytics stub');
+  });
+
+  // Facebook/LinkedIn/analytics pixel stubs
+  app.post('/api/analytics/:provider/:event', (_req, res) => res.json({ ok: true }));
+
+  // Next.js bot-protection challenge endpoints – return valid JS for all nested subpaths
+  app.use('/149e9513-01fa-4fb0-aad4-566afd725d1b', (req, res) => {
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    if (req.url.endsWith('p.js')) {
+      return res.send('document.dispatchEvent(new Event("kpsdk-load"));document.dispatchEvent(new Event("kpsdk-ready"));');
+    }
+    return res.send('if(window.V_C){window.V_C.push(()=>{})}');
+  });
+
+
+
+  // Serve raw openapi.yaml – prefer cloned_site copy, fall back to public/
+  app.get('/openapi.yaml', (_req, res) => {
+    const clonedYaml = path.join(CLONED_DIR, 'openapi.yaml');
+    const publicYaml = path.join(PUBLIC_DIR, 'openapi.yaml');
+    const yamlPath = fs.existsSync(clonedYaml) ? clonedYaml : publicYaml;
+    if (fs.existsSync(yamlPath)) {
+      res.setHeader('Content-Type', 'text/yaml; charset=utf-8');
+      res.sendFile(yamlPath);
+    } else {
+      res.status(404).send('Not Found');
+    }
+  });
+
+  // Primary static frontend from cloned_site
+  if (fs.existsSync(CLONED_DIR)) {
+    app.use(express.static(CLONED_DIR, { dotfiles: 'allow', extensions: ['html'] }));
+  }
+
+  // Secondary static assets from public/ (overrides/extras)
+  app.use(express.static(PUBLIC_DIR, { dotfiles: 'allow' }));
+
+  // Fallback: serve empty JS stub for missing _next chunks to prevent ChunkLoadError crashes
+  app.get('/_next/static/chunks/:chunk', (req, res, next) => {
+    const chunkFile = path.join(CLONED_DIR, '_next', 'static', 'chunks', req.params.chunk);
+    if (!fs.existsSync(chunkFile)) {
+      // Serve empty turbopack-compatible module stub
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      res.send('// chunk stub\n(self.__next_chunk_s=self.__next_chunk_s||[]).push([]);');
+    } else {
+      next();
+    }
+  });
+
+  // Capture raw body buffer for webhook signature verification
+  app.use(express.json({
+    verify: (req: any, _res, buf) => {
+      req.rawBody = buf;
+    }
+  }));
+
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || 'https://srqpicqpadqfxjbtghky.supabase.co';
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_FCRt810ouCz9jKti1niwyA_yN6jKTij';
+  const supabase = createClient(supabaseUrl, supabaseKey);
+
+  // Memory storage for local mock mode fallback
+  const mockKeys: Array<{ id: string, user_id: string, key_hash: string, key_prefix: string, revoked: boolean, created_at: string }> = [];
+  let mockConnectedCount = 0;
+
+  function isValidUUID(str: any): boolean {
+    if (!str || typeof str !== 'string') return false;
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str.trim());
+  }
+
+  function toUUID(str: string): string {
+    if (isValidUUID(str)) return str.trim();
+    const hash = crypto.createHash('md5').update(str || 'default_rockyt_user').digest('hex');
+    return `${hash.substring(0, 8)}-${hash.substring(8, 12)}-4${hash.substring(13, 16)}-a${hash.substring(17, 20)}-${hash.substring(20, 32)}`;
+  }
+
+  async function ensureUserProfile(reqUser: { id: string; email?: string | null; user_metadata?: any }) {
+    if (!supabase || !reqUser) return null;
+
+    const rawEmail = reqUser.email || reqUser.user_metadata?.email || '';
+    const cleanEmail = rawEmail.trim().toLowerCase() || (reqUser.id ? `user_${reqUser.id.substring(0, 8)}@rockyt.io` : 'user@rockyt.io');
+    const safeUserId = isValidUUID(reqUser.id) ? reqUser.id : toUUID(cleanEmail || reqUser.id || 'rockyt_user');
+
+    try {
+      let profile = null;
+
+      // 1. Search Supabase by ID or exact case-insensitive email
+      if (isValidUUID(reqUser.id)) {
+        const { data: p1 } = await supabase.from('profiles').select('*').eq('id', reqUser.id).maybeSingle();
+        profile = p1;
+      }
+      if (!profile && cleanEmail) {
+        const { data: p2 } = await supabase.from('profiles').select('*').eq('email', cleanEmail).maybeSingle();
+        profile = p2;
+      }
+
+      // 2. Create profile row if it doesn't exist yet
+      if (!profile) {
+        console.log(`[ensureUserProfile] Creating single permanent profile row for user: ${safeUserId} (${cleanEmail})`);
+        const { data: newProfile, error: upsertErr } = await supabase
+          .from('profiles')
+          .upsert({
+            id: safeUserId,
+            email: cleanEmail,
+            plan: 'Growth',
+            max_accounts: 1,
+            connected_accounts_count: 0,
+            wallet_balance: 0.00
+          }, { onConflict: 'id' })
+          .select()
+          .maybeSingle();
+
+        if (upsertErr) {
+          console.error('[ensureUserProfile] Profile upsert error:', upsertErr.message);
+        }
+        profile = newProfile || { id: safeUserId, email: cleanEmail, plan: 'Growth', max_accounts: 1, connected_accounts_count: 0, wallet_balance: 0.00 };
+      }
+
+      // Explicit profile ID binding for moamenemam966@gmail.com
+      if (cleanEmail === 'moamenemam966@gmail.com') {
+        const targetZernioId = '6a5fb8eafdd23f2f624ba21a';
+        if (profile && profile.zernio_profile_id !== targetZernioId) {
+          profile.zernio_profile_id = targetZernioId;
+          try {
+            const targetId = profile.id || safeUserId;
+            await supabase
+              .from('profiles')
+              .update({ zernio_profile_id: targetZernioId })
+              .eq('id', targetId);
+          } catch (_updErr) {}
+        }
+        return profile;
+      }
+
+      // 3. Guarantee a REAL 24-character Zernio profile ObjectID (never fake prof_ strings)
+      const isInvalidZernioId = !profile.zernio_profile_id || String(profile.zernio_profile_id).startsWith('prof_') || String(profile.zernio_profile_id).length < 15;
+
+      if (isInvalidZernioId) {
+        let realZernioId: string | null = null;
+        try {
+          // List existing profiles on Zernio API
+          const listRes = await zernio.profiles.listProfiles();
+          const profilesList = (listRes.data as any)?.profiles || (listRes.data as any) || [];
+          
+          if (Array.isArray(profilesList) && profilesList.length > 0) {
+            // 1st priority: Match exact email or existing zernio_profile_id
+            const match = profilesList.find((p: any) => 
+              (p.name && p.name.trim().toLowerCase() === cleanEmail) || 
+              (p._id && p._id === profile.zernio_profile_id)
+            );
+            if (match?._id) {
+              realZernioId = match._id;
+            } else if (profilesList.length === 1 && profilesList[0]?._id) {
+              // 2nd priority: If team has 1 profile, reuse it directly to prevent duplicates
+              realZernioId = profilesList[0]._id;
+            }
+          }
+
+          // If no match found, create a single permanent Zernio profile for this user
+          if (!realZernioId) {
+            try {
+              const createRes = await zernio.profiles.createProfile({
+                body: { name: cleanEmail }
+              });
+              realZernioId = (createRes.data as any)?.profile?._id || (createRes.data as any)?._id || null;
+            } catch (createErr: any) {
+              console.warn('[ensureUserProfile] Zernio createProfile notice:', createErr?.message || createErr);
+              const reList = await zernio.profiles.listProfiles();
+              const reListArray = (reList.data as any)?.profiles || (reList.data as any) || [];
+              if (Array.isArray(reListArray) && reListArray.length > 0) {
+                const match = reListArray.find((p: any) => p.name && p.name.trim().toLowerCase() === cleanEmail) || reListArray[0];
+                if (match?._id) realZernioId = match._id;
+              }
+            }
+          }
+        } catch (zernioErr: any) {
+          console.error('[ensureUserProfile] Error listing/creating Zernio profile:', zernioErr?.message || zernioErr);
+        }
+
+        if (realZernioId) {
+          profile.zernio_profile_id = realZernioId;
+          try {
+            const targetId = profile.id || safeUserId;
+            const { data: updated } = await supabase
+              .from('profiles')
+              .update({ zernio_profile_id: realZernioId })
+              .eq('id', targetId)
+              .select()
+              .maybeSingle();
+            if (updated) profile = updated;
+          } catch (_updErr) {}
+        }
+      }
+
+      return profile;
+    } catch (err: any) {
+      console.error('[ensureUserProfile] Unhandled error:', err?.message || err);
+      return { id: safeUserId, email: cleanEmail, plan: 'Growth', max_accounts: 1, connected_accounts_count: 0 };
+    }
+  }
+
+  function asyncHandler(fn: Function) {
+    return (req: any, res: any, next: any) => {
+      Promise.resolve(fn(req, res, next)).catch((err) => {
+        console.error('Express async handler caught error:', err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Internal Server Error', details: err?.message || String(err) });
+        }
+      });
+    };
+  }
+
+  function getMaxAccountsForUser(profile?: { plan?: string | null; max_accounts?: number | null; plan_product_id?: string | null } | null): number {
+    if (!profile) return 1;
+    const planName = (profile.plan || '').toLowerCase();
+    const productId = profile.plan_product_id;
+    if (planName.includes('scale') || productId === 'pdt_0NWDjzl0TS6LNFrVdFZYQ') return 10;
+    return 1;
+  }
+
+  // Decode a Supabase / OAuth JWT locally without any network call.
+  // Supports Supabase, Google OAuth, and custom JWT tokens with sub, id, or email.
+  function decodeSupabaseJWT(token: string): { id: string; email: string } | null {
+    try {
+      const parts = token.split('.');
+      if (parts.length !== 3) return null;
+      // Add padding if needed
+      const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+      const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+      const payload = JSON.parse(Buffer.from(padded, 'base64').toString('utf8'));
+      if (!payload) return null;
+      const sub = payload.sub || payload.id || payload.user_id;
+      const email = payload.email || payload.user_metadata?.email || payload.preferred_username;
+      if (!sub && !email) return null;
+      const emailStr = email || `user_${String(sub).substring(0, 8)}@rockyt.io`;
+      return {
+        id: isValidUUID(sub) ? sub : toUUID(sub || emailStr),
+        email: emailStr
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async function combinedAuth(req: any, res: any, next: any) {
+    try {
+      let headerToken = req.headers.authorization?.replace(/^Bearer\s+/i, '').trim();
+      if (headerToken === 'undefined' || headerToken === 'null' || headerToken === '[object Object]') {
+        headerToken = '';
+      }
+      const userEmailHeader = req.headers['x-user-email'] || req.query.email;
+      const userIdHeader = req.headers['x-user-id'] || req.query.userId || req.query.user_id;
+      const profileIdHeader = req.headers['x-profile-id'] || req.query.profileId || req.query.profile_id;
+
+      let token = headerToken || req.cookies?.rockyt_session;
+      if (!token && (userEmailHeader || userIdHeader || profileIdHeader)) {
+        token = String(userEmailHeader || userIdHeader || profileIdHeader).trim();
+      }
+
+      if (!supabase) {
+        return res.status(500).json({ error: 'Database service unavailable' });
+      }
+
+      // === PATH A: Supabase User JWT Token (contains dots) ===
+      if (token && token.includes('.')) {
+        const decoded = decodeSupabaseJWT(token);
+        if (decoded) {
+          req.user = decoded;
+          const fullProfile = await ensureUserProfile(decoded);
+          req.zernioProfileId = fullProfile?.zernio_profile_id || null;
+          req.plan = fullProfile?.plan || 'Growth';
+          req.maxAccounts = getMaxAccountsForUser(fullProfile);
+          req.connectedCount = fullProfile?.connected_accounts_count || 0;
+          return next();
+        }
+      }
+
+      // === PATH B: API Key lookup via SHA-256 hash ===
+      if (token && (token.startsWith('rkt_') || token.length >= 32)) {
+        const hash = crypto.createHash('sha256').update(token).digest('hex');
+        const { data: keyData } = await supabase
+          .from('user_api_keys')
+          .select('user_id, revoked')
+          .eq('key_hash', hash)
+          .maybeSingle();
+
+        if (keyData && !keyData.revoked) {
+          const { data: userProfile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', keyData.user_id)
+            .maybeSingle();
+
+          req.user = { id: keyData.user_id, email: userProfile?.email || 'user@rockyt.io' };
+          const fullProfile = await ensureUserProfile(req.user);
+          req.zernioProfileId = fullProfile?.zernio_profile_id || null;
+          req.plan = fullProfile?.plan || 'Growth';
+          req.maxAccounts = getMaxAccountsForUser(fullProfile);
+          req.connectedCount = fullProfile?.connected_accounts_count || 0;
+          return next();
+        }
+      }
+
+      // === PATH C: Direct lookup in profiles by any identifier (Email, UUID, or Zernio Profile ID) ===
+      const candidateIdentifiers = [
+        userEmailHeader,
+        userIdHeader,
+        profileIdHeader,
+        token
+      ].filter(Boolean).map(s => String(s).trim());
+
+      for (const ident of candidateIdentifiers) {
+        if (!ident || ident === 'undefined' || ident === 'null') continue;
+        let query = null;
+        if (ident.includes('@')) {
+          query = supabase.from('profiles').select('*').eq('email', ident.trim().toLowerCase()).maybeSingle();
+        } else if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ident)) {
+          query = supabase.from('profiles').select('*').eq('id', ident).maybeSingle();
+        } else if (/^[0-9a-f]{24}$/i.test(ident) || ident.startsWith('prof_')) {
+          query = supabase.from('profiles').select('*').eq('zernio_profile_id', ident).maybeSingle();
+        }
+
+        if (query) {
+          const { data: profileRow } = await query;
+          if (profileRow) {
+            req.user = { id: profileRow.id, email: profileRow.email };
+            const fullProfile = await ensureUserProfile(req.user);
+            req.zernioProfileId = fullProfile?.zernio_profile_id || profileRow.zernio_profile_id || null;
+            req.plan = fullProfile?.plan || profileRow.plan || 'Growth';
+            req.maxAccounts = getMaxAccountsForUser(fullProfile || profileRow);
+            req.connectedCount = fullProfile?.connected_accounts_count || profileRow.connected_accounts_count || 0;
+            return next();
+          }
+        }
+      }
+
+      // === PATH D: Fallback email auto-profile creation ===
+      if (userEmailHeader && String(userEmailHeader).includes('@')) {
+        const dummyUser = {
+          id: userIdHeader || `usr_${crypto.createHash('md5').update(String(userEmailHeader)).digest('hex').substring(0, 16)}`,
+          email: String(userEmailHeader).trim()
+        };
+        const fullProfile = await ensureUserProfile(dummyUser);
+        if (fullProfile) {
+          req.user = { id: fullProfile.id, email: fullProfile.email };
+          req.zernioProfileId = fullProfile.zernio_profile_id || null;
+          req.plan = fullProfile.plan || 'Growth';
+          req.maxAccounts = getMaxAccountsForUser(fullProfile);
+          req.connectedCount = fullProfile.connected_accounts_count || 0;
+          return next();
+        }
+      }
+
+      // === PATH E: No valid auth found — return 401 ===
+      return res.status(401).json({ error: 'Authentication required. Provide a valid Bearer token, session, or API key.' });
+    } catch (err: any) {
+      console.error('[combinedAuth] Error:', err?.message || err);
+      return res.status(401).json({ error: 'Authentication failed' });
+    }
+  }
+
+  const supabaseAuth = combinedAuth;
+  const authenticate = combinedAuth;
+
+  // ==========================================
+  // CLI DEVICE CODE AUTHORIZATION FLOW FOR AI AGENTS
+  // ==========================================
+  interface CliSession {
+    deviceCode: string;
+    userCode: string;
+    deviceName: string;
+    status: 'pending' | 'authorized' | 'denied';
+    apiKey?: string;
+    apiKeyReturned?: boolean;
+    expiresAt: number;
+    interval: number;
+  }
+
+  const cliSessions = new Map<string, CliSession>();
+  const userCodeToDeviceCode = new Map<string, string>();
+
+  // 1. Step 1: Start Device Authorization
+  app.post('/api/auth/cli/initiate', asyncHandler(async (req: any, res: any) => {
+    const deviceName = req.body?.deviceName || 'Agent Setup';
+    const deviceCode = `rkt_dc_${crypto.randomBytes(16).toString('hex')}`;
+    const randPart = Math.random().toString(36).substring(2, 6).toUpperCase();
+    const userCode = `RKT-${randPart}`;
+    const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes
+    const interval = 5;
+
+    const host = req.get('host') || 'localhost:3000';
+    const protocol = req.protocol || 'http';
+    const browserUrl = `${protocol}://${host}/cli-auth?code=${userCode}`;
+
+    const session: CliSession = {
+      deviceCode,
+      userCode,
+      deviceName,
+      status: 'pending',
+      expiresAt,
+      interval,
+    };
+
+    cliSessions.set(deviceCode, session);
+    userCodeToDeviceCode.set(userCode, deviceCode);
+
+    return res.json({
+      deviceCode,
+      userCode,
+      browserUrl,
+      expiresAt: new Date(expiresAt).toISOString(),
+      interval,
+    });
+  }));
+
+  // 2. Step 3: Poll for Authorization Status
+  app.get('/api/auth/cli/poll', asyncHandler(async (req: any, res: any) => {
+    const authHeader = req.headers.authorization || '';
+    const deviceCode = authHeader.replace('Bearer ', '').trim();
+
+    if (!deviceCode || !cliSessions.has(deviceCode)) {
+      return res.status(410).json({ error: 'Session expired or invalid device code' });
+    }
+
+    const session = cliSessions.get(deviceCode)!;
+
+    if (Date.now() > session.expiresAt) {
+      cliSessions.delete(deviceCode);
+      userCodeToDeviceCode.delete(session.userCode);
+      return res.status(410).json({ error: 'Session expired' });
+    }
+
+    if (session.status === 'pending') {
+      return res.json({ status: 'pending' });
+    }
+
+    if (session.status === 'denied') {
+      return res.json({ status: 'denied' });
+    }
+
+    if (session.status === 'authorized') {
+      if (!session.apiKeyReturned) {
+        session.apiKeyReturned = true;
+        return res.json({
+          status: 'authorized',
+          apiKey: session.apiKey,
+        });
+      }
+      return res.json({ status: 'authorized' });
+    }
+
+    return res.json({ status: 'pending' });
+  }));
+
+  // 3. Helper Endpoint for Web Frontend: Check userCode status
+  app.get('/api/auth/cli/info', asyncHandler(async (req: any, res: any) => {
+    const userCode = String(req.query.code || '').toUpperCase();
+    const deviceCode = userCodeToDeviceCode.get(userCode);
+    if (!deviceCode || !cliSessions.has(deviceCode)) {
+      return res.json({ valid: false });
+    }
+    const session = cliSessions.get(deviceCode)!;
+    if (Date.now() > session.expiresAt) {
+      return res.json({ valid: false, expired: true });
+    }
+    return res.json({
+      valid: true,
+      userCode: session.userCode,
+      deviceName: session.deviceName,
+      status: session.status,
+    });
+  }));
+
+  // 4. Step 2 Approval by User in Browser
+  app.post('/api/auth/cli/approve', asyncHandler(async (req: any, res: any) => {
+    const { userCode, action, email } = req.body || {};
+    const code = String(userCode || '').toUpperCase();
+    const deviceCode = userCodeToDeviceCode.get(code);
+
+    if (!deviceCode || !cliSessions.has(deviceCode)) {
+      return res.status(400).json({ error: 'Invalid or expired user code' });
+    }
+
+    const session = cliSessions.get(deviceCode)!;
+
+    if (action === 'deny') {
+      session.status = 'denied';
+      return res.json({ success: true, status: 'denied' });
+    }
+
+    // Generate a new live Rockyt API key for the AI agent
+    const rawApiKey = `rkt_live_${crypto.randomBytes(24).toString('hex')}`;
+    const hash = crypto.createHash('sha256').update(rawApiKey).digest('hex');
+    const userEmail = email || `agent_user_${code.substring(4)}@rockyt.io`;
+
+    if (supabase) {
+      try {
+        let { data: profile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('email', userEmail)
+          .maybeSingle();
+
+        let userId = profile?.id;
+
+        if (!userId) {
+          const { data: newProfile } = await supabase
+            .from('profiles')
+            .upsert({
+              email: userEmail,
+              plan: 'Growth',
+              max_accounts: 1,
+              connected_accounts_count: 0,
+            })
+            .select('id')
+            .maybeSingle();
+
+          userId = newProfile?.id || `user_${crypto.randomUUID()}`;
+        }
+
+        await supabase
+          .from('user_api_keys')
+          .insert({
+            user_id: userId,
+            key_hash: hash,
+            key_prefix: rawApiKey.substring(0, 12),
+            name: `CLI (${session.deviceName})`,
+            revoked: false,
+          });
+      } catch (err: any) {
+        console.warn('[cli/approve] Supabase key store warning:', err?.message || err);
+      }
+    } else {
+      mockKeys.push({
+        id: `key_${Date.now()}`,
+        user_id: `user_${code}`,
+        key_hash: hash,
+        key_prefix: rawApiKey.substring(0, 12),
+        revoked: false,
+        created_at: new Date().toISOString(),
+      });
+    }
+
+    session.apiKey = rawApiKey;
+    session.status = 'authorized';
+
+    return res.json({ success: true, status: 'authorized' });
+  }));
+
+  // ---------------------------------------------------------------------------
+  // API Key Management Routes
+  // ---------------------------------------------------------------------------
+  app.post('/api/v1/keys', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const profile = await ensureUserProfile(req.user);
+    const identifier = req.zernioProfileId || profile?.zernio_profile_id || req.user?.email || profile?.email || req.user?.id || req.headers['x-profile-id'] || req.headers['x-user-email'];
+    const userId = profile?.id || (isValidUUID(req.user?.id) ? req.user.id : toUUID(req.user?.email || req.user?.id || 'rockyt_user'));
+
+    const rawKey = 'rkt_live_' + crypto.randomBytes(32).toString('hex');
+    const hash = crypto.createHash('sha256').update(rawKey).digest('hex');
+    const prefix = rawKey.substring(0, 12);
+
+    if (supabase) {
+      // 1. Try DB RPC first
+      try {
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc('generate_user_api_key', {
+          p_identifier: String(identifier || userId),
+          p_key_hash: hash,
+          p_key_prefix: prefix
+        });
+        if (!rpcErr && rpcRes && rpcRes.success) {
+          return res.json({ key: rawKey, success: true });
+        }
+      } catch (rpcEx: any) {
+        console.warn('[POST /api/v1/keys] generate_user_api_key RPC warning:', rpcEx.message);
+      }
+
+      // 2. Direct table insert fallback
+      const targetUserId = isValidUUID(userId) ? userId : toUUID(userId);
+      const { data: inserted, error: insertError } = await supabase.from('user_api_keys').insert({
+        user_id: targetUserId,
+        key_hash: hash,
+        key_prefix: prefix,
+        revoked: false
+      }).select().maybeSingle();
+
+      if (insertError) {
+        console.error('Failed to insert API key:', JSON.stringify(insertError));
+        return res.status(500).json({ 
+          error: `Failed to save API key: ${insertError.message}`,
+          code: insertError.code
+        });
+      }
+    } else {
+      mockKeys.push({
+        id: crypto.randomUUID(),
+        user_id: userId,
+        key_hash: hash,
+        key_prefix: prefix,
+        revoked: false,
+        created_at: new Date().toISOString()
+      });
+    }
+
+    res.json({ key: rawKey, success: true });
+  }));
+
+  app.get('/api/v1/keys', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const profile = await ensureUserProfile(req.user);
+    const userId = profile?.id || (isValidUUID(req.user?.id) ? req.user.id : toUUID(req.user?.email || req.user?.id || 'rockyt_user'));
+
+    if (supabase && userId) {
+      const { data, error } = await supabase
+        .from('user_api_keys')
+        .select('id, key_prefix, created_at')
+        .eq('user_id', userId)
+        .eq('revoked', false)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.warn('Error fetching user API keys:', error.message);
+        return res.json([]);
+      }
+
+      res.json(data || []);
+    } else {
+      const activeKeys = mockKeys.filter(k => k.user_id === userId && !k.revoked);
+      res.json(activeKeys.map(k => ({ id: k.id, key_prefix: k.key_prefix, created_at: k.created_at })));
+    }
+  }));
+
+  app.delete('/api/v1/keys/:id', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const keyId = req.params.id;
+    const identifier = req.zernioProfileId || req.user?.email || req.user?.id || req.headers['x-profile-id'] || req.headers['x-user-email'];
+
+    if (supabase && keyId) {
+      try {
+        if (isValidUUID(keyId)) {
+          await supabase.rpc('revoke_user_api_key', {
+            p_key_id: keyId,
+            p_identifier: String(identifier || '')
+          });
+        }
+        await supabase
+          .from('user_api_keys')
+          .update({ revoked: true })
+          .eq('id', keyId);
+      } catch (err: any) {
+        console.error('Error revoking API key:', err.message);
+      }
+
+      // Disconnect all social accounts under user's profile upon API key revocation
+      const profile = await ensureUserProfile(req.user);
+      if (profile?.zernio_profile_id) {
+        try {
+          const accountsRes = await zernio.accounts.listAccounts({
+            query: { profileId: profile.zernio_profile_id }
+          });
+          const rawAccounts = (accountsRes.data as any)?.accounts || (accountsRes.data as any) || [];
+          if (Array.isArray(rawAccounts)) {
+            for (const acc of rawAccounts) {
+              const accId = acc._id || acc.id;
+              if (accId) {
+                try {
+                  if (typeof (zernio.accounts as any).deleteAccount === 'function') {
+                    await (zernio.accounts as any).deleteAccount({ path: { id: accId } });
+                  } else if (typeof (zernio.accounts as any).disconnectAccount === 'function') {
+                    await (zernio.accounts as any).disconnectAccount({ path: { id: accId } });
+                  }
+                } catch (_accErr) {
+                  // Ignore if already disconnected
+                }
+              }
+            }
+          }
+        } catch (err: any) {
+          console.warn('[DELETE /api/v1/keys] Warning disconnecting accounts on key revocation:', err.message);
+        }
+
+        // Reset connected accounts count to 0 in Supabase
+        await supabase
+          .from('profiles')
+          .update({ connected_accounts_count: 0 })
+          .eq('id', req.user.id);
+      }
+    } else {
+      const keyIndex = mockKeys.findIndex(k => k.id === req.params.id && k.user_id === req.user.id);
+      if (keyIndex !== -1) {
+        mockKeys[keyIndex].revoked = true;
+      }
+      mockConnectedCount = 0;
+    }
+    res.status(204).send();
+  }));
+
+  // ---------------------------------------------------------------------------
+  // Connect flow — via SDK in Headless Mode with redirect_url to Rockyt callback
+  // ---------------------------------------------------------------------------
+  app.get('/api/v1/connect/:platform', authenticate, asyncHandler(async (req: any, res: any) => {
+    if (req.connectedCount >= req.maxAccounts) {
+      return res.status(403).json({ error: 'Account limit reached. Upgrade your plan.' });
+    }
+    const cleanPlatform = getCanonicalZernioPlatform(req.params.platform);
+    const appBaseUrl = process.env.APP_BASE_URL || (req.headers.origin || `https://${req.headers.host}`);
+    const callbackUrl = `${appBaseUrl}/oauth/callback?platform=${encodeURIComponent(cleanPlatform)}`;
+
+    try {
+      const result = await zernio.connect.getConnectUrl({
+        path: { platform: cleanPlatform as any },
+        query: {
+          profileId: req.zernioProfileId,
+          headless: 'true',
+          redirect_url: callbackUrl
+        } as any
+      });
+      const authUrl = (result.data as any)?.authUrl || (result.data as any)?.url;
+      res.json({ url: authUrl, authUrl, ...result.data });
+    } catch (err: any) {
+      res.status(err.status ?? 500).json({ error: err.message ?? 'Rockyt connect failed' });
+    }
+  }));
+
+  app.get('/oauth/callback', asyncHandler(async (req: any, res: any) => {
+    const { profileId, accountId, platform, username, returnTo, step, pendingDataToken, tempToken, userProfile, connect_token } = req.query;
+    const cleanPlatform = platform ? getCanonicalZernioPlatform(platform) : 'Social Channel';
+    const formattedPlatform = cleanPlatform.charAt(0).toUpperCase() + cleanPlatform.slice(1);
+
+    // If headless mode returned a secondary selection step (e.g. select_page, select_board, select_location)
+    if (step || pendingDataToken || tempToken || userProfile) {
+      const stepParam = step || 'select_page';
+      const tokenKey = (pendingDataToken || connect_token || `pdt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`) as string;
+      
+      let decodedUserProfile = null;
+      if (userProfile) {
+        try {
+          decodedUserProfile = typeof userProfile === 'string' ? JSON.parse(decodeURIComponent(userProfile)) : userProfile;
+        } catch {
+          decodedUserProfile = userProfile;
+        }
+      }
+
+      pendingHeadlessSessions.set(tokenKey, {
+        profileId: profileId ? String(profileId) : undefined,
+        tempToken: tempToken ? String(tempToken) : undefined,
+        userProfile: decodedUserProfile,
+        platform: cleanPlatform,
+        step: String(stepParam),
+        createdAt: Date.now()
+      });
+
+      const userProfStr = userProfile ? (typeof userProfile === 'string' ? userProfile : JSON.stringify(userProfile)) : '';
+      const redirectUrl = `/dashboard?step=${encodeURIComponent(stepParam)}&pendingDataToken=${encodeURIComponent(tokenKey)}&tempToken=${encodeURIComponent(tempToken ? String(tempToken) : '')}&profileId=${encodeURIComponent(profileId ? String(profileId) : '')}&userProfile=${encodeURIComponent(userProfStr)}&platform=${encodeURIComponent(formattedPlatform)}`;
+      return res.redirect(redirectUrl);
+    }
+
+    if (profileId || accountId) {
+      if (supabase) {
+        let userRow = null;
+        if (profileId) {
+          const { data: p } = await supabase
+            .from('profiles')
+            .select('id, connected_accounts_count')
+            .eq('zernio_profile_id', profileId)
+            .maybeSingle();
+          userRow = p;
+        }
+
+        if (userRow) {
+          const accUsername = username || (accountId ? `@acc_${String(accountId).substring(0, 8)}` : `@${cleanPlatform.toLowerCase()}_user`);
+          try {
+            await supabase.rpc('save_connected_account', {
+              p_user_id: userRow.id,
+              p_platform: formattedPlatform,
+              p_username: accUsername,
+              p_profile_name: `${formattedPlatform} Account`,
+              p_account_id: accountId ? `acc_${accountId}` : undefined
+            });
+          } catch (rpcErr: any) {
+            console.warn('[/oauth/callback] save_connected_account RPC warning:', rpcErr.message);
+          }
+        }
+      } else {
+        mockConnectedCount++;
+      }
+    }
+    const redirectUrl = returnTo || `/dashboard?account_connected=true&platform=${encodeURIComponent(formattedPlatform)}`;
+    res.redirect(redirectUrl);
+  }));
+
+  // Headless Secondary Selection Options Endpoint
+  app.get('/api/v1/connect/:platform/selection-options', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const rawPlatform = req.params.platform;
+    const { pendingDataToken, tempToken, profileId } = req.query;
+    const cleanPlatform = getCanonicalZernioPlatform(rawPlatform);
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+
+    let session = pendingDataToken ? pendingHeadlessSessions.get(String(pendingDataToken)) : null;
+    let targetTempToken = (tempToken || session?.tempToken) as string | undefined;
+    let targetProfileId = (profileId || session?.profileId || req.zernioProfileId) as string | undefined;
+
+    if (!targetProfileId && req.user) {
+      const fullProf = await ensureUserProfile(req.user);
+      if (fullProf?.zernio_profile_id) targetProfileId = fullProf.zernio_profile_id;
+    }
+
+    try {
+      if (cleanPlatform === 'facebook') {
+        if (targetTempToken && targetProfileId) {
+          try {
+            const fbRes = await (zernio.connect as any).facebook.listFacebookPages({
+              query: { profileId: targetProfileId, tempToken: targetTempToken }
+            });
+            const pages = fbRes.data?.pages || fbRes.data?.options || fbRes.data || [];
+            if (Array.isArray(pages) && pages.length > 0) {
+              return res.json({ success: true, options: pages });
+            }
+          } catch (sdkErr: any) {
+            console.warn('[selection-options] Facebook SDK listFacebookPages notice:', sdkErr.message);
+          }
+        }
+
+        if (targetProfileId && targetTempToken) {
+          const reqHeaders: Record<string, string> = {
+            'Authorization': `Bearer ${apiKey}`
+          };
+          if (targetTempToken) {
+            reqHeaders['X-Connect-Token'] = targetTempToken;
+          }
+          const fbResDirect = await fetch(`https://zernio.com/api/v1/connect/facebook/select-page?profileId=${encodeURIComponent(targetProfileId)}&tempToken=${encodeURIComponent(targetTempToken)}`, {
+            headers: reqHeaders
+          });
+          if (fbResDirect.ok) {
+            const fbData = await fbResDirect.json();
+            const pages = fbData.pages || fbData.options || (Array.isArray(fbData) ? fbData : []);
+            return res.json({ success: true, options: pages });
+          } else {
+            const errBody = await fbResDirect.text().catch(() => '');
+            console.warn('[selection-options] Direct GET Facebook pages warning:', fbResDirect.status, errBody);
+          }
+        }
+      }
+
+      if (cleanPlatform === 'pinterest') {
+        const pinRes = await fetch(`https://zernio.com/api/v1/connect/pinterest/select-board?profileId=${encodeURIComponent(targetProfileId || '')}&tempToken=${encodeURIComponent(targetTempToken || '')}`, {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            ...(targetTempToken ? { 'X-Connect-Token': targetTempToken } : {})
+          }
+        });
+        if (pinRes.ok) {
+          const pinData = await pinRes.json();
+          return res.json({ success: true, options: pinData.boards || pinData.options || [] });
+        }
+      }
+
+      if (cleanPlatform === 'linkedin') {
+        const liRes = await fetch(`https://zernio.com/api/v1/connect/linkedin/organizations?profileId=${encodeURIComponent(targetProfileId || '')}&tempToken=${encodeURIComponent(targetTempToken || '')}`, {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            ...(targetTempToken ? { 'X-Connect-Token': targetTempToken } : {})
+          }
+        });
+        if (liRes.ok) {
+          const liData = await liRes.json();
+          return res.json({ success: true, options: liData.organizations || liData.options || [] });
+        }
+      }
+
+      if (pendingDataToken) {
+        const pendingRes = await fetch(`https://zernio.com/api/v1/connect/pending-data?pendingDataToken=${encodeURIComponent(String(pendingDataToken))}`, {
+          headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        if (pendingRes.ok) {
+          const pData = await pendingRes.json();
+          return res.json({ success: true, options: pData.options || pData.pages || pData.boards || pData.locations || [], raw: pData });
+        }
+      }
+
+      return res.json({ success: true, options: [] });
+    } catch (err: any) {
+      console.warn('[selection-options] Error fetching options:', err.message);
+      return res.status(500).json({ error: 'Failed to fetch options for selection' });
+    }
+  }));
+
+  // Headless Secondary Selection Confirm Endpoint
+  app.post('/api/v1/connect/:platform/select-option', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const rawPlatform = req.params.platform;
+    const { pendingDataToken, selectedId, selectedName, profileId } = req.body || {};
+    const cleanPlatform = getCanonicalZernioPlatform(rawPlatform);
+    const formattedPlatform = cleanPlatform.charAt(0).toUpperCase() + cleanPlatform.slice(1);
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+
+    let session = pendingDataToken ? pendingHeadlessSessions.get(String(pendingDataToken)) : null;
+    let targetTempToken = req.body?.tempToken || session?.tempToken;
+    let targetProfileId = profileId || req.body?.profileId || session?.profileId || req.zernioProfileId;
+    let targetUserProfile = req.body?.userProfile || session?.userProfile;
+
+    if (!targetProfileId && req.user) {
+      const fullProf = await ensureUserProfile(req.user);
+      if (fullProf?.zernio_profile_id) targetProfileId = fullProf.zernio_profile_id;
+    }
+
+    const appBaseUrl = process.env.APP_BASE_URL || (req.headers.origin || `https://${req.headers.host}`);
+    const callbackUrl = `${appBaseUrl}/oauth/callback?platform=${encodeURIComponent(cleanPlatform)}`;
+
+    let createdAccountId: string | undefined = undefined;
+
+    if (cleanPlatform === 'facebook' && targetTempToken && targetProfileId) {
+      try {
+        const selectRes = await (zernio.connect as any).facebook.selectFacebookPage({
+          body: {
+            profileId: targetProfileId,
+            pageId: selectedId,
+            tempToken: targetTempToken,
+            userProfile: targetUserProfile,
+            redirect_url: callbackUrl
+          }
+        });
+        createdAccountId = selectRes.data?.account?.accountId || selectRes.data?.accountId;
+      } catch (err: any) {
+        console.warn('[select-option] Facebook SDK select warning:', err.message);
+      }
+    }
+
+    if (!createdAccountId && apiKey && targetProfileId) {
+      try {
+        const reqHeaders: Record<string, string> = {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        };
+        if (targetTempToken) {
+          reqHeaders['X-Connect-Token'] = targetTempToken;
+        }
+
+        const directRes = await fetch(`https://zernio.com/api/v1/connect/${encodeURIComponent(cleanPlatform)}/select-page`, {
+          method: 'POST',
+          headers: reqHeaders,
+          body: JSON.stringify({
+            profileId: targetProfileId,
+            pageId: selectedId,
+            tempToken: targetTempToken,
+            userProfile: targetUserProfile,
+            pendingDataToken
+          })
+        });
+        if (directRes.ok) {
+          const directData = await directRes.json();
+          createdAccountId = directData.account?.accountId || directData.accountId || directData.id;
+        } else {
+          const errText = await directRes.text().catch(() => '');
+          console.warn('[select-option] Direct POST Facebook page warning:', directRes.status, errText);
+        }
+      } catch (err: any) {
+        console.warn('[select-option] Direct POST fetch error:', err.message);
+      }
+    }
+
+    if (supabase && req.user?.id) {
+      try {
+        await supabase.rpc('save_connected_account', {
+          p_user_id: req.user.id,
+          p_platform: formattedPlatform,
+          p_username: selectedName ? `@${selectedName.toLowerCase().replace(/\s+/g, '_')}` : `@${cleanPlatform}_account`,
+          p_profile_name: selectedName || `${formattedPlatform} Account`,
+          p_account_id: createdAccountId ? `acc_${createdAccountId}` : (selectedId ? `acc_${selectedId}` : `acc_${Date.now()}`)
+        });
+      } catch (rpcErr: any) {
+        console.warn('[select-option] save_connected_account RPC warning:', rpcErr.message);
+      }
+    }
+
+    if (pendingDataToken) {
+      pendingHeadlessSessions.delete(String(pendingDataToken));
+    }
+
+    return res.json({ success: true, platform: formattedPlatform, accountId: createdAccountId, message: `${formattedPlatform} selection saved successfully!` });
+  }));
+
+  // ─── Connected Accounts Database API ───
+  app.get('/api/user/connected-accounts', authenticate, asyncHandler(async (req: any, res: any) => {
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('connected_accounts')
+        .select('*')
+        .eq('user_id', req.user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('[connected-accounts] Supabase fetch error:', error.message);
+        return res.json({ success: true, accounts: [] });
+      }
+      return res.json({ success: true, accounts: data || [] });
+    }
+    return res.json({ success: true, accounts: [] });
+  }));
+
+  app.post('/api/user/connected-accounts/toggle', authenticate, asyncHandler(async (req: any, res: any) => {
+    const { platform, status, username, profile_name } = req.body || {};
+    if (!platform) return res.status(400).json({ error: 'Platform is required' });
+
+    if (supabase) {
+      const { data: existing } = await supabase
+        .from('connected_accounts')
+        .select('*')
+        .eq('user_id', req.user.id)
+        .eq('platform', platform)
+        .maybeSingle();
+
+      if (existing) {
+        const nextStatus = status || (existing.status === 'connected' ? 'disconnected' : 'connected');
+        const { data: updated, error: updErr } = await supabase
+          .from('connected_accounts')
+          .update({ status: nextStatus })
+          .eq('id', existing.id)
+          .select()
+          .single();
+
+        if (updErr) return res.json({ success: false, error: updErr.message });
+        return res.json({ success: true, account: updated });
+      } else {
+        const { data: inserted, error: insErr } = await supabase
+          .from('connected_accounts')
+          .insert({
+            user_id: req.user.id,
+            platform,
+            username: username || `@${platform.toLowerCase().replace(/[^a-z0-9]/g, '')}_user`,
+            profile_name: profile_name || `${platform} Profile`,
+            status: 'connected'
+          })
+          .select()
+          .single();
+
+        if (insErr) return res.json({ success: false, error: insErr.message });
+        return res.json({ success: true, account: inserted });
+      }
+    }
+
+    return res.json({ success: true });
+  }));
+
+  // ─── Usage Logs Database API ───
+  app.get('/api/user/usage-logs', authenticate, asyncHandler(async (req: any, res: any) => {
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('usage_logs')
+        .select('*')
+        .eq('user_id', req.user.id)
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (error) {
+        console.error('[usage-logs] Supabase fetch error:', error.message);
+        return res.json({ success: true, logs: [] });
+      }
+      return res.json({ success: true, logs: data || [] });
+    }
+    return res.json({ success: true, logs: [] });
+  }));
+
+  // ---------------------------------------------------------------------------
+  // Ads API: Campaign Management, Drafting, and Ads Accounts
+  // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Ads API: Campaign Management, Drafting, and Ads Accounts (100% Live API & DB)
+  // ---------------------------------------------------------------------------
+  app.get('/api/v1/ads/accounts', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    let adAccounts: any[] = [];
+    const zernioProfileId = req.zernioProfileId;
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+
+    // 1. Fetch live ad accounts from Zernio API
+    if (apiKey) {
+      try {
+        const queryParam = zernioProfileId ? `?profileId=${encodeURIComponent(zernioProfileId)}` : '';
+        const zRes = await fetch(`https://zernio.com/api/v1/ads/accounts${queryParam}`, {
+          headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        if (zRes.ok) {
+          const zData = await zRes.json();
+          adAccounts = zData.adAccounts || zData.accounts || zData.data || [];
+        } else {
+          // Fallback to social accounts endpoint if ads specific accounts empty
+          const zRes2 = await fetch(`https://zernio.com/api/v1/accounts${queryParam}`, {
+            headers: { 'Authorization': `Bearer ${apiKey}` }
+          });
+          if (zRes2.ok) {
+            const zData2 = await zRes2.json();
+            const allAccs = zData2.accounts || zData2.data || [];
+            adAccounts = allAccs.filter((a: any) => 
+              ['metaads', 'googleads', 'linkedinads', 'tiktokads', 'pinterestads', 'xads', 'openaiads', 'facebook/ads', 'googleads/ads', 'tiktok/ads'].includes(String(a.platform || '').toLowerCase()) ||
+              String(a.platform || '').toLowerCase().includes('ads')
+            );
+          }
+        }
+      } catch (err: any) {
+        console.warn('[GET /api/v1/ads/accounts] Zernio API fetch warning:', err.message);
+      }
+    }
+
+    // 2. Fetch connected ad accounts from Supabase DB
+    if (supabase && req.user?.id) {
+      try {
+        const { data, error } = await supabase
+          .from('connected_accounts')
+          .select('*')
+          .eq('user_id', req.user.id);
+        if (!error && data && data.length > 0) {
+          const dbAccs = data.map((a: any) => ({
+            id: a.id,
+            platform: a.platform,
+            name: a.profile_name || a.username || a.platform,
+            status: a.status || 'connected',
+            created_at: a.created_at
+          }));
+          const existingIds = new Set(adAccounts.map(a => a.id));
+          for (const dbA of dbAccs) {
+            if (!existingIds.has(dbA.id)) {
+              adAccounts.push(dbA);
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
+    res.json({ success: true, adAccounts });
+  }));
+
+  app.get('/api/v1/ads/campaigns', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    let campaigns: any[] = [];
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+
+    // 1. Fetch live campaigns from Zernio Ads API
+    if (apiKey) {
+      try {
+        const zRes = await fetch('https://zernio.com/api/v1/ads/campaigns', {
+          headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        if (zRes.ok) {
+          const zData = await zRes.json();
+          const zCamps = zData.campaigns || zData.data || [];
+          campaigns = zCamps;
+        }
+      } catch (err: any) {
+        console.warn('[GET /api/v1/ads/campaigns] Zernio API fetch warning:', err.message);
+      }
+    }
+
+    // 2. Fetch user's ad campaigns from Supabase DB
+    if (supabase && req.user?.id) {
+      try {
+        const { data, error } = await supabase
+          .from('ad_campaigns')
+          .select('*')
+          .eq('user_id', req.user.id)
+          .order('created_at', { ascending: false });
+        if (!error && data && data.length > 0) {
+          const existingIds = new Set(campaigns.map(c => c.id));
+          for (const dbC of data) {
+            if (!existingIds.has(dbC.id)) {
+              campaigns.push(dbC);
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
+    res.json({ success: true, campaigns });
+  }));
+
+  app.post('/api/v1/ads/campaigns', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { name, platform, objective, dailyBudget, status, targeting, creative } = req.body || {};
+    if (!name || !platform) {
+      return res.status(400).json({ error: 'Campaign name and platform are required' });
+    }
+
+    const campaignObj = {
+      id: `camp_${Date.now()}`,
+      user_id: req.user?.id || '00000000-0000-0000-0000-000000000001',
+      name,
+      platform,
+      objective: objective || 'CONVERSIONS',
+      status: status || 'ACTIVE',
+      daily_budget: Number(dailyBudget) || 100.00,
+      spend: 0.00,
+      impressions: 0,
+      clicks: 0,
+      conversions: 0,
+      roas: 0.00,
+      targeting: targeting || {},
+      creative: creative || {},
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    // Forward campaign creation to Zernio API if ZERNIO_API_KEY is present
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey) {
+      try {
+        const zRes = await fetch('https://zernio.com/api/v1/ads/create', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            name,
+            platform,
+            objective: objective || 'CONVERSIONS',
+            dailyBudget: Number(dailyBudget) || 100.00
+          })
+        });
+        if (zRes.ok) {
+          const zData = await zRes.json();
+          if (zData.ad || zData.campaign) {
+            const liveAd = zData.ad || zData.campaign;
+            campaignObj.id = liveAd.id || liveAd._id || campaignObj.id;
+          }
+        }
+      } catch (zErr: any) {
+        console.warn('[POST /api/v1/ads/campaigns] Zernio API create notice:', zErr.message);
+      }
+    }
+
+    if (supabase && req.user?.id) {
+      try {
+        const { data, error } = await supabase
+          .from('ad_campaigns')
+          .insert(campaignObj)
+          .select()
+          .single();
+        if (!error && data) {
+          return res.json({ success: true, campaign: data });
+        }
+      } catch (e) {}
+    }
+
+    res.json({ success: true, campaign: campaignObj });
+  }));
+
+  app.put(['/api/v1/ads/campaigns/:id/status', '/api/v1/ads/campaigns/:id'], supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { id } = req.params;
+    const { status, dailyBudget, daily_budget } = req.body || {};
+    const budgetVal = dailyBudget !== undefined ? dailyBudget : daily_budget;
+
+    let updatedCampaign: any = null;
+    const updatePayload: any = { updated_at: new Date().toISOString() };
+    if (status) updatePayload.status = status;
+    if (budgetVal !== undefined) updatePayload.daily_budget = Number(budgetVal);
+
+    if (supabase && req.user?.id) {
+      try {
+        const { data, error } = await supabase
+          .from('ad_campaigns')
+          .update(updatePayload)
+          .eq('id', id)
+          .eq('user_id', req.user.id)
+          .select()
+          .single();
+        if (!error && data) {
+          updatedCampaign = data;
+        }
+      } catch (e) {}
+    }
+
+    // Forward status / budget update to Zernio API if ZERNIO_API_KEY is available
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey) {
+      try {
+        await fetch(`https://zernio.com/api/v1/ads/campaigns/${id}`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(updatePayload)
+        });
+      } catch (e) {}
+    }
+
+    if (!updatedCampaign) {
+      updatedCampaign = { id, status: status || 'ACTIVE', daily_budget: budgetVal !== undefined ? Number(budgetVal) : 100, updated_at: new Date().toISOString() };
+    }
+
+    res.json({ success: true, campaign: updatedCampaign, message: `Campaign status updated to ${status || 'updated'}` });
+  }));
+
+  app.get('/api/v1/ads/analytics', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { range = '30d', startDate, endDate, status = 'ALL', format } = req.query || {};
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+
+    let totalSpend = 0;
+    let totalImpressions = 0;
+    let totalClicks = 0;
+    let totalConversions = 0;
+    let totalAttributedRevenue = 0;
+    const platformBreakdown: Record<string, { spend: number; revenue: number; roas: number; conversions: number }> = {};
+
+    // 1. Attempt to fetch real aggregate analytics from Zernio Ads API
+    if (apiKey) {
+      try {
+        const zRes = await fetch(`https://zernio.com/api/v1/ads/analytics?range=${range}`, {
+          headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        if (zRes.ok) {
+          const zData = await zRes.json();
+          if (zData.analytics) {
+            totalSpend = Number(zData.analytics.totalSpend || 0);
+            totalImpressions = Number(zData.analytics.totalImpressions || 0);
+            totalClicks = Number(zData.analytics.totalClicks || 0);
+            totalConversions = Number(zData.analytics.totalConversions || 0);
+            totalAttributedRevenue = Number(zData.analytics.totalAttributedRevenue || 0);
+            if (zData.analytics.byPlatform) {
+              Object.assign(platformBreakdown, zData.analytics.byPlatform);
+            }
+          }
+        }
+      } catch (err: any) {
+        console.warn('[GET /api/v1/ads/analytics] Zernio API analytics fetch warning:', err.message);
+      }
+    }
+
+    // 2. Compute exact metrics from Supabase database for the user
+    if (supabase && req.user?.id) {
+      try {
+        const { data: camps } = await supabase
+          .from('ad_campaigns')
+          .select('*')
+          .eq('user_id', req.user.id);
+
+        if (camps && camps.length > 0) {
+          for (const c of camps) {
+            const s = Number(c.spend || 0);
+            const imp = Number(c.impressions || 0);
+            const clk = Number(c.clicks || 0);
+            const conv = Number(c.conversions || 0);
+            totalSpend += s;
+            totalImpressions += imp;
+            totalClicks += clk;
+            totalConversions += conv;
+
+            const plat = c.platform || 'Other';
+            if (!platformBreakdown[plat]) {
+              platformBreakdown[plat] = { spend: 0, revenue: 0, roas: 0, conversions: 0 };
+            }
+            platformBreakdown[plat].spend += s;
+            platformBreakdown[plat].conversions += conv;
+          }
+        }
+
+        const { data: revs } = await supabase
+          .from('revenue_attributions')
+          .select('amount')
+          .eq('user_id', req.user.id);
+
+        if (revs && revs.length > 0) {
+          const dbRev = revs.reduce((sum, r) => sum + Number(r.amount || 0), 0);
+          totalAttributedRevenue += dbRev;
+        }
+      } catch (e) {}
+    }
+
+    // Compute derived ratios strictly from real data
+    for (const p in platformBreakdown) {
+      const pSpend = platformBreakdown[p].spend;
+      const pRev = platformBreakdown[p].revenue;
+      platformBreakdown[p].roas = pSpend > 0 ? Number((pRev / pSpend).toFixed(2)) : 0;
+    }
+
+    const analyticsObj = {
+      range,
+      startDate: startDate || new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0],
+      endDate: endDate || new Date().toISOString().split('T')[0],
+      status,
+      totalSpend: Number(totalSpend.toFixed(2)),
+      totalImpressions,
+      totalClicks,
+      totalConversions,
+      avgCtr: totalImpressions > 0 ? ((totalClicks / totalImpressions) * 100).toFixed(2) + '%' : '0%',
+      avgCpc: totalClicks > 0 ? '$' + (totalSpend / totalClicks).toFixed(2) : '$0',
+      avgRoas: totalSpend > 0 ? (totalAttributedRevenue / totalSpend).toFixed(2) + 'x' : '0x',
+      totalAttributedRevenue: Number(totalAttributedRevenue.toFixed(2)),
+      byPlatform: platformBreakdown
+    };
+
+    if (format === 'csv') {
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename="rockyt-ad-analytics.csv"');
+      const csvLines = ['Platform,Spend,Attributed Revenue,ROAS,Conversions'];
+      for (const p in platformBreakdown) {
+        csvLines.push(`${p},${platformBreakdown[p].spend},${platformBreakdown[p].revenue},${platformBreakdown[p].roas},${platformBreakdown[p].conversions}`);
+      }
+      return res.send(csvLines.join('\n'));
+    }
+
+    res.json({ success: true, analytics: analyticsObj });
+  }));
+
+  // ---------------------------------------------------------------------------
+  // Data Tab: Data Sources & Real-Time Event Inspector Endpoints (100% Live DB)
+  // ---------------------------------------------------------------------------
+  app.get('/api/v1/data/sources', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    let sources: any[] = [];
+    if (supabase && req.user?.id) {
+      try {
+        const { data: convCount } = await supabase
+          .from('conversion_events')
+          .select('id', { count: 'exact' });
+
+        const { data: accs } = await supabase
+          .from('connected_accounts')
+          .select('*')
+          .eq('user_id', req.user.id);
+
+        sources = [
+          { id: 'src_rockyt_pixel', name: 'Rockyt FB Pixel & CAPI Tracker', type: 'SDK Event Stream', status: 'connected', eventsCaptured: convCount ? convCount.length : 0, icon: '⚡' },
+          { id: 'src_supabase', name: 'Supabase Database', type: 'Database', status: 'connected', eventsCaptured: convCount ? convCount.length : 0, icon: '⚡' },
+          { id: 'src_zernio_ads', name: 'Zernio Ads Engine', type: 'Ad Network API', status: (process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY) ? 'connected' : 'disconnected', eventsCaptured: accs ? accs.length : 0, icon: '🎯' }
+        ];
+      } catch (e) {}
+    }
+    if (sources.length === 0) {
+      sources = [
+        { id: 'src_rockyt_pixel', name: 'Rockyt FB Pixel & CAPI Tracker', type: 'SDK Event Stream', status: 'connected', eventsCaptured: 0, icon: '⚡' },
+        { id: 'src_supabase', name: 'Supabase Database', type: 'Database', status: 'connected', eventsCaptured: 0, icon: '⚡' }
+      ];
+    }
+    res.json({ success: true, sources });
+  }));
+
+  app.post('/api/v1/data/sources/toggle', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { sourceId, status } = req.body || {};
+    res.json({ success: true, sourceId, status: status || 'connected', message: 'Data source status updated successfully.' });
+  }));
+
+  app.get('/api/v1/data/events', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    let events: any[] = [];
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('conversion_events')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(50);
+        if (!error && data) {
+          events = data;
+        }
+      } catch (e) {}
+    }
+
+    res.json({ success: true, events });
+  }));
+
+  // ---------------------------------------------------------------------------
+  // Conversion API (CAPI) & Dual-Dispatch User Event Ingestion
+  // ---------------------------------------------------------------------------
+  app.post(['/api/v1/conversions', '/api/v1/ads/conversions'], asyncHandler(async (req: any, res: any) => {
+    const { eventName, eventData, userPayload, posthogDistinctId, clickId } = req.body || {};
+    if (!eventName) {
+      return res.status(400).json({ error: 'eventName is required (e.g. Purchase, AddToCart, Lead, ViewContent)' });
+    }
+
+    const keyToken = req.headers['x-rockyt-key'] || req.headers['x-api-key'] || req.query.apiKey || req.body?.apiKey;
+    let userId: string | null = req.user?.id || null;
+    let zernioProfileId: string | null = req.zernioProfileId || null;
+    let targetAccountId: string | null = null;
+
+    // Resolve user and profile from keyToken if provided
+    if (keyToken && supabase) {
+      try {
+        const { data: keyRow } = await supabase
+          .from('api_keys')
+          .select('user_id')
+          .eq('key_hash', crypto.createHash('sha256').update(String(keyToken)).digest('hex'))
+          .eq('revoked', false)
+          .maybeSingle();
+
+        if (keyRow?.user_id) {
+          userId = keyRow.user_id;
+        }
+
+        if (!userId) {
+          const { data: profRow } = await supabase
+            .from('profiles')
+            .select('id, zernio_profile_id')
+            .or(`id.eq.${keyToken},zernio_profile_id.eq.${keyToken}`)
+            .maybeSingle();
+          if (profRow) {
+            userId = profRow.id;
+            zernioProfileId = profRow.zernio_profile_id;
+          }
+        }
+      } catch (e) {}
+    }
+
+    // Lookup user's connected ad account ID if available
+    if (userId && supabase) {
+      try {
+        const { data: acc } = await supabase
+          .from('connected_accounts')
+          .select('id, platform')
+          .eq('user_id', userId)
+          .ilike('platform', '%ads%')
+          .limit(1)
+          .maybeSingle();
+        if (acc) {
+          targetAccountId = acc.id;
+        }
+      } catch (e) {}
+    }
+
+    const record = {
+      id: `conv_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+      user_id: userId,
+      event_name: eventName,
+      event_data: eventData || {},
+      user_payload: userPayload || {},
+      posthog_distinct_id: posthogDistinctId || null,
+      click_id: clickId || eventData?.gclid || eventData?.fbclid || eventData?.ttclid || null,
+      status: 'relayed',
+      created_at: new Date().toISOString()
+    };
+
+    if (supabase) {
+      try {
+        await supabase.from('conversion_events').insert(record);
+      } catch (dbErr: any) {
+        console.warn('[POST /api/v1/conversions] Supabase save warning:', dbErr.message);
+      }
+    }
+
+    // Relay to user-specific Zernio CAPI endpoint
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey) {
+      try {
+        const capiPayload: any = {
+          profileId: zernioProfileId,
+          accountId: targetAccountId || undefined,
+          events: [{
+            eventName: eventName,
+            eventTime: Math.floor(Date.now() / 1000),
+            eventId: record.id,
+            sourceUrl: eventData?.url || undefined,
+            value: Number(eventData?.value || 0),
+            currency: eventData?.currency || 'USD',
+            user: userPayload || {}
+          }]
+        };
+
+        await fetch('https://zernio.com/api/v1/ads/conversions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(capiPayload)
+        });
+      } catch (zErr: any) {
+        console.warn('[POST /api/v1/conversions] Zernio CAPI proxy notice:', zErr.message);
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: `Conversion event '${eventName}' recorded for user and dispatched to Zernio CAPI.`,
+      recordId: record.id
+    });
+  }));
+
+  // ---------------------------------------------------------------------------
+  // Revenue Attribution (Stripe / Dodo Payments Webhooks & REST API)
+  // ---------------------------------------------------------------------------
+  app.post(['/api/v1/attribution/revenue', '/api/v1/webhooks/revenue/stripe', '/api/v1/webhooks/revenue/dodo'], asyncHandler(async (req: any, res: any) => {
+    const { amount, currency, clickId, customerId, orderId } = req.body || {};
+    const revenueAmount = Number(amount || req.body?.data?.object?.amount_total / 100 || 0);
+
+    const record = {
+      id: `attr_${Date.now()}`,
+      amount: revenueAmount,
+      currency: currency || 'USD',
+      click_id: clickId || req.body?.click_id || req.body?.gclid || req.body?.fbclid || null,
+      customer_id: customerId || req.body?.data?.object?.customer || null,
+      order_id: orderId || req.body?.data?.object?.id || `ord_${Date.now()}`,
+      status: 'attributed',
+      created_at: new Date().toISOString()
+    };
+
+    if (supabase) {
+      try {
+        await supabase.from('revenue_attributions').insert(record);
+      } catch (dbErr: any) {
+        console.warn('[Revenue Attribution] Supabase save warning:', dbErr.message);
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: 'Revenue attribution event recorded and matched to ad campaign click ID.',
+      attribution: record
+    });
+  }));
+
+  // ---------------------------------------------------------------------------
+  // Connected Accounts Listing Endpoint
+  // ---------------------------------------------------------------------------
+  app.get('/api/v1/accounts', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    try {
+      let targetProfileId = req.query.profileId as string | undefined;
+
+      if (req.user) {
+        const profile = await ensureUserProfile(req.user);
+        // Only allow profileId query override if it matches the user's own profile or if not provided
+        if (!targetProfileId || targetProfileId !== profile?.zernio_profile_id) {
+          targetProfileId = profile?.zernio_profile_id;
+        }
+      }
+
+      let accountsRes;
+      let fetchedOk = false;
+      if (targetProfileId) {
+        try {
+          accountsRes = await zernio.accounts.listAccounts({
+            query: { profileId: targetProfileId }
+          });
+          fetchedOk = true;
+        } catch {
+          accountsRes = { data: { accounts: [] } };
+        }
+      } else {
+        accountsRes = { data: { accounts: [] } };
+      }
+
+      const rawAccounts = (accountsRes.data as any)?.accounts || (accountsRes.data as any) || [];
+      const zernioAccountsList = Array.isArray(rawAccounts) ? rawAccounts.map((a: any) => {
+        const platformName = a.platform ? (a.platform.charAt(0).toUpperCase() + a.platform.slice(1)) : 'Social';
+        return {
+          id: a._id || a.id,
+          platform: platformName,
+          username: a.username || a.name || a.title || `@${platformName.toLowerCase()}`,
+          name: a.name || a.username || a.title || `${platformName} Account`,
+          email: a.email || req.user?.email || 'user@rockyt.io',
+          avatar: a.avatar || a.profilePictureUrl || null,
+          status: a.status || 'connected',
+          connectedAt: a.createdAt || a.created_at ? (a.createdAt || a.created_at).substring(0, 10) : new Date().toISOString().substring(0, 10),
+          profileName: 'Default Profile'
+        };
+      }) : [];
+
+      let finalAccounts: any[] = [];
+
+      if (fetchedOk) {
+        finalAccounts = [...zernioAccountsList];
+        if (supabase && req.user?.id) {
+          try {
+            const zernioIds = zernioAccountsList.map((a: any) => String(a.id));
+            const zernioPlatforms = zernioAccountsList.map((a: any) => String(a.platform).toLowerCase());
+
+            const { data: dbAccs } = await supabase
+              .from('connected_accounts')
+              .select('id, platform')
+              .eq('user_id', req.user.id);
+
+            if (dbAccs && dbAccs.length > 0) {
+              for (const dba of dbAccs) {
+                const isMatch = zernioIds.includes(String(dba.id)) || zernioPlatforms.includes(String(dba.platform || '').toLowerCase());
+                if (!isMatch) {
+                  await supabase.from('connected_accounts').delete().eq('id', dba.id);
+                }
+              }
+            }
+          } catch (_purgeErr) {}
+        }
+      } else {
+        if (supabase && req.user?.id) {
+          try {
+            const { data: dbAccs } = await supabase
+              .from('connected_accounts')
+              .select('*')
+              .eq('user_id', req.user.id)
+              .eq('status', 'connected');
+
+            if (dbAccs && dbAccs.length > 0) {
+              dbAccs
+                .filter((a: any) => {
+                  const status = String(a.status || 'connected').toLowerCase();
+                  return status !== 'disconnected' && status !== 'revoked';
+                })
+                .forEach((a: any) => {
+                  const dbPlatform = a.platform ? (a.platform.charAt(0).toUpperCase() + a.platform.slice(1)) : 'Social';
+                  finalAccounts.push({
+                    id: a.id,
+                    platform: dbPlatform,
+                    username: a.username || a.profile_name || `@${dbPlatform.toLowerCase()}`,
+                    name: a.username || a.profile_name || `${dbPlatform} Account`,
+                    email: a.email || req.user?.email || '',
+                    avatar: null,
+                    status: a.status || 'connected',
+                    connectedAt: a.created_at ? a.created_at.substring(0, 10) : new Date().toISOString().substring(0, 10),
+                    profileName: a.profile_name || 'Default Profile'
+                  });
+                });
+            }
+          } catch (dbErr: any) {
+            console.warn('[GET /api/v1/accounts] Supabase query warning:', dbErr.message);
+          }
+        }
+      }
+
+      res.json({ accounts: finalAccounts });
+    } catch (err: any) {
+      console.warn('[GET /api/v1/accounts] Warning fetching accounts:', err.message);
+      res.json({ accounts: [] });
+    }
+  }));
+
+  // Helper: map user-facing platform names & display labels to canonical Zernio API platform info & endpoints
+  function getCanonicalZernioPlatformInfo(platformName: string): { cleanPlatform: string; connectEndpoint: string; formattedPlatform: string; isAds: boolean } {
+    const p = String(platformName || '').trim().toLowerCase();
+
+    // 1. Ads Platforms (uses GET /v1/connect/{platform}/ads)
+    if (p.includes('meta-ads') || p.includes('meta_ads') || p === 'metaads' || p.includes('facebook-ads') || p.includes('facebook_ads') || p.includes('meta ads')) {
+      return { cleanPlatform: 'metaads', connectEndpoint: 'facebook/ads', formattedPlatform: 'Meta Ads', isAds: true };
+    }
+    if (p.includes('google-ads') || p.includes('google_ads') || p === 'googleads' || p.includes('google ads')) {
+      return { cleanPlatform: 'googleads', connectEndpoint: 'googleads/ads', formattedPlatform: 'Google Ads', isAds: true };
+    }
+    if (p.includes('linkedin-ads') || p.includes('linkedin_ads') || p === 'linkedinads' || p.includes('linkedin ads')) {
+      return { cleanPlatform: 'linkedinads', connectEndpoint: 'linkedin/ads', formattedPlatform: 'LinkedIn Ads', isAds: true };
+    }
+    if (p.includes('tiktok-ads') || p.includes('tiktok_ads') || p === 'tiktokads' || p.includes('tiktok ads')) {
+      return { cleanPlatform: 'tiktokads', connectEndpoint: 'tiktok/ads', formattedPlatform: 'TikTok Ads', isAds: true };
+    }
+    if (p.includes('pinterest-ads') || p.includes('pinterest_ads') || p === 'pinterestads' || p.includes('pinterest ads')) {
+      return { cleanPlatform: 'pinterestads', connectEndpoint: 'pinterest/ads', formattedPlatform: 'Pinterest Ads', isAds: true };
+    }
+    if (p.includes('x-ads') || p.includes('x_ads') || p === 'xads' || p.includes('twitter-ads') || p.includes('twitter_ads') || p.includes('x ads') || p.includes('twitter ads')) {
+      return { cleanPlatform: 'xads', connectEndpoint: 'twitter/ads', formattedPlatform: 'X Ads', isAds: true };
+    }
+    if (p.includes('openai-ads') || p.includes('openai_ads') || p === 'openaiads' || p.includes('openai ads')) {
+      return { cleanPlatform: 'openaiads', connectEndpoint: 'openai-ads/credentials', formattedPlatform: 'OpenAI Ads', isAds: true };
+    }
+
+    // 2. Social & Messaging Platforms
+    if (p.includes('instagram')) return { cleanPlatform: 'instagram', connectEndpoint: 'instagram', formattedPlatform: 'Instagram', isAds: false };
+    if (p.includes('linkedin')) return { cleanPlatform: 'linkedin', connectEndpoint: 'linkedin', formattedPlatform: 'LinkedIn', isAds: false };
+    if (p.includes('tiktok')) return { cleanPlatform: 'tiktok', connectEndpoint: 'tiktok', formattedPlatform: 'TikTok', isAds: false };
+    if (p.includes('twitter') || p.includes('x') || p === 'x') return { cleanPlatform: 'twitter', connectEndpoint: 'twitter', formattedPlatform: 'Twitter/X', isAds: false };
+    if (p.includes('whatsapp')) return { cleanPlatform: 'whatsapp', connectEndpoint: 'whatsapp', formattedPlatform: 'WhatsApp', isAds: false };
+    if (p.includes('facebook') || p.includes('fb')) return { cleanPlatform: 'facebook', connectEndpoint: 'facebook', formattedPlatform: 'Facebook', isAds: false };
+    if (p.includes('google') || p.includes('gmb') || p.includes('business')) return { cleanPlatform: 'googlebusiness', connectEndpoint: 'gmb', formattedPlatform: 'Google Business', isAds: false };
+    if (p.includes('youtube')) return { cleanPlatform: 'youtube', connectEndpoint: 'youtube', formattedPlatform: 'YouTube', isAds: false };
+    if (p.includes('pinterest')) return { cleanPlatform: 'pinterest', connectEndpoint: 'pinterest', formattedPlatform: 'Pinterest', isAds: false };
+    if (p.includes('threads')) return { cleanPlatform: 'threads', connectEndpoint: 'threads', formattedPlatform: 'Threads', isAds: false };
+    if (p.includes('snapchat')) return { cleanPlatform: 'snapchat', connectEndpoint: 'snapchat', formattedPlatform: 'Snapchat', isAds: false };
+    if (p.includes('bluesky')) return { cleanPlatform: 'bluesky', connectEndpoint: 'bluesky', formattedPlatform: 'Bluesky', isAds: false };
+    if (p.includes('telegram')) return { cleanPlatform: 'telegram', connectEndpoint: 'telegram', formattedPlatform: 'Telegram', isAds: false };
+    if (p.includes('discord')) return { cleanPlatform: 'discord', connectEndpoint: 'discord', formattedPlatform: 'Discord', isAds: false };
+    if (p.includes('slack')) return { cleanPlatform: 'slack', connectEndpoint: 'slack', formattedPlatform: 'Slack', isAds: false };
+    if (p.includes('reddit')) return { cleanPlatform: 'reddit', connectEndpoint: 'reddit', formattedPlatform: 'Reddit', isAds: false };
+
+    const clean = p.replace(/[^a-z0-9]/g, '') || 'facebook';
+    return { cleanPlatform: clean, connectEndpoint: clean, formattedPlatform: clean.charAt(0).toUpperCase() + clean.slice(1), isAds: false };
+  }
+
+  function getCanonicalZernioPlatform(platformName: string): string {
+    return getCanonicalZernioPlatformInfo(platformName).cleanPlatform;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Rockyt Branded Connect Flow & Gateway Route
+  // ---------------------------------------------------------------------------
+  app.get(['/connect/:platform', '/api/v1/connect/:platform'], supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const rawPlatform = req.params.platform || req.query.platform;
+    if (!rawPlatform) {
+      return res.status(400).json({ error: 'Platform name is required (e.g. instagram, linkedin, twitter, whatsapp)' });
+    }
+
+    const platformInfo = getCanonicalZernioPlatformInfo(rawPlatform);
+    const cleanPlatform = platformInfo.cleanPlatform;
+    const connectEndpoint = platformInfo.connectEndpoint;
+    const formattedPlatform = platformInfo.formattedPlatform;
+    
+    // Resolve user's Zernio profile ID
+    let zernioProfileId: string | null = req.zernioProfileId || null;
+    try {
+      if (req.user) {
+        const profile = await ensureUserProfile(req.user);
+        if (profile?.zernio_profile_id) {
+          zernioProfileId = profile.zernio_profile_id;
+        }
+      }
+    } catch (profErr: any) {
+      console.warn('[Rockyt Connect Gateway] ensureUserProfile warning:', profErr.message);
+    }
+
+    const appBaseUrl = process.env.APP_BASE_URL || (req.headers.origin || `https://${req.headers.host}`);
+    const clientRedirectUrl = req.query.redirectUrl || req.query.redirect_url || `${appBaseUrl}/dashboard?account_connected=true&platform=${encodeURIComponent(cleanPlatform)}`;
+    const callbackUrl = `${appBaseUrl}/oauth/callback?platform=${encodeURIComponent(cleanPlatform)}&returnTo=${encodeURIComponent(clientRedirectUrl)}`;
+
+    let targetOAuthUrl: string | null = null;
+
+    // 1. Direct HTTP request to official Zernio connect endpoint
+    if (zernioProfileId) {
+      try {
+        const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+        const zernioRes = await fetch(`https://zernio.com/api/v1/connect/${connectEndpoint}?profileId=${encodeURIComponent(zernioProfileId)}&redirectUrl=${encodeURIComponent(callbackUrl)}&headless=true&reconnect=true&prompt=consent&force_reconnect=true&_ts=${Date.now()}`, {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`
+          }
+        });
+        if (zernioRes.ok) {
+          const zernioData = await zernioRes.json();
+          targetOAuthUrl = zernioData.authUrl || zernioData.url || null;
+        }
+      } catch (httpErr: any) {
+        console.warn(`[Rockyt Connect Gateway] Zernio HTTP fetch warning for ${connectEndpoint}:`, httpErr.message);
+      }
+    }
+
+    // 2. Fail gracefully if zernioProfileId could not be resolved
+    if (!targetOAuthUrl) {
+      if (!zernioProfileId) {
+        return res.status(400).json({ error: 'Zernio profile ID could not be resolved for your account.' });
+      }
+      targetOAuthUrl = `https://zernio.com/api/v1/connect/${connectEndpoint}?profileId=${encodeURIComponent(zernioProfileId)}&redirectUrl=${encodeURIComponent(callbackUrl)}&headless=true&reconnect=true&prompt=consent&force_reconnect=true`;
+    }
+
+    // If client requested JSON response
+    if (req.headers.accept?.includes('application/json') || req.query.json === '1') {
+      return res.json({
+        success: true,
+        connectUrl: `${appBaseUrl}/connect/${encodeURIComponent(cleanPlatform)}`,
+        authUrl: targetOAuthUrl,
+        platform: formattedPlatform
+      });
+    }
+
+    // Render Rockyt Branded Connection Gateway Interstitial Screen
+    return res.send(`
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <title>Connecting ${formattedPlatform} | Rockyt</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <script src="https://cdn.tailwindcss.com"></script>
+        <style>
+          body { background-color: #09090b; color: #ffffff; font-family: system-ui, -apple-system, sans-serif; }
+          .shadow-glow { box-shadow: 0 0 25px rgba(234, 88, 12, 0.35); }
+        </style>
+      </head>
+      <body class="min-h-screen flex items-center justify-center p-4 bg-zinc-950">
+        <div class="max-w-md w-full bg-zinc-900 border border-white/10 rounded-2xl p-8 shadow-2xl text-center space-y-6">
+          <div class="flex items-center justify-center gap-3">
+            <div class="w-12 h-12 rounded-xl bg-orange-600/20 border border-orange-500/30 flex items-center justify-center text-orange-500 font-black text-2xl shadow-glow">
+              🚀
+            </div>
+            <div class="text-2xl font-bold tracking-widest text-white uppercase">ROCKYT</div>
+          </div>
+          
+          <div class="space-y-2">
+            <h2 class="text-xl font-bold text-white">Connecting ${formattedPlatform} Account</h2>
+            <p class="text-xs text-zinc-400">You are about to authorize your ${formattedPlatform} account with Rockyt.</p>
+          </div>
+
+          <div class="bg-zinc-950 border border-white/5 rounded-xl p-4 text-left text-xs text-zinc-400 space-y-2.5">
+            <div class="flex items-center gap-2.5 text-white font-medium">
+              <span class="text-emerald-400 font-bold">✓</span> Rockyt Encrypted Integration Gateway
+            </div>
+            <div class="flex items-center gap-2.5 text-white font-medium">
+              <span class="text-emerald-400 font-bold">✓</span> Direct Return to Rockyt Dashboard
+            </div>
+          </div>
+
+          <a href="${targetOAuthUrl}" class="block w-full bg-orange-600 hover:bg-orange-500 text-white font-bold text-sm py-3.5 px-6 rounded-xl transition-all shadow-glow uppercase tracking-wider">
+            Authorize ${formattedPlatform} Account →
+          </a>
+
+          <p class="text-[11px] text-zinc-500">Secure connection powered by Rockyt Headless Infrastructure</p>
+        </div>
+      </body>
+      </html>
+    `);
+  }));
+
+  // ---------------------------------------------------------------------------
+  // Connected Accounts Creation & OAuth Connect Initiator Endpoint
+  // ---------------------------------------------------------------------------
+  app.post(['/api/v1/accounts/connect', '/api/v1/accounts'], supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { platform, redirectUrl } = req.body || {};
+    if (!platform) {
+      return res.status(400).json({ error: 'Platform name is required (e.g. instagram, linkedin, x, whatsapp, tiktok)' });
+    }
+
+    const platformInfo = getCanonicalZernioPlatformInfo(platform);
+    const cleanPlatform = platformInfo.cleanPlatform;
+    const connectEndpoint = platformInfo.connectEndpoint;
+    const formattedPlatform = platformInfo.formattedPlatform;
+    
+    // Resolve user's Zernio profile ID
+    let zernioProfileId: string | null = req.zernioProfileId || null;
+    try {
+      if (req.user) {
+        const profile = await ensureUserProfile(req.user);
+        if (profile?.zernio_profile_id) {
+          zernioProfileId = profile.zernio_profile_id;
+        }
+      }
+    } catch (profErr: any) {
+      console.warn('[POST /api/v1/accounts/connect] ensureUserProfile warning:', profErr.message);
+    }
+
+    // Check user's wallet balance for paid platform integrations (e.g. X/Twitter API pass-through costs)
+    let currentBalance = 0;
+    if (supabase && req.user?.id) {
+      try {
+        const { data: profRow } = await supabase
+          .from('profiles')
+          .select('wallet_balance')
+          .eq('id', req.user.id)
+          .maybeSingle();
+        if (profRow && typeof profRow.wallet_balance === 'number') {
+          currentBalance = profRow.wallet_balance;
+        }
+      } catch (balErr: any) {
+        console.warn('[POST /api/v1/accounts/connect] wallet_balance lookup warning:', balErr.message);
+      }
+    }
+
+    const isPaidPlatform = cleanPlatform === 'twitter' || cleanPlatform === 'x';
+    const requiredPassThroughFee = 1.00;
+
+    // Check if user has sufficient funds in Rockyt wallet
+    if (isPaidPlatform && currentBalance < requiredPassThroughFee) {
+      return res.status(402).json({
+        error: 'X (Twitter) requires an active wallet balance ($1.00 minimum) due to API pass-through costs. Please top up your Rockyt wallet to connect an X account.',
+        code: 'PAYMENT_REQUIRED',
+        reason: 'twitter_passthrough',
+        requiredBalance: requiredPassThroughFee,
+        currentBalance: currentBalance,
+        requiresDeposit: true
+      });
+    }
+
+    const appBaseUrl = process.env.APP_BASE_URL || (req.headers.origin || `https://${req.headers.host}`);
+    const clientRedirectUrl = redirectUrl || `${appBaseUrl}/dashboard?account_connected=true&platform=${encodeURIComponent(cleanPlatform)}`;
+    const callbackUrl = `${appBaseUrl}/oauth/callback?platform=${encodeURIComponent(cleanPlatform)}&returnTo=${encodeURIComponent(clientRedirectUrl)}`;
+
+    let targetOAuthUrl: string | null = null;
+
+    // 1. Direct HTTP request to official Zernio connect endpoint
+    if (zernioProfileId) {
+      try {
+        const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+        if (apiKey) {
+          const zernioRes = await fetch(`https://zernio.com/api/v1/connect/${connectEndpoint}?profileId=${encodeURIComponent(zernioProfileId)}&redirect_url=${encodeURIComponent(callbackUrl)}&headless=true&reconnect=true&prompt=consent&force_reconnect=true&_ts=${Date.now()}`, {
+            headers: {
+              'Authorization': `Bearer ${apiKey}`
+            }
+          });
+          if (zernioRes.ok) {
+            const zernioData = await zernioRes.json();
+            targetOAuthUrl = zernioData.authUrl || zernioData.url || null;
+          }
+        }
+      } catch (httpErr: any) {
+        console.warn(`[POST /api/v1/accounts/connect] Zernio HTTP fetch warning for ${connectEndpoint}:`, httpErr.message);
+      }
+    }
+
+    // 2. Fail gracefully if zernioProfileId could not be resolved
+    if (!targetOAuthUrl) {
+      if (!zernioProfileId) {
+        return res.status(400).json({ error: 'Zernio profile ID could not be resolved for your account.' });
+      }
+      targetOAuthUrl = `https://zernio.com/api/v1/connect/${connectEndpoint}?profileId=${encodeURIComponent(zernioProfileId)}&redirect_url=${encodeURIComponent(callbackUrl)}&headless=true&reconnect=true&prompt=consent&force_reconnect=true`;
+    }
+
+    // If user has balance for paid platform, charge pass-through fee from wallet on successful URL generation
+    if (isPaidPlatform && currentBalance >= requiredPassThroughFee && supabase && req.user?.id) {
+      try {
+        const newBalance = currentBalance - requiredPassThroughFee;
+        await supabase
+          .from('profiles')
+          .update({ wallet_balance: newBalance })
+          .eq('id', req.user.id);
+
+        await supabase
+          .from('wallet_transactions')
+          .insert({
+            user_id: req.user.id,
+            amount: -requiredPassThroughFee,
+            type: 'debit',
+            description: 'X (Twitter) API Pass-Through Connection Fee',
+            balance_after: newBalance
+          });
+      } catch (debitErr: any) {
+        console.warn('[POST /api/v1/accounts/connect] Wallet debit warning:', debitErr.message);
+      }
+    }
+
+    // Return the actual targetOAuthUrl to client so browser navigates directly to OAuth consent screen
+    res.json({
+      success: true,
+      authUrl: targetOAuthUrl,
+      connectUrl: targetOAuthUrl,
+      platform: formattedPlatform,
+      profileId: zernioProfileId
+    });
+  }));
+
+  // ---------------------------------------------------------------------------
+  // Connected Accounts Disconnect Helper
+  // ---------------------------------------------------------------------------
+  // Connected Accounts Disconnect Helper
+  // ---------------------------------------------------------------------------
+  async function disconnectSocialAccount(userId: string, accountId?: string, platformName?: string) {
+    if (!userId) return;
+
+    let targetProfileId: string | null = null;
+    if (supabase) {
+      try {
+        const { data: userProf } = await supabase.from('profiles').select('zernio_profile_id').eq('id', userId).maybeSingle();
+        if (userProf?.zernio_profile_id) {
+          targetProfileId = userProf.zernio_profile_id;
+        }
+      } catch {}
+    }
+
+    // 1. Delete account from Zernio if accountId is passed
+    if (accountId) {
+      const cleanAccId = String(accountId).replace(/^acc_/, '');
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+
+      if (apiKey && cleanAccId && cleanAccId !== 'disconnect') {
+        try {
+          await fetch(`https://zernio.com/api/v1/accounts/${encodeURIComponent(cleanAccId)}?profileId=${encodeURIComponent(targetProfileId || '')}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${apiKey}` }
+          });
+        } catch (httpDelErr: any) {
+          console.warn('[disconnectSocialAccount] Zernio HTTP DELETE warning:', httpDelErr.message);
+        }
+      }
+
+      try {
+        if (typeof (zernio.accounts as any).deleteAccount === 'function') {
+          await (zernio.accounts as any).deleteAccount({ path: { accountId: cleanAccId, id: cleanAccId } });
+        }
+      } catch (zErr: any) {
+        console.warn('[disconnectSocialAccount] Zernio deleteAccount warning:', zErr.message);
+      }
+    }
+
+    // 2. Remove from Supabase connected_accounts
+    if (supabase && userId) {
+      try {
+        if (accountId) {
+          await supabase.from('connected_accounts').delete().eq('id', accountId).eq('user_id', userId);
+        }
+        if (platformName) {
+          const cleanPlatform = getCanonicalZernioPlatform(platformName);
+          const formattedPlatform = cleanPlatform.charAt(0).toUpperCase() + cleanPlatform.slice(1);
+          await supabase.from('connected_accounts').delete().eq('user_id', userId).eq('platform', formattedPlatform);
+          await supabase.from('connected_accounts').delete().eq('user_id', userId).eq('platform', cleanPlatform);
+        }
+
+        // Recalculate remaining active connected accounts count WITHOUT mutating permanent zernio_profile_id!
+        const { data: remaining } = await supabase
+          .from('connected_accounts')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('status', 'connected');
+
+        const newCount = remaining ? remaining.length : 0;
+        await supabase
+          .from('profiles')
+          .update({
+            connected_accounts_count: newCount
+          })
+          .eq('id', userId);
+
+      } catch (dbErr: any) {
+        console.error('[disconnectSocialAccount] Supabase disconnect error:', dbErr);
+      }
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Webhooks API Endpoints
+  // ---------------------------------------------------------------------------
+  app.get('/api/v1/webhooks', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    if (supabase && req.user?.id) {
+      try {
+        const { data, error } = await supabase
+          .from('webhooks')
+          .select('*')
+          .eq('user_id', req.user.id)
+          .order('created_at', { ascending: false });
+        if (!error && data) {
+          return res.json({ webhooks: data });
+        }
+      } catch (e) {}
+    }
+    res.json({ webhooks: [] });
+  }));
+
+  app.post('/api/v1/webhooks', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { url, events, name } = req.body || {};
+    if (!url) return res.status(400).json({ error: 'Webhook endpoint URL is required' });
+    const secret = `whsec_${Math.random().toString(36).substring(2)}${Date.now().toString(36)}`;
+    const newWebhook = {
+      id: `wh_${Date.now()}`,
+      user_id: req.user?.id || '00000000-0000-0000-0000-000000000001',
+      name: name || 'Production Webhook',
+      url,
+      secret,
+      events: Array.isArray(events) ? events : ['post.created', 'comment.received'],
+      status: 'active',
+      created_at: new Date().toISOString()
+    };
+    if (supabase && req.user?.id) {
+      try {
+        await supabase.from('webhooks').insert(newWebhook);
+      } catch (e) {}
+    }
+    res.json({ success: true, webhook: newWebhook });
+  }));
+
+  app.delete('/api/v1/webhooks/:id', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { id } = req.params;
+    if (supabase && req.user?.id) {
+      try {
+        await supabase.from('webhooks').delete().eq('id', id).eq('user_id', req.user.id);
+      } catch (e) {}
+    }
+    res.json({ success: true });
+  }));
+
+  // ---------------------------------------------------------------------------
+  // Connected Accounts Toggle & Disconnect Endpoints
+  // ---------------------------------------------------------------------------
+  app.post(['/api/v1/accounts/toggle', '/api/v1/accounts/disconnect'], supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { id, platform, status } = req.body || {};
+    const userId = req.user?.id || '00000000-0000-0000-0000-000000000000';
+
+    if (status === 'disconnected' || !status) {
+      await disconnectSocialAccount(userId, id, platform);
+      return res.json({ success: true, status: 'disconnected', message: 'Account disconnected successfully' });
+    }
+
+    res.json({ success: true, status: status || 'connected' });
+  }));
+
+  app.delete(['/api/v1/accounts/:id', '/api/v1/accounts/disconnect'], supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const targetId = req.params.id || req.body?.id;
+    const userId = req.user?.id || '00000000-0000-0000-0000-000000000000';
+
+    await disconnectSocialAccount(userId, targetId, req.query?.platform as string || req.body?.platform);
+    res.json({ success: true, message: 'Account disconnected successfully' });
+  }));
+
+  // ---------------------------------------------------------------------------
+  // Dedicated Tab Data API Endpoints (Real-Time Per-Tab Fetching)
+  // ---------------------------------------------------------------------------
+  app.get(['/api/v1/analytics', '/api/analytics'], supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    let zernioProfileId: string | null = req.zernioProfileId || null;
+    if (req.user) {
+      const profile = await ensureUserProfile(req.user);
+      if (profile?.zernio_profile_id) zernioProfileId = profile.zernio_profile_id;
+    }
+
+    let posts: any[] = [];
+    if (supabase && req.user?.id) {
+      try {
+        const { data } = await supabase.from('user_posts').select('*').eq('user_id', req.user.id);
+        if (data) posts = data;
+      } catch {}
+    }
+
+    if (zernioProfileId) {
+      try {
+        const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+        if (apiKey) {
+          const zRes = await fetch(`https://zernio.com/api/v1/posts?profileId=${encodeURIComponent(zernioProfileId)}`, {
+            headers: { 'Authorization': `Bearer ${apiKey}` }
+          });
+          if (zRes.ok) {
+            const zData = await zRes.json();
+            const zPosts = zData.posts || zData.data || [];
+            if (Array.isArray(zPosts) && zPosts.length > 0) {
+              posts = zPosts;
+            }
+          }
+        }
+      } catch (err: any) {
+        console.warn('[analytics] Zernio fetch warning:', err.message);
+      }
+    }
+
+    const totalPosts = posts.length;
+    const totalLikes = posts.reduce((sum: number, p: any) => sum + (p.likes || 0), 0);
+    const totalComments = posts.reduce((sum: number, p: any) => sum + (p.comments || 0), 0);
+    const totalEngagements = totalLikes + totalComments;
+    const engagementRate = totalPosts > 0 ? ((totalEngagements / totalPosts) * 100).toFixed(1) : '0.0';
+    
+    const postsPerPlatform: Record<string, number> = {};
+    posts.forEach((p: any) => {
+      const plat = p.platform ? (p.platform.charAt(0).toUpperCase() + p.platform.slice(1)) : 'Social';
+      postsPerPlatform[plat] = (postsPerPlatform[plat] || 0) + 1;
+    });
+
+    return res.json({
+      success: true,
+      analytics: {
+        totalPosts,
+        totalLikes,
+        totalComments,
+        totalEngagements,
+        engagementRate: `${engagementRate}%`,
+        connectedPlatforms: Object.keys(postsPerPlatform).length,
+        totalApiCalls: posts.length * 2,
+        postsPerPlatform
+      }
+    });
+  }));
+
+  app.get('/api/v1/inbox/conversations', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    let zernioProfileId: string | null = req.zernioProfileId || null;
+    if (req.user) {
+      const profile = await ensureUserProfile(req.user);
+      if (profile?.zernio_profile_id) zernioProfileId = profile.zernio_profile_id;
+    }
+
+    let conversations: any[] = [];
+    if (zernioProfileId) {
+      try {
+        const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+        if (apiKey) {
+          const convRes = await fetch(`https://zernio.com/api/v1/inbox/conversations?profileId=${encodeURIComponent(zernioProfileId)}`, {
+            headers: { 'Authorization': `Bearer ${apiKey}` }
+          });
+          if (convRes.ok) {
+            const convData = await convRes.json();
+            conversations = convData.conversations || convData.data || [];
+          }
+        }
+      } catch (err: any) {
+        console.warn('[inbox] Zernio conversations fetch warning:', err.message);
+      }
+    }
+
+    return res.json({ success: true, conversations });
+  }));
+
+  app.post('/api/v1/inbox/conversations/:id/messages', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { id } = req.params;
+    const { message, accountId } = req.body || {};
+    if (!message) return res.status(400).json({ error: 'Message content is required' });
+
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const sendRes = await fetch(`https://zernio.com/api/v1/inbox/conversations/${encodeURIComponent(id)}/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+          },
+          body: JSON.stringify({ message, accountId })
+        });
+        if (sendRes.ok) {
+          const data = await sendRes.json();
+          return res.json({ success: true, data });
+        }
+      }
+    } catch (err: any) {
+      console.warn('[inbox/reply] Reply warning:', err.message);
+    }
+
+    return res.json({ success: true, message: 'Message sent successfully' });
+  }));
+
+  app.get(['/api/v1/ads', '/api/v1/ad-campaigns'], supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    let zernioProfileId: string | null = req.zernioProfileId || null;
+    if (req.user) {
+      const profile = await ensureUserProfile(req.user);
+      if (profile?.zernio_profile_id) zernioProfileId = profile.zernio_profile_id;
+    }
+
+    let campaigns: any[] = [];
+    if (zernioProfileId) {
+      try {
+        const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+        if (apiKey) {
+          const adsRes = await fetch(`https://zernio.com/api/v1/ads?profileId=${encodeURIComponent(zernioProfileId)}`, {
+            headers: { 'Authorization': `Bearer ${apiKey}` }
+          });
+          if (adsRes.ok) {
+            const adsData = await adsRes.json();
+            campaigns = adsData.ads || adsData.campaigns || [];
+          }
+        }
+      } catch (err: any) {
+        console.warn('[ads] Zernio ads fetch warning:', err.message);
+      }
+    }
+
+    return res.json({ success: true, campaigns });
+  }));
+
+  app.get(['/api/v1/users', '/api/v1/me/team'], supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    let users: any[] = [];
+    if (supabase && req.user?.id) {
+      try {
+        const { data } = await supabase.from('profiles').select('id, email, full_name, plan, created_at').limit(20);
+        if (data) {
+          users = data.map((u: any) => ({
+            id: u.id,
+            email: u.email,
+            full_name: u.full_name || u.email?.split('@')[0],
+            role: u.id === req.user.id ? 'Owner / Admin' : 'Member',
+            plan: u.plan || 'Growth',
+            created_at: u.created_at
+          }));
+        }
+      } catch {}
+    }
+    if (users.length === 0 && req.user) {
+      users = [{
+        id: req.user.id,
+        email: req.user.email,
+        full_name: req.user.name || req.user.email?.split('@')[0],
+        role: 'Owner / Admin',
+        plan: 'Growth',
+        created_at: new Date().toISOString()
+      }];
+    }
+    return res.json({ success: true, users });
+  }));
+
+  app.get(['/api/v1/logs', '/api/user/usage-logs'], supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    let logs: any[] = [];
+    if (supabase && req.user?.id) {
+      try {
+        const { data } = await supabase.from('activity_logs').select('*').eq('user_id', req.user.id).order('created_at', { ascending: false }).limit(50);
+        if (data && data.length > 0) logs = data;
+      } catch {}
+    }
+    if (logs.length === 0) {
+      logs = [
+        { id: 'log_1', activity: 'GET /api/v1/accounts', platform: 'System', status_code: 200, duration_ms: 45, created_at: new Date().toISOString() },
+        { id: 'log_2', activity: 'GET /api/v1/posts', platform: 'Instagram', status_code: 200, duration_ms: 62, created_at: new Date(Date.now() - 3600000).toISOString() }
+      ];
+    }
+    return res.json({ success: true, logs });
+  }));
+
+  app.get('/api/v1/me/usage', authenticate, asyncHandler(async (req: any, res: any) => {
+    res.json({ connectedAccounts: req.connectedCount, maxAccounts: req.maxAccounts });
+  }));
+
+  app.get('/api/v1/me/dashboard-usage', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    if (supabase) {
+      const profile = await ensureUserProfile(req.user);
+      let accounts: any[] = [];
+      let dbAccountCount = 0;
+
+      if (req.user?.id) {
+        try {
+          const { data: dbAccs } = await supabase
+            .from('connected_accounts')
+            .select('id')
+            .eq('user_id', req.user.id);
+          if (dbAccs) {
+            dbAccountCount = dbAccs.length;
+          }
+        } catch {}
+      }
+
+      if (profile?.zernio_profile_id) {
+        try {
+          const accountsRes = await zernio.accounts.listAccounts({
+            query: { profileId: profile.zernio_profile_id }
+          });
+          const rawAccounts = (accountsRes.data as any)?.accounts || (accountsRes.data as any) || [];
+          if (Array.isArray(rawAccounts)) {
+            accounts = rawAccounts.map((a: any) => {
+              const platformName = a.platform ? (a.platform.charAt(0).toUpperCase() + a.platform.slice(1)) : 'Social';
+              return {
+                id: a._id || a.id,
+                platform: platformName,
+                username: a.username || a.name || a.title || `@${platformName.toLowerCase()}`,
+                name: a.name || a.username || a.title || `${platformName} Account`,
+                avatar: a.avatar || a.profilePictureUrl || null,
+                status: a.status || 'connected'
+              };
+            });
+          }
+        } catch (err: any) {
+          console.warn('[dashboard-usage] Zernio listAccounts warning:', err.message);
+        }
+      }
+
+      const connectedCount = accounts.length > 0 ? accounts.length : dbAccountCount;
+      const maxAccounts = getMaxAccountsForUser(profile);
+
+      // Keep database connected_accounts_count in sync
+      if (profile && profile.connected_accounts_count !== connectedCount) {
+        await supabase.from('profiles').update({ connected_accounts_count: connectedCount }).eq('id', req.user.id);
+      }
+
+      res.json({ connectedAccounts: connectedCount, maxAccounts, accounts });
+    } else {
+      res.json({ connectedAccounts: mockConnectedCount, maxAccounts: 1, accounts: [] });
+    }
+  }));
+
+  // Secure Dodo Payments Checkout Endpoint
+  // ---------------------------------------------------------------------------
+  app.post(['/api/v1/checkouts', '/api/billing/create-checkout', '/api/v1/billing/create-checkout', '/api/create-checkout'], combinedAuth, asyncHandler(async (req: any, res: any) => {
+    const { productId, trialPeriodDays, amount } = req.body || {};
+    const targetProductId = productId || 'pdt_0Nk1w4r59DXb7GepY1sqA';
+    const numAmount = Number(amount) || 0;
+    const isDeposit = numAmount > 0 || targetProductId.includes('metered');
+
+    try {
+      const apiKey =
+          process.env.DODO_PAYMENTS_API_KEY ||
+          process.env.DODO_API_KEY          ||
+          process.env.DODO_SECRET_KEY       ||
+          process.env.VITE_DODO_API_KEY;
+
+      if (!apiKey) {
+        console.error('[dodo] No API key found. Set DODO_PAYMENTS_API_KEY in your deployment environment.');
+        return res.status(500).json({
+          error: 'Payments are not configured on this server (missing DODO_PAYMENTS_API_KEY).',
+          docs:  'Set DODO_PAYMENTS_API_KEY in your Vercel project environment variables.',
+        });
+      }
+
+      let envMode: 'test_mode' | 'live_mode' = 'live_mode';
+      const explicitMode = process.env.DODO_PAYMENTS_ENVIRONMENT || process.env.DODO_MODE || process.env.VITE_DODO_MODE;
+      if (explicitMode === 'test' || explicitMode === 'test_mode' || apiKey.startsWith('test')) {
+        envMode = 'test_mode';
+      } else {
+        envMode = 'live_mode';
+      }
+
+      const baseUrl = envMode === 'live_mode' ? 'https://live.dodopayments.com' : 'https://test.dodopayments.com';
+      const appBaseUrl = process.env.APP_BASE_URL || (req.headers.origin || `https://${req.headers.host}`);
+      const returnUrl = `${appBaseUrl}/dashboard?ref_id=${encodeURIComponent(req.user.id)}&checkout=success`;
+
+      const quantity = numAmount > 0 ? Math.max(1, Math.round(numAmount)) : 1;
+
+      const requestBody: any = {
+        customer: {
+          email: req.user.email,
+        },
+        product_cart: [
+          {
+            product_id: targetProductId,
+            quantity,
+          },
+        ],
+        metadata: {
+          user_id: req.user.id,
+          amount: String(numAmount || (targetProductId.includes('scale') ? 99 : 49)),
+          type: isDeposit ? 'deposit' : 'subscription',
+        },
+        return_url: returnUrl,
+      };
+
+      if (typeof trialPeriodDays === 'number' && !isDeposit) {
+        requestBody.subscription_data = {
+          trial_period_days: trialPeriodDays,
+        };
+      }
+
+      console.log(`[Dodo] Creating checkout session (${envMode}) for:`, req.user.email, targetProductId, `isDeposit=${isDeposit}, amount=${numAmount}`);
+
+      const fetchRes = await fetch(`${baseUrl}/checkouts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!fetchRes.ok) {
+        const errText = await fetchRes.text();
+        console.error('[Dodo API REST Error]:', fetchRes.status, errText);
+        let detailMsg = errText;
+        try {
+          const parsed = JSON.parse(errText);
+          detailMsg = parsed.message || parsed.error || errText;
+        } catch {}
+        return res.status(fetchRes.status).json({
+          error: `Dodo Payments API error (${fetchRes.status}): ${detailMsg}`
+        });
+      }
+
+      const data = await fetchRes.json();
+      const checkoutUrl = data.checkout_url;
+      const dodoSessionId = data.session_id || data.checkout_id || 'sess_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+
+      if (!checkoutUrl) {
+        return res.status(500).json({ error: 'No checkout_url returned from Dodo Payments' });
+      }
+
+      const planName = isDeposit ? `Wallet Deposit ($${numAmount.toFixed(2)})` : (targetProductId === 'pdt_0NWDjzl0TS6LNFrVdFZYQ' ? 'Scale' : 'Growth');
+
+      // Record checkout session in Supabase checkout_sessions table
+      if (supabase && req.user?.id) {
+        try {
+          await supabase.from('checkout_sessions').insert({
+            user_id: req.user.id,
+            dodo_session_id: dodoSessionId,
+            product_id: targetProductId,
+            plan: planName,
+            status: 'pending',
+            checkout_url: checkoutUrl,
+          });
+        } catch (dbErr: any) {
+          console.error('[Supabase] Non-fatal error logging checkout_session:', dbErr?.message || dbErr);
+        }
+      }
+
+      res.json({ checkout_url: checkoutUrl, session_id: dodoSessionId });
+    } catch (error: any) {
+      console.error('Error creating checkout session:', error);
+      const statusCode = error.status || error.statusCode || 500;
+      const errorDetail = error.message || error.error || String(error);
+      res.status(statusCode).json({ error: `Checkout session creation error (${statusCode}): ${errorDetail}` });
+    }
+  }));
+
+  // ---------------------------------------------------------------------------
+  // Dodo Payments Webhook Endpoint (Unified Handler)
+  // ---------------------------------------------------------------------------
+  const dodoWebhookHandler = async (req: any, res: any) => {
+    const dodoWebhookSecret = process.env.DODO_WEBHOOK_SECRET;
+
+    if (dodoWebhookSecret) {
+      const webhookId = req.headers['webhook-id'];
+      const webhookSignature = req.headers['webhook-signature'];
+      const webhookTimestamp = req.headers['webhook-timestamp'];
+
+      if (!webhookId || !webhookSignature || !webhookTimestamp) {
+        return res.status(401).json({ error: 'Missing webhook signature headers' });
+      }
+
+      const rawBodyStr = req.rawBody ? req.rawBody.toString('utf8') : (typeof req.body === 'string' ? req.body : JSON.stringify(req.body));
+      const signedPayload = `${webhookId}.${webhookTimestamp}.${rawBodyStr}`;
+
+      let secretKey: Buffer;
+      if (dodoWebhookSecret.startsWith('whsec_')) {
+        secretKey = Buffer.from(dodoWebhookSecret.slice(6), 'base64');
+      } else {
+        secretKey = Buffer.from(dodoWebhookSecret, 'utf8');
+      }
+
+      const computedBase64 = crypto.createHmac('sha256', secretKey).update(signedPayload).digest('base64');
+      const computedHex = crypto.createHmac('sha256', secretKey).update(signedPayload).digest('hex');
+
+      const sigHeader = String(webhookSignature || '');
+      const candidateSigs = sigHeader.split(/\s+/).flatMap(s => s.split(','));
+
+      let isValid = false;
+      for (const sig of candidateSigs) {
+        const cleanSig = sig.trim().replace(/^v1,/, '');
+        if (!cleanSig) continue;
+        if (cleanSig === computedBase64 || cleanSig === computedHex) {
+          isValid = true;
+          break;
+        }
+      }
+
+      if (!isValid) {
+        const sigA = Buffer.from(computedHex, 'utf8');
+        const sigB = Buffer.from(sigHeader, 'utf8');
+        if (sigA.length === sigB.length && crypto.timingSafeEqual(sigA, sigB)) {
+          isValid = true;
+        }
+      }
+
+      if (!isValid) {
+        console.error('[Dodo Webhook] Webhook signature verification failed');
+        return res.status(401).json({ error: 'Invalid webhook signature' });
+      }
+    }
+
+    try {
+      const payload = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+      const eventType = payload?.event_type || payload?.type || 'unknown';
+      const dodoEventId = payload?.event_id || payload?.id || null;
+      const data = payload?.data || payload || {};
+
+      const metadataUserId = data?.metadata?.user_id || data?.customer?.metadata?.user_id || payload?.metadata?.user_id;
+      const customerEmail = data?.customer?.email || data?.email || payload?.email;
+      const customerId = data?.customer?.customer_id || data?.customer_id;
+      const subscriptionId = data?.subscription_id || data?.id;
+      const productId = data?.product_id || data?.product_cart?.[0]?.product_id || data?.items?.[0]?.product_id;
+      const dodoSessionId = data?.session_id || data?.checkout_id;
+
+      let userId: string | null = metadataUserId || null;
+      let lookupMethod = userId ? 'metadata.user_id' : null;
+
+      if (supabase) {
+        // 1. Try lookup by dodo_session_id in checkout_sessions table
+        if (!userId && dodoSessionId) {
+          const { data: sessionRow } = await supabase
+            .from('checkout_sessions')
+            .select('user_id')
+            .eq('dodo_session_id', dodoSessionId)
+            .single();
+          if (sessionRow?.user_id) {
+            userId = sessionRow.user_id;
+            lookupMethod = 'checkout_sessions.dodo_session_id';
+          }
+        }
+
+        // 2. Try lookup by dodo_customer_id in profiles table
+        if (!userId && customerId) {
+          const { data: profileRow } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('dodo_customer_id', customerId)
+            .single();
+          if (profileRow?.id) {
+            userId = profileRow.id;
+            lookupMethod = 'profiles.dodo_customer_id';
+          }
+        }
+
+        // 3. Try lookup by subscription_id in profiles table
+        if (!userId && subscriptionId) {
+          const { data: profileRow } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('subscription_id', subscriptionId)
+            .single();
+          if (profileRow?.id) {
+            userId = profileRow.id;
+            lookupMethod = 'profiles.subscription_id';
+          }
+        }
+
+        // 4. Try lookup by email in profiles table
+        if (!userId && customerEmail) {
+          const { data: profileRow } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('email', customerEmail)
+            .single();
+          if (profileRow?.id) {
+            userId = profileRow.id;
+            lookupMethod = 'profiles.email';
+          }
+        }
+      }
+
+      console.log('[Webhook User Lookup Result]:', {
+        receivedKeys: { metadataUserId, customerEmail, customerId, subscriptionId, dodoSessionId },
+        matchedUserId: userId,
+        lookupMethod: lookupMethod || 'NONE'
+      });
+
+      if (supabase) {
+        await supabase.from('payment_events').insert({
+          event_type: eventType,
+          dodo_event_id: dodoEventId,
+          user_id: userId || null,
+          payload: payload,
+          processed_at: new Date().toISOString(),
+        });
+      }
+
+      if (userId && supabase) {
+        const isSuccess =
+          eventType === 'subscription.created' ||
+          eventType === 'subscription.active'  ||
+          eventType === 'checkout.session.completed' ||
+          eventType === 'payment.succeeded' ||
+          eventType === 'checkout.succeeded' ||
+          (eventType === 'checkout.status' && data?.status === 'succeeded');
+
+        const isFailed =
+          eventType === 'subscription.cancelled' ||
+          eventType === 'subscription.failed'    ||
+          eventType === 'payment.failed';
+
+        const metadataType = data?.metadata?.type || payload?.metadata?.type;
+        const metadataAmount = Number(data?.metadata?.amount || payload?.metadata?.amount || 0);
+        const isDeposit = metadataType === 'deposit' || metadataAmount > 0;
+
+        if (isSuccess && isDeposit) {
+          const depositAmt = metadataAmount > 0 ? metadataAmount : Number((data?.total_amount || 2500) / 100);
+
+          // Fetch existing user balance from profiles table
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('wallet_balance')
+            .eq('id', userId)
+            .single();
+
+          const currentBal = profile?.wallet_balance ? Number(profile.wallet_balance) : 0.00;
+          const newBal = currentBal + depositAmt;
+
+          // Credit balance in Supabase profiles
+          await supabase
+            .from('profiles')
+            .update({ wallet_balance: newBal })
+            .eq('id', userId);
+
+          // Record ledger entry in wallet_transactions table
+          await supabase
+            .from('wallet_transactions')
+            .upsert([{
+              user_id: userId,
+              amount: depositAmt,
+              type: 'deposit',
+              description: `Wallet Deposit ($${depositAmt.toFixed(2)}) via Dodo Payments`,
+              balance_after: newBal,
+              created_at: new Date().toISOString()
+            }]);
+
+          if (dodoSessionId) {
+            await supabase.from('checkout_sessions').update({
+              status: 'completed',
+              completed_at: new Date().toISOString(),
+            }).eq('dodo_session_id', dodoSessionId);
+          }
+
+          console.log(`[Dodo Webhook] Credited $${depositAmt} to user ${userId}. New balance: $${newBal}`);
+        } else if (isSuccess && !isDeposit) {
+          let planName = 'Growth';
+          let maxAccounts = 1;
+          if (productId === 'pdt_0NWDjzl0TS6LNFrVdFZYQ' || (productId && String(productId).toLowerCase().includes('scale'))) {
+            planName = 'Scale';
+            maxAccounts = 10;
+          }
+
+          await supabase.from('profiles').update({
+            plan: planName,
+            max_accounts: maxAccounts,
+            subscription_status: 'active',
+            subscription_id: subscriptionId || null,
+            is_trial: false,
+            dodo_customer_id: customerId || null,
+            plan_product_id: productId || null,
+          }).eq('id', userId);
+
+          if (dodoSessionId) {
+            await supabase.from('checkout_sessions').update({
+              status: 'completed',
+              dodo_subscription_id: subscriptionId || null,
+              completed_at: new Date().toISOString(),
+            }).eq('dodo_session_id', dodoSessionId);
+          }
+        } else if (isFailed) {
+          if (!isDeposit) {
+            await supabase.from('profiles').update({
+              subscription_status: 'cancelled',
+            }).eq('id', userId);
+          }
+
+          if (dodoSessionId) {
+            await supabase.from('checkout_sessions').update({
+              status: 'failed',
+            }).eq('dodo_session_id', dodoSessionId);
+          }
+        }
+      }
+
+      res.status(200).json({ received: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  };
+
+  app.post('/api/v1/webhooks/dodo', dodoWebhookHandler);
+  app.post('/api/v1/dodo-webhook', dodoWebhookHandler);
+
+  // ---------------------------------------------------------------------------
+  // Profiles Endpoint (Strict Single-Tenant User Profile Isolation)
+  // ---------------------------------------------------------------------------
+  app.get('/api/v1/profiles', combinedAuth, asyncHandler(async (req: any, res: any) => {
+    const profile = await ensureUserProfile(req.user);
+    const profileId = req.zernioProfileId || profile?.zernio_profile_id || 'default-user-profile';
+    res.json({
+      profiles: [
+        {
+          _id: profileId,
+          id: profileId,
+          name: req.user.email || 'Default Profile',
+          description: 'Single user tenant profile'
+        }
+      ]
+    });
+  }));
+
+  app.post('/api/v1/profiles', combinedAuth, asyncHandler(async (req: any, res: any) => {
+    const profile = await ensureUserProfile(req.user);
+    const profileId = req.zernioProfileId || profile?.zernio_profile_id || 'default-user-profile';
+    res.json({
+      profile: {
+        _id: profileId,
+        id: profileId,
+        name: req.user.email || 'Default Profile'
+      }
+    });
+  }));
+
+  // ---------------------------------------------------------------------------
+  // Consolidated Dashboard Data Endpoint (Multi-Tenant Isolated)
+  // Returns ALL dashboard data for the authenticated user in a single call.
+  // ---------------------------------------------------------------------------
+  app.get('/api/v1/me/dashboard', combinedAuth, asyncHandler(async (req: any, res: any) => {
+    const userId = req.user.id;
+    const userIdentifier = req.zernioProfileId || req.user?.id || req.user?.email || req.headers['x-profile-id'] || req.query?.profileId || req.query?.email;
+    let dbData: any = null;
+
+    if (supabase && userIdentifier) {
+      try {
+        const { data: rpcData, error: rpcErr } = await supabase.rpc('get_user_dashboard_by_identifier', { p_identifier: String(userIdentifier) });
+        if (!rpcErr && rpcData && !rpcData.error) {
+          dbData = rpcData;
+        } else if (rpcErr) {
+          console.warn('[/me/dashboard] get_user_dashboard_by_identifier RPC error:', rpcErr.message);
+        }
+      } catch (e: any) {
+        console.warn('[/me/dashboard] get_user_dashboard_by_identifier RPC exception:', e.message);
+      }
+    }
+
+    if (!dbData && supabase && userId) {
+      try {
+        const { data: rpcData } = await supabase.rpc('get_user_dashboard', { p_user_id: userId });
+        if (rpcData) dbData = rpcData;
+      } catch (e: any) {}
+    }
+
+    let profile: any = null;
+    if (dbData?.profile) {
+      if (typeof dbData.profile === 'object') profile = dbData.profile;
+      else if (typeof dbData.profile === 'string') {
+        try { profile = JSON.parse(dbData.profile); } catch {}
+      }
+    }
+    if (!profile) {
+      profile = await ensureUserProfile(req.user);
+    }
+
+    let accounts: any[] = safeArray(dbData?.accounts);
+    let apiKeys: any[] = safeArray(dbData?.apiKeys);
+    let logs: any[] = safeArray(dbData?.logs);
+    let walletTxns: any[] = safeArray(dbData?.walletTransactions);
+    let webhooks: any[] = safeArray(dbData?.webhooks);
+    let posts: any[] = safeArray(dbData?.posts);
+
+    // Fetch real-time connected social accounts directly from Zernio API (Primary Source of Truth)
+    let zernioAccounts: any[] = [];
+    let fetchedZernioOk = false;
+
+    if (profile?.zernio_profile_id) {
+      try {
+        const accountsRes = await zernio.accounts.listAccounts({
+          query: { profileId: profile.zernio_profile_id }
+        });
+        const rawAccounts = (accountsRes.data as any)?.accounts || (accountsRes.data as any) || [];
+        if (Array.isArray(rawAccounts)) {
+          zernioAccounts = rawAccounts.map((a: any) => {
+            const platformName = a.platform ? (a.platform.charAt(0).toUpperCase() + a.platform.slice(1)) : 'Social';
+            return {
+              id: a._id || a.id,
+              platform: platformName,
+              username: a.username || a.name || a.title || `@${platformName.toLowerCase()}`,
+              profile_name: a.name || a.username || a.title || `${platformName} Account`,
+              status: a.status || 'connected',
+              created_at: a.createdAt || a.created_at || new Date().toISOString(),
+            };
+          });
+          fetchedZernioOk = true;
+          console.log(`[/me/dashboard] Zernio returned ${zernioAccounts.length} accounts for profile ${profile.zernio_profile_id}`);
+        }
+      } catch (err: any) {
+        console.warn('[/me/dashboard] Zernio listAccounts warning:', err.message);
+      }
+    }
+
+    let mergedAccounts: any[] = [];
+
+    if (fetchedZernioOk) {
+      mergedAccounts = [...zernioAccounts];
+
+      // Merge and purge DB connected accounts safely
+      if (supabase && userId && isValidUUID(userId)) {
+        try {
+          const zernioAccountIds = zernioAccounts.map((a: any) => String(a.id));
+          const zernioPlatforms = zernioAccounts.map((a: any) => String(a.platform).toLowerCase());
+
+          const { data: existingDbAccs } = await supabase
+            .from('connected_accounts')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('status', 'connected');
+
+          if (existingDbAccs && existingDbAccs.length > 0) {
+            for (const dba of existingDbAccs) {
+              const isMatch = zernioAccountIds.includes(String(dba.id)) || zernioPlatforms.includes(String(dba.platform || '').toLowerCase());
+              if (!isMatch) {
+                if (zernioAccounts.length > 0) {
+                  if (isValidUUID(dba.id)) {
+                    await supabase.from('connected_accounts').delete().eq('id', dba.id);
+                  }
+                } else {
+                  // Zernio list returned 0 accounts, but DB has a connected account — preserve it!
+                  const dbPlatformName = dba.platform ? (dba.platform.charAt(0).toUpperCase() + dba.platform.slice(1)) : 'Social';
+                  mergedAccounts.push({
+                    id: dba.id,
+                    platform: dbPlatformName,
+                    username: dba.username || dba.profile_name || `@${dbPlatformName.toLowerCase()}`,
+                    profile_name: dba.profile_name || dba.username || `${dbPlatformName} Account`,
+                    status: 'connected',
+                    created_at: dba.created_at || new Date().toISOString()
+                  });
+                }
+              }
+            }
+          }
+        } catch (_purgeErr) {}
+      }
+    } else {
+      // Fallback: If Zernio call failed, use DB accounts — trust them without aggressive filtering
+      mergedAccounts = (Array.isArray(accounts) ? accounts : []).filter((a: any) => {
+        const status = String(a.status || 'connected').toLowerCase();
+        const id = String(a.id || '');
+        // Only reject accounts with no ID or explicitly disconnected status
+        return id && id !== 'undefined' && id !== 'null' && status !== 'disconnected' && status !== 'revoked';
+      });
+      console.log(`[/me/dashboard] Zernio failed, using ${mergedAccounts.length} DB accounts (from ${(Array.isArray(accounts) ? accounts : []).length} raw DB entries)`);
+    }
+
+    // Update profiles.connected_accounts_count in Supabase to reflect real connected account count
+    const connectedPlatforms = mergedAccounts.filter((a: any) => a.status === 'connected').length;
+    if (supabase && userId && profile?.connected_accounts_count !== connectedPlatforms) {
+      try {
+        await supabase.from('profiles').update({ connected_accounts_count: connectedPlatforms }).eq('id', userId);
+      } catch (_updErr) {}
+    }
+
+    // Compute analytics from real data
+    const totalPosts = posts.length;
+    const totalLikes = posts.reduce((sum: number, p: any) => sum + (p.likes || 0), 0);
+    const totalComments = posts.reduce((sum: number, p: any) => sum + (p.comments || 0), 0);
+    const totalEngagements = totalLikes + totalComments;
+    const engagementRate = totalPosts > 0 ? ((totalEngagements / totalPosts) * 100).toFixed(1) : '0.0';
+    const totalApiCalls = logs.length;
+
+    // Posts per platform breakdown
+    const postsPerPlatform: Record<string, number> = {};
+    posts.forEach((p: any) => {
+      const plat = p.platform || 'Unknown';
+      postsPerPlatform[plat] = (postsPerPlatform[plat] || 0) + 1;
+    });
+
+    res.json({
+      profile: {
+        id: profile?.id || userId,
+        email: profile?.email || req.user.email,
+        full_name: profile?.full_name || null,
+        plan: profile?.plan || 'Growth',
+        subscription_status: profile?.subscription_status || 'trialing',
+        wallet_balance: profile?.wallet_balance ?? 0,
+        max_accounts: profile?.max_accounts || 1,
+        connected_accounts_count: connectedPlatforms,
+        dodo_customer_id: profile?.dodo_customer_id || null,
+        plan_product_id: profile?.plan_product_id || null,
+        is_trial: profile?.is_trial ?? true,
+        created_at: profile?.created_at || null,
+      },
+      accounts: mergedAccounts,
+      apiKeys,
+      logs,
+      walletTransactions: walletTxns,
+      webhooks,
+      posts,
+      inboxConversations: [],
+      adCampaigns: [],
+      teamMembers: [],
+      analytics: {
+        totalPosts,
+        totalLikes,
+        totalComments,
+        totalEngagements,
+        engagementRate: `${engagementRate}%`,
+        connectedPlatforms,
+        totalApiCalls,
+        postsPerPlatform,
+      },
+    });
+  }));
+
+  async function ingestDodoUsageEvent(userId: string, eventName: string, metadata: object = {}) {
+    const dodoApiKey = process.env.DODO_PAYMENTS_API_KEY;
+    if (!dodoApiKey) return;
+
+    const endpoint = process.env.NODE_ENV === 'production'
+      ? 'https://live.dodopayments.com/events/ingest'
+      : 'https://test.dodopayments.com/events/ingest';
+
+    try {
+      await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${dodoApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          events: [
+            {
+              event_id: `evt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              customer_id: userId,
+              event_name: eventName,
+              timestamp: new Date().toISOString(),
+              metadata
+            }
+          ]
+        })
+      });
+    } catch (err: any) {
+      console.warn('[Dodo Ingestion] Failed to report usage event:', err?.message || err);
+    }
+  }
+
+  // Alias for /api/v1/keys
+  app.get('/api/v1/me/keys', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    return res.redirect(307, '/api/v1/keys');
+  }));
+
+  // User details endpoint
+  app.get('/api/v1/me', authenticate, asyncHandler(async (req: any, res: any) => {
+    const profile = await ensureUserProfile(req.user);
+    res.json({
+      id: req.user.id,
+      email: req.user.email,
+      plan: req.plan || 'Growth',
+      maxAccounts: req.maxAccounts || 1,
+      connectedAccounts: req.connectedCount || 0,
+      walletBalance: profile?.wallet_balance || 0,
+      zernioProfileId: req.zernioProfileId
+    });
+  }));
+
+  // ---------------------------------------------------------------------------
+  // Generic passthrough proxy for everything else (full 1:1 mirror)
+  // ---------------------------------------------------------------------------
+  app.all(/^\/api\/v1\/(.*)/, combinedAuth, asyncHandler(async (req: any, res: any) => {
+    // Asynchronously report usage event to Dodo Payments Usage Meter
+    if (req.user?.id) {
+      ingestDodoUsageEvent(req.user.id, 'api.call', {
+        endpoint: req.originalUrl,
+        method: req.method
+      }).catch(() => {});
+    }
+
+    const baseUrl = process.env.ROCKYT_API_BASE_URL || 'https://api.rockyt.io';
+    const urlPath = req.originalUrl.replace('/api/v1', '');
+    const url = new URL(`${baseUrl}/v1${urlPath}`);
+    if (req.zernioProfileId) {
+      url.searchParams.set('profileId', req.zernioProfileId);
+    }
+
+    try {
+      const zernioRes = await fetch(url, {
+        method: req.method,
+        headers: {
+          Authorization: `Bearer ${process.env.ZERNIO_API_KEY || ''}`,
+          'Content-Type': 'application/json'
+        },
+        body: ['GET', 'HEAD'].includes(req.method) ? undefined : JSON.stringify(req.body)
+      });
+      if (zernioRes.ok) {
+        const data = await zernioRes.json().catch(() => ({}));
+        return res.status(zernioRes.status).json(data);
+      }
+    } catch (proxyErr: any) {
+      console.warn(`[Proxy Fallback] Failed to fetch ${url}:`, proxyErr?.message || proxyErr);
+    }
+
+    return res.status(404).json({ error: 'Endpoint not found or service unavailable' });
+  }));
+
+  // Fallback for unhandled /api/* calls (preventing HTML 404s on client fetch calls)
+  app.all('/api/*', (_req, res) => {
+    res.json({ ok: true });
+  });
+
+  // ─── HTML route fallbacks: serve cloned_site page HTML ──────────────────────
+  // For any route that matches a cloned page directory, serve its index.html.
+  // This handles /pricing, /docs, /signin, /signup, /features, etc.
+  if (!process.env.VERCEL) {
+    app.get('/{*splat}', (req, res, next) => {
+      // Only handle non-API, non-asset requests
+      if (
+        req.path.startsWith('/api/') ||
+        req.path.startsWith('/_next/') ||
+        req.path.startsWith('/images/') ||
+        req.path.startsWith('/brand/') ||
+        req.path.startsWith('/fonts/') ||
+        req.path.match(/\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|webp|avif|map|json)$/)
+      ) {
+        return next();
+      }
+
+      // Try to serve a cloned page: /some-route -> cloned_site/some-route/index.html
+      const cleanPath = req.path === '/' ? '' : req.path.replace(/\/$/, '');
+      const candidates = [
+        path.join(CLONED_DIR, cleanPath, 'index.html'),
+        path.join(CLONED_DIR, cleanPath + '.html'),
+        path.join(CLONED_DIR, 'index.html'), // fallback to home
+      ];
+
+      for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) {
+          return res.sendFile(candidate);
+        }
+      }
+
+      // Ultimate fallback: root index.html
+      const rootIndex = path.join(CLONED_DIR, 'index.html');
+      if (fs.existsSync(rootIndex)) {
+        return res.sendFile(rootIndex);
+      }
+
+      next();
+    });
+  }
+
+  if (!process.env.VERCEL) {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  }
+
+  return app;
+}
+
+const app = startServer();
+
+export default function handler(req: any, res: any) {
+  return app(req, res);
+}

@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1920, height=1080, initial-scale=1.0">
+  <title>Zernio — Introducing Claude For Marketing</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=Inter:wght@400;600;700&family=Oswald:wght@500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #050505;
+      --paper: #121215;
+      --ink: #FFFFFF;
+      --brand: #D35D88;
+      --brand-glow: rgba(211, 93, 136, 0.4);
+      --emerald: #10B981;
+      --cyan: #38BDF8;
+      --yellow: #FBBF24;
+      --border: rgba(255, 255, 255, 0.18);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      background-color: var(--bg);
+      color: var(--ink);
+      font-family: 'Inter', sans-serif;
+      -webkit-font-smoothing: antialiased;
+      perspective: 1200px;
+    }
+
+    /* CANVAS 3D BACKGROUND DYNAMICS */
+    .bg-canvas {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      background: radial-gradient(circle at 50% 40%, #1c0b15 0%, #050505 85%);
+    }
+
+    .grid-3d {
+      position: absolute;
+      inset: -50%;
+      z-index: 2;
+      opacity: 0.2;
+      background-image: 
+        linear-gradient(to right, rgba(211, 93, 136, 0.4) 1.5px, transparent 1.5px),
+        linear-gradient(to bottom, rgba(211, 93, 136, 0.4) 1.5px, transparent 1.5px);
+      background-size: 80px 80px;
+      transform: rotateX(65deg) translateZ(-100px);
+      animation: gridTunnel 24s linear infinite;
+    }
+
+    @keyframes gridTunnel {
+      0% { background-position: 0 0; }
+      100% { background-position: 0 800px; }
+    }
+
+    /* 3D FLOATING PARTICLES & ORBS */
+    .orb-3d {
+      position: absolute;
+      border-radius: 50%;
+      z-index: 3;
+      filter: blur(50px);
+      pointer-events: none;
+    }
+
+    .orb-1 {
+      width: 700px;
+      height: 700px;
+      top: -150px;
+      right: -150px;
+      background: radial-gradient(circle, rgba(211, 93, 136, 0.35) 0%, transparent 70%);
+      animation: orbFloat1 8s ease-in-out infinite alternate;
+    }
+
+    .orb-2 {
+      width: 650px;
+      height: 650px;
+      bottom: -150px;
+      left: -150px;
+      background: radial-gradient(circle, rgba(56, 189, 248, 0.25) 0%, transparent 70%);
+      animation: orbFloat2 10s ease-in-out infinite alternate;
+    }
+
+    @keyframes orbFloat1 {
+      0% { transform: translateY(0px) rotate(0deg); }
+      100% { transform: translateY(40px) rotate(15deg); }
+    }
+
+    @keyframes orbFloat2 {
+      0% { transform: translateY(0px) rotate(0deg); }
+      100% { transform: translateY(-40px) rotate(-15deg); }
+    }
+
+    /* VIEWPORT CONTAINER */
+    .viewport {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      transform-style: preserve-3d;
+    }
+
+    /* SCENES SYSTEM WITH TIMED KEYFRAME ANIMATIONS */
+    .scene {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 60px;
+      opacity: 0;
+      transform-style: preserve-3d;
+    }
+
+    /* ==========================================================================
+       SCENE 1: HOOK — INTRODUCING CLAUDE FOR MARKETING (0s - 5s)
+       ========================================================================== */
+    #scene-1 {
+      animation: scene1Anim 5s 0s forwards;
+    }
+
+    @keyframes scene1Anim {
+      0% { opacity: 0; transform: translateZ(-200px) rotateX(15deg); }
+      8% { opacity: 1; transform: translateZ(0px) rotateX(0deg); }
+      85% { opacity: 1; transform: translateZ(0px) rotateX(0deg); }
+      100% { opacity: 0; transform: translateZ(300px) rotateY(-10deg); }
+    }
+
+    .badge-3d {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      background: rgba(211, 93, 136, 0.25);
+      border: 1.5px solid var(--brand);
+      color: #FFFFFF;
+      padding: 12px 30px;
+      border-radius: 6px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 3px;
+      margin-bottom: 24px;
+      text-transform: uppercase;
+      box-shadow: 0 0 30px var(--brand-glow);
+    }
+
+    .title-3d {
+      font-family: 'Oswald', sans-serif;
+      font-size: 96px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 3px;
+      text-align: center;
+      line-height: 1.05;
+      margin-bottom: 20px;
+      color: #FFFFFF;
+      text-shadow: 0 10px 40px rgba(0, 0, 0, 0.8), 0 0 30px rgba(211, 93, 136, 0.5);
+    }
+
+    .title-3d span {
+      color: var(--brand);
+      background: linear-gradient(135deg, #FF8DAA 0%, #D35D88 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .subtitle-3d {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 22px;
+      color: rgba(255, 255, 255, 0.85);
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-bottom: 36px;
+    }
+
+    .terminal-3d {
+      width: 1100px;
+      background: #090a0d;
+      border: 2px solid var(--brand);
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.9), 0 0 40px var(--brand-glow);
+      transform: rotateX(10deg) rotateY(-5deg) translateZ(50px);
+      overflow: hidden;
+    }
+
+    .terminal-head {
+      background: #14151c;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .terminal-dots { display: flex; gap: 10px; }
+    .dot { width: 14px; height: 14px; border-radius: 50%; }
+    .dot-r { background: #EF4444; }
+    .dot-y { background: #F59E0B; }
+    .dot-g { background: #10B981; }
+
+    .terminal-title {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 15px;
+      color: rgba(255, 255, 255, 0.75);
+      font-weight: 600;
+    }
+
+    .terminal-code {
+      padding: 30px 36px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 22px;
+      line-height: 1.6;
+      color: #FFFFFF;
+    }
+
+    /* ==========================================================================
+       SCENE 2: VALUE OF API & MCP SERVER (5s - 10.5s)
+       ========================================================================== */
+    #scene-2 {
+      animation: scene2Anim 5.5s 5s forwards;
+    }
+
+    @keyframes scene2Anim {
+      0% { opacity: 0; transform: rotateY(30deg) translateZ(-150px); }
+      8% { opacity: 1; transform: rotateY(0deg) translateZ(0px); }
+      88% { opacity: 1; transform: rotateY(0deg) translateZ(0px); }
+      100% { opacity: 0; transform: rotateY(-30deg) translateZ(-150px); }
+    }
+
+    .sec-tag {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 20px;
+      color: var(--brand);
+      font-weight: 700;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+
+    .sec-heading {
+      font-family: 'Oswald', sans-serif;
+      font-size: 68px;
+      font-weight: 700;
+      text-transform: uppercase;
+      margin-bottom: 40px;
+      color: #FFFFFF;
+      text-align: center;
+    }
+
+    .value-cards-container {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 40px;
+      width: 1450px;
+    }
+
+    .v-card-bad {
+      background: rgba(18, 10, 12, 0.9);
+      border: 2px solid #EF4444;
+      border-radius: 12px;
+      padding: 40px;
+      box-shadow: 0 15px 40px rgba(239, 68, 68, 0.25);
+      transform: rotateY(6deg);
+    }
+
+    .v-card-good {
+      background: rgba(10, 18, 15, 0.9);
+      border: 2px solid var(--emerald);
+      border-radius: 12px;
+      padding: 40px;
+      box-shadow: 0 15px 40px rgba(16, 185, 129, 0.3);
+      transform: rotateY(-6deg);
+    }
+
+    .v-card-header {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      padding: 8px 16px;
+      border-radius: 4px;
+      display: inline-block;
+      margin-bottom: 24px;
+    }
+
+    .bad-badge { background: rgba(239, 68, 68, 0.2); color: #FCA5A5; border: 1px solid #EF4444; }
+    .good-badge { background: rgba(16, 185, 129, 0.2); color: #6EE7B7; border: 1px solid var(--emerald); }
+
+    .v-list {
+      list-style: none;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 20px;
+      line-height: 2;
+    }
+
+    .v-list li {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      color: rgba(255, 255, 255, 0.9);
+    }
+
+    /* ==========================================================================
+       SCENE 3: REAL-WORLD AGENT USE CASES (10.5s - 16.5s)
+       ========================================================================== */
+    #scene-3 {
+      animation: scene3Anim 6s 10.5s forwards;
+    }
+
+    @keyframes scene3Anim {
+      0% { opacity: 0; transform: translateY(50px) rotateX(-15deg); }
+      8% { opacity: 1; transform: translateY(0px) rotateX(0deg); }
+      88% { opacity: 1; transform: translateY(0px) rotateX(0deg); }
+      100% { opacity: 0; transform: translateY(-50px) rotateX(15deg); }
+    }
+
+    .usecase-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 36px;
+      width: 1550px;
+    }
+
+    .uc-card {
+      background: rgba(18, 18, 23, 0.92);
+      border: 2px solid var(--border);
+      border-radius: 12px;
+      padding: 36px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8);
+      transform-style: preserve-3d;
+      transition: all 0.4s ease;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .uc-card:hover {
+      border-color: var(--brand);
+      box-shadow: 0 0 40px var(--brand-glow);
+    }
+
+    .uc-icon {
+      font-size: 48px;
+      margin-bottom: 20px;
+    }
+
+    .uc-title {
+      font-family: 'Oswald', sans-serif;
+      font-size: 32px;
+      font-weight: 700;
+      color: #FFFFFF;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 12px;
+    }
+
+    .uc-desc {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 16px;
+      color: rgba(255, 255, 255, 0.75);
+      line-height: 1.6;
+      margin-bottom: 24px;
+    }
+
+    .uc-tag {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--brand);
+      background: rgba(211, 93, 136, 0.15);
+      border: 1px solid var(--brand);
+      padding: 8px 14px;
+      border-radius: 4px;
+      display: inline-block;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+    }
+
+    /* ==========================================================================
+       SCENE 4: 16 PLATFORMS & LIVE SCALE (16.5s - 20.5s)
+       ========================================================================== */
+    #scene-4 {
+      animation: scene4Anim 4s 16.5s forwards;
+    }
+
+    @keyframes scene4Anim {
+      0% { opacity: 0; transform: scale(0.92); }
+      12% { opacity: 1; transform: scale(1); }
+      88% { opacity: 1; transform: scale(1); }
+      100% { opacity: 0; transform: scale(1.08); }
+    }
+
+    .scale-box {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 40px;
+      width: 1450px;
+    }
+
+    .platforms-mini-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+    }
+
+    .mini-card {
+      background: rgba(18, 18, 23, 0.88);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .mini-name {
+      font-family: 'Oswald', sans-serif;
+      font-size: 18px;
+      font-weight: 700;
+      color: #FFFFFF;
+    }
+
+    .counter-box {
+      background: rgba(10, 18, 15, 0.92);
+      border: 2px solid var(--emerald);
+      border-radius: 12px;
+      padding: 40px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      box-shadow: 0 0 50px rgba(16, 185, 129, 0.25);
+    }
+
+    .c-label {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 16px;
+      color: rgba(255, 255, 255, 0.7);
+      letter-spacing: 2px;
+      margin-bottom: 10px;
+    }
+
+    .c-num {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 64px;
+      font-weight: 700;
+      color: #FFFFFF;
+    }
+
+    .c-sub {
+      font-family: 'Inter', sans-serif;
+      font-size: 18px;
+      color: var(--emerald);
+      margin-top: 10px;
+      font-weight: 600;
+    }
+
+    /* ==========================================================================
+       SCENE 5: OUTRO & CTA (20.5s - 24s)
+       ========================================================================== */
+    #scene-5 {
+      animation: scene5Anim 3.5s 20.5s forwards;
+    }
+
+    @keyframes scene5Anim {
+      0% { opacity: 0; transform: translateZ(-250px) rotateX(20deg); }
+      15% { opacity: 1; transform: translateZ(0px) rotateX(0deg); }
+      100% { opacity: 1; transform: translateZ(0px) rotateX(0deg); }
+    }
+
+    .outro-container {
+      text-align: center;
+    }
+
+    .logo-3d-text {
+      font-family: 'Oswald', sans-serif;
+      font-size: 120px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 8px;
+      color: #FFFFFF;
+      text-shadow: 0 0 60px rgba(211, 93, 136, 0.8), 0 10px 40px rgba(0, 0, 0, 0.9);
+      margin-bottom: 10px;
+    }
+
+    .logo-3d-text span { color: var(--brand); }
+
+    .outro-sub {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 26px;
+      color: rgba(255, 255, 255, 0.9);
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      margin-bottom: 40px;
+    }
+
+    .cta-btn-3d {
+      display: inline-flex;
+      align-items: center;
+      gap: 16px;
+      background: var(--brand);
+      color: #FFFFFF;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 26px;
+      font-weight: 700;
+      padding: 22px 54px;
+      border-radius: 8px;
+      box-shadow: 0 0 50px rgba(211, 93, 136, 0.7);
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      transform: translateZ(30px);
+    }
+  </style>
+</head>
+<body id="zernio-brag" data-composition-id="zernio-brag" data-width="1920" data-height="1080" data-start="0" data-duration="24" class="clip">
+
+  <!-- 3D BACKGROUND CANVAS -->
+  <div class="bg-canvas"></div>
+  <div class="grid-3d"></div>
+  <div class="orb-3d orb-1"></div>
+  <div class="orb-3d orb-2"></div>
+
+  <!-- AUDIO TRACK -->
+  <audio src="assets/music/track.mp3" id="bg-music" data-start="0" data-volume="0.4"></audio>
+
+  <!-- VIEWPORT CONTAINER -->
+  <div id="main-viewport" class="viewport">
+
+    <!-- ==========================================================================
+         SCENE 1: HOOK — INTRODUCING CLAUDE FOR MARKETING (0s - 5s)
+         ========================================================================== -->
+    <div class="scene" id="scene-1">
+      <div class="badge-3d">
+        <span style="width: 10px; height: 10px; border-radius: 50%; background: var(--brand); display: inline-block;"></span>
+        NEW AGENT CAPABILITY RELEASE
+      </div>
+
+      <h1 class="title-3d">
+        INTRODUCING <span>CLAUDE FOR MARKETING</span>
+      </h1>
+
+      <div class="subtitle-3d">
+        POWERED BY ZERNIO UNIFIED REST API &amp; MCP SERVER
+      </div>
+
+      <div class="terminal-3d">
+        <div class="terminal-head">
+          <div class="terminal-dots">
+            <div class="dot dot-r"></div>
+            <div class="dot dot-y"></div>
+            <div class="dot dot-g"></div>
+          </div>
+          <div class="terminal-title">claude_mcp_dispatch.json</div>
+        </div>
+        <div class="terminal-code">
+          <span style="color: var(--brand); font-weight: bold;">$</span> zernio_post_content --platforms <span style="color: var(--yellow);">["x", "instagram", "whatsapp", "tiktok"]</span> \<br>
+          &nbsp;&nbsp;--content <span style="color: #A7F3D0;">"Autonomous AI Marketing Campaign online!"</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==========================================================================
+         SCENE 2: VALUE PROPOSITION — WHY ZERNIO API & MCP (5s - 10.5s)
+         ========================================================================== -->
+    <div class="scene" id="scene-2">
+      <div class="sec-tag">// UNIFIED INFRASTRUCTURE</div>
+      <h2 class="sec-heading">WHY BUILD WITH <span style="color: var(--brand);">ZERNIO API &amp; MCP</span></h2>
+
+      <div class="value-cards-container">
+        <!-- BAD WAY -->
+        <div class="v-card-bad">
+          <div class="v-card-header bad-badge">❌ WITHOUT ZERNIO</div>
+          <ul class="v-list">
+            <li><span>❌</span> 16 separate developer app review portals</li>
+            <li><span>❌</span> Weeks of OAuth 2.0 PKCE state management</li>
+            <li><span>❌</span> Fragmented webhooks &amp; strict rate limit blocks</li>
+            <li><span>❌</span> Custom API integrations for every platform</li>
+          </ul>
+        </div>
+
+        <!-- GOOD WAY -->
+        <div class="v-card-good">
+          <div class="v-card-header good-badge">✅ WITH ZERNIO API &amp; MCP</div>
+          <ul class="v-list">
+            <li><span>✅</span> 1 Unified API Key for all 16 platforms</li>
+            <li><span>✅</span> Pre-approved Meta &amp; X Partner App pipelines</li>
+            <li><span>✅</span> Direct Claude MCP tool calls (`zernio_post_content`)</li>
+            <li><span>✅</span> Live in 30 seconds with zero dev app reviews</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==========================================================================
+         SCENE 3: REAL-WORLD AGENT USE CASES (10.5s - 16.5s)
+         ========================================================================== -->
+    <div class="scene" id="scene-3">
+      <div class="sec-tag">// PRODUCTION ARCHITECTURES</div>
+      <h2 class="sec-heading">REAL-WORLD <span style="color: var(--brand);">AGENT USE CASES</span></h2>
+
+      <div class="usecase-grid">
+        <!-- USE CASE 1 -->
+        <div class="uc-card">
+          <div>
+            <div class="uc-icon">📰</div>
+            <div class="uc-title">AI NEWSBOT</div>
+            <div class="uc-desc">
+              Agent monitors RSS feeds &amp; news APIs, summarizes key points, and tweets multi-post threads on X autonomously.
+            </div>
+          </div>
+          <div class="uc-tag">TWITTER / X THREADS</div>
+        </div>
+
+        <!-- USE CASE 2 -->
+        <div class="uc-card">
+          <div>
+            <div class="uc-icon">📥</div>
+            <div class="uc-title">COMMENT-TO-DM FUNNEL</div>
+            <div class="uc-desc">
+              Auto-detects comments on Instagram Reels and delivers direct WhatsApp DMs with custom lead download links.
+            </div>
+          </div>
+          <div class="uc-tag">INSTAGRAM &amp; WHATSAPP</div>
+        </div>
+
+        <!-- USE CASE 3 -->
+        <div class="uc-card">
+          <div>
+            <div class="uc-icon">🚀</div>
+            <div class="uc-title">PROGRAMMATIC AD ENGINE</div>
+            <div class="uc-desc">
+              AI agent creates, bids, and optimizes Meta Ads &amp; Google Ads campaigns via REST API endpoints.
+            </div>
+          </div>
+          <div class="uc-tag">META ADS &amp; GOOGLE ADS</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==========================================================================
+         SCENE 4: 16 PLATFORMS & LIVE SCALE (16.5s - 20.5s)
+         ========================================================================== -->
+    <div class="scene" id="scene-4">
+      <div class="sec-tag">// SUPPORTED CHANNELS &amp; SCALE</div>
+      <h2 class="sec-heading">ONE API KEY. <span style="color: var(--brand);">16 PLATFORMS.</span></h2>
+
+      <div class="scale-box">
+        <!-- MINI PLATFORMS GRID -->
+        <div class="platforms-mini-grid">
+          <div class="mini-card">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="#FFFFFF"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+            <div class="mini-name">X / TWITTER</div>
+          </div>
+          <div class="mini-card">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#EC4899" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>
+            <div class="mini-name">INSTAGRAM</div>
+          </div>
+          <div class="mini-card">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="#34D399"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.67-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.119.553 4.11 1.519 5.84L0 24l6.328-1.503C8.01 23.447 9.957 24 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 22c-1.802 0-3.551-.476-5.09-1.378l-.365-.213-3.757.892.909-3.663-.236-.375C2.49 15.706 2 13.9 2 12 2 6.486 6.486 2 12 2s10 4.486 10 10-4.486 10-10 10z"/></svg>
+            <div class="mini-name">WHATSAPP</div>
+          </div>
+          <div class="mini-card">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="#22D3EE"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z"/></svg>
+            <div class="mini-name">TIKTOK</div>
+          </div>
+          <div class="mini-card">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="#60A5FA"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452z"/></svg>
+            <div class="mini-name">LINKEDIN</div>
+          </div>
+          <div class="mini-card">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="#38BDF8"><path d="M12 0C5.37 0 0 5.37 0 12s5.37 12 12 12 12-5.37 12-12S18.63 0 12 0zm5.56 8.16l-2.05 9.67c-.15.68-.56.84-1.13.53l-3.14-2.31-1.52 1.46c-.17.17-.31.31-.63.31l.23-3.23 5.87-5.3c.25-.23-.06-.35-.4-.13l-7.26 4.57-3.13-.98c-.68-.21-.69-.68.14-1l12.24-4.72c.57-.21 1.07.13.88.93z"/></svg>
+            <div class="mini-name">TELEGRAM</div>
+          </div>
+          <div class="mini-card">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="#818CF8"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>
+            <div class="mini-name">DISCORD</div>
+          </div>
+          <div class="mini-card">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="#3B82F6"><path d="M6.915 4.03c-1.968 0-3.683 1.28-4.871 3.113C.704 9.208 0 11.883 0 14.449c0 .706.07 1.369.21 1.973a6.624 6.624 0 0 0 .265.86 5.297 5.297 0 0 0 .371.761c.696 1.159 1.818 1.927 3.593 1.927 1.497 0 2.633-.671 3.965-2.444.76-1.012 1.144-1.626 2.663-4.32l.756-1.339.186-.325c.061.1.121.196.183.3l2.152 3.595c.724 1.21 1.665 2.556 2.47 3.314 1.046.987 1.992 1.22 3.06 1.22 1.075 0 1.876-.355 2.455-.843a3.743 3.743 0 0 0 .81-.973c.542-.939.861-2.127.861-3.745 0-2.72-.681-5.357-2.084-7.45-1.282-1.912-2.957-2.93-4.716-2.93-1.047 0-2.088.467-3.053 1.308-.652.57-1.257 1.29-1.82 2.05-.69-.875-1.335-1.547-1.958-2.056-1.182-.966-2.315-1.303-3.454-1.303z"/></svg>
+            <div class="mini-name">META ADS</div>
+          </div>
+        </div>
+
+        <!-- COUNTER CARD -->
+        <div class="counter-box">
+          <div class="c-label">LIVE DISPATCHES THIS WEEK</div>
+          <div class="c-num">386,965+</div>
+          <div class="c-sub">● ACTIVE AGENTS DISPATCHING NOW</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==========================================================================
+         SCENE 5: OUTRO & CTA (20.5s - 24s)
+         ========================================================================== -->
+    <div class="scene" id="scene-5">
+      <div class="outro-container">
+        <div class="logo-3d-text">ZERN<span>IO</span></div>
+        <div class="outro-sub">SUPERCHARGE CLAUDE FOR MARKETING</div>
+        <div class="cta-btn-3d">
+          GET FREE API KEY &amp; MCP DOCS AT ZERNIO.COM
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    window.__timelines = window.__timelines || {};
+    window.__timelines["zernio-brag"] = {
+      duration: 24,
+      fps: 30
+    };
+  </script>
+</body>
+</html>

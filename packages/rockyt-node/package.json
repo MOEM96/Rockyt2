@@ -1,0 +1,28 @@
+{
+  "name": "@rockyt/node",
+  "version": "1.0.0",
+  "description": "Official Rockyt Node.js & TypeScript SDK for Unified Social Media, Messaging, and Ads API",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc"
+  },
+  "keywords": [
+    "rockyt",
+    "social media api",
+    "messaging api",
+    "unified api",
+    "whatsapp api",
+    "instagram api",
+    "tiktok api",
+    "mcp",
+    "ai agents"
+  ],
+  "author": "Rockyt Team",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.2.2"
+  }
+}
