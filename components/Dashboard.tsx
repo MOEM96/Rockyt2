@@ -106,8 +106,22 @@ interface AnalyticsData {
   avgCtr: string;
   avgCpc: string;
   avgRoas: string;
+  cpa?: string;
+  totalReach?: number;
   totalAttributedRevenue: number;
-  byPlatform: Record<string, { spend: number; revenue: number; roas: number; conversions: number }>;
+  byPlatform: Record<string, { spend: number; revenue: number; roas: number; conversions: number; impressions?: number; clicks?: number }>;
+  demographics?: {
+    age?: Array<{ age: string; pct: number; spend: string; conv: number; impressions?: number; clicks?: number; reach?: number; ctr?: string; cpc?: string }>;
+    gender?: Array<{ gender: string; pct: number; spend: string; conv: number; roas: string; impressions?: number; clicks?: number }>;
+  };
+  placements?: {
+    devices?: Array<{ device: string; pct: number; spend: string; conv: number }>;
+    publishers?: Array<{ pub: string; pct: number; spend: string; conv: number; ctr?: string; impressions?: number; clicks?: number }>;
+  };
+  geography?: {
+    countries?: Array<{ country: string; spend: string; conv: number; roas: string; reach?: number; clicks?: number }>;
+  };
+  campaignBreakdown?: any[];
 }
 
 const allConnectPlatforms = [
@@ -276,10 +290,11 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
         if (data.backfillPending) {
           setImportStatusMsg(`⏳ ${data.message} Note: Ad platform is backfilling deep history in background (HTTP 202).`);
         } else {
-          setImportStatusMsg(`✅ ${data.message || `Successfully imported ${data.importedCount} historical campaigns!`}`);
+          setImportStatusMsg(`✅ ${data.message || `Successfully imported ${data.importedCount || data.campaigns.length} historical campaigns!`}`);
         }
         setIsCacheHit(false);
         await fetchAdsData(true);
+        await fetchAnalyticsData();
       } else {
         setImportStatusMsg(`❌ Import notice: ${data.error || 'No historical campaigns returned.'}`);
       }
@@ -735,12 +750,21 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
   const fetchAnalyticsData = async () => {
     try {
       const headers = await getAuthHeaders();
-      const res = await fetch('/api/v1/analytics', { headers });
+      const params = new URLSearchParams({
+        range: datePreset,
+        startDate: customFromDate,
+        endDate: customToDate,
+        platform: selectedAnalyticsPlatform,
+        status: selectedAnalyticsStatus
+      });
+      const res = await fetch(`/api/v1/ads/analytics?${params.toString()}`, { headers });
       if (res.ok) {
         const data = await safeFetchJson(res);
         if (data.analytics) setAnalyticsData(data.analytics);
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn('[Dashboard] fetchAnalyticsData error:', e);
+    }
   };
 
   const fetchInboxData = async () => {
@@ -754,15 +778,26 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     } catch (e) {}
   };
 
-  const fetchAdsData = async () => {
+  const fetchAdsData = async (force: boolean = false) => {
     try {
       const headers = await getAuthHeaders();
-      const res = await fetch('/api/v1/ads', { headers });
+      const params = new URLSearchParams();
+      if (customFromDate) params.set('fromDate', customFromDate);
+      if (customToDate) params.set('toDate', customToDate);
+      if (selectedAnalyticsPlatform && selectedAnalyticsPlatform !== 'ALL') params.set('platform', selectedAnalyticsPlatform);
+      if (selectedAnalyticsStatus && selectedAnalyticsStatus !== 'ALL') params.set('status', selectedAnalyticsStatus);
+      if (force) params.set('force', 'true');
+
+      const res = await fetch(`/api/v1/ads/campaigns?${params.toString()}`, { headers });
       if (res.ok) {
         const data = await safeFetchJson(res);
         if (Array.isArray(data.campaigns)) setAdCampaigns(data.campaigns);
+        if (data.backfillPending) setBackfillPending(true);
+        setIsCacheHit(!!data.cached);
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn('[Dashboard] fetchAdsData error:', e);
+    }
   };
 
   const fetchApiKeysData = async () => {
@@ -809,41 +844,24 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
     } catch (e) {}
   };
 
-  // Per-Tab Trigger: Automatically fetch live data when switching tabs
+  // Per-Tab Trigger: Automatically fetch live data when switching tabs or changing filters
   useEffect(() => {
     switch (activeTab) {
-      case 'connections':
-        fetchConnectionsData();
+      case 'ad_accounts':
+        fetchLiveData();
         break;
-      case 'posts':
-        fetchPostsData();
+      case 'ad_campaigns':
+        fetchAdsData();
         break;
       case 'analytics':
         fetchAnalyticsData();
-        break;
-      case 'inbox':
-        fetchInboxData();
-        break;
-      case 'ads':
         fetchAdsData();
         break;
-      case 'apikeys':
-        fetchApiKeysData();
-        break;
-      case 'users':
-        fetchUsersData();
-        break;
-      case 'webhooks':
-        fetchWebhooksData();
-        break;
-      case 'logs':
-        fetchLogsData();
-        break;
-      case 'settings':
+      case 'pixel_events':
         fetchLiveData();
         break;
     }
-  }, [activeTab]);
+  }, [activeTab, customFromDate, customToDate, selectedAnalyticsPlatform, selectedAnalyticsStatus, datePreset]);
 
   useEffect(() => {
     fetchLiveData();
@@ -1842,7 +1860,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                   <DollarSign size={12} className="text-brand" />
                 </span>
                 <span className="text-xl font-bold text-white font-mono block">
-                  ${adCampaigns.reduce((sum, c) => sum + Number(c.spend || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  ${(analyticsData?.totalSpend !== undefined ? analyticsData.totalSpend : adCampaigns.reduce((sum, c) => sum + Number(c.spend || 0), 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
                 <span className="text-[9px] text-emerald-400 font-mono block">Active Date Window</span>
               </div>
@@ -1853,9 +1871,11 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                   <Eye size={12} className="text-cyan-400" />
                 </span>
                 <span className="text-xl font-bold text-white font-mono block">
-                  {adCampaigns.reduce((sum, c) => sum + Number(c.impressions || 0), 0).toLocaleString()}
+                  {(analyticsData?.totalImpressions !== undefined ? analyticsData.totalImpressions : adCampaigns.reduce((sum, c) => sum + Number(c.impressions || 0), 0)).toLocaleString()}
                 </span>
-                <span className="text-[9px] text-white/40 font-mono block">Reach: ~{(adCampaigns.reduce((sum, c) => sum + Number(c.reach || c.impressions * 0.72 || 0), 0)).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                <span className="text-[9px] text-white/40 font-mono block">
+                  Reach: ~{(analyticsData?.totalReach !== undefined ? analyticsData.totalReach : adCampaigns.reduce((sum, c) => sum + Number(c.reach || c.impressions * 0.72 || 0), 0)).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                </span>
               </div>
 
               <div className="bg-zinc-950 border border-white/10 rounded-xl p-4 space-y-1">
@@ -1864,10 +1884,10 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                   <Users size={12} className="text-cyan-300" />
                 </span>
                 <span className="text-xl font-bold text-cyan-300 font-mono block">
-                  {adCampaigns.reduce((sum, c) => sum + Number(c.clicks || 0), 0).toLocaleString()}
+                  {(analyticsData?.totalClicks !== undefined ? analyticsData.totalClicks : adCampaigns.reduce((sum, c) => sum + Number(c.clicks || 0), 0)).toLocaleString()}
                 </span>
                 <span className="text-[9px] text-cyan-300/80 font-mono block">
-                  Avg CTR: {(() => {
+                  Avg CTR: {analyticsData?.avgCtr || (() => {
                     const totalImp = adCampaigns.reduce((s, c) => s + Number(c.impressions || 0), 0);
                     const totalClk = adCampaigns.reduce((s, c) => s + Number(c.clicks || 0), 0);
                     return totalImp > 0 ? ((totalClk / totalImp) * 100).toFixed(2) + '%' : '0.00%';
@@ -1881,7 +1901,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                   <Activity size={12} className="text-amber-400" />
                 </span>
                 <span className="text-xl font-bold text-amber-300 font-mono block">
-                  {(() => {
+                  {analyticsData?.avgCpc || (() => {
                     const totalSp = adCampaigns.reduce((s, c) => s + Number(c.spend || 0), 0);
                     const totalClk = adCampaigns.reduce((s, c) => s + Number(c.clicks || 0), 0);
                     return totalClk > 0 ? '$' + (totalSp / totalClk).toFixed(2) : '$0.00';
@@ -1896,10 +1916,10 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                   <Sparkles size={12} className="text-emerald-400" />
                 </span>
                 <span className="text-xl font-bold text-emerald-400 font-mono block">
-                  {adCampaigns.reduce((sum, c) => sum + Number(c.conversions || 0), 0).toLocaleString()}
+                  {(analyticsData?.totalConversions !== undefined ? analyticsData.totalConversions : adCampaigns.reduce((sum, c) => sum + Number(c.conversions || 0), 0)).toLocaleString()}
                 </span>
                 <span className="text-[9px] text-emerald-400/80 font-mono block">
-                  CPA: {(() => {
+                  CPA: {analyticsData?.cpa || (() => {
                     const totalSp = adCampaigns.reduce((s, c) => s + Number(c.spend || 0), 0);
                     const totalConv = adCampaigns.reduce((s, c) => s + Number(c.conversions || 0), 0);
                     return totalConv > 0 ? '$' + (totalSp / totalConv).toFixed(2) : '$0.00';
@@ -1913,14 +1933,14 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                   <ArrowUpRight size={12} className="text-brand" />
                 </span>
                 <span className="text-xl font-bold text-brand font-mono block">
-                  {(() => {
+                  {analyticsData?.avgRoas || (() => {
                     const totalSp = adCampaigns.reduce((s, c) => s + Number(c.spend || 0), 0);
                     const totalRev = adCampaigns.reduce((s, c) => s + Number(c.purchase_value || (c.conversions * 45) || 0), 0);
                     return totalSp > 0 ? (totalRev / totalSp).toFixed(2) + 'x' : '0.00x';
                   })()}
                 </span>
                 <span className="text-[9px] text-white/40 font-mono block">
-                  Rev: ${adCampaigns.reduce((s, c) => s + Number(c.purchase_value || (c.conversions * 45) || 0), 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  Rev: ${(analyticsData?.totalAttributedRevenue !== undefined ? analyticsData.totalAttributedRevenue : adCampaigns.reduce((s, c) => s + Number(c.purchase_value || (c.conversions * 45) || 0), 0)).toLocaleString(undefined, { maximumFractionDigits: 0 })}
                 </span>
               </div>
             </div>
@@ -1969,43 +1989,45 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                   {/* Age Distribution */}
                   <div className="space-y-3 bg-zinc-900/60 p-4 rounded-lg border border-white/5">
                     <span className="text-xs font-bold text-white uppercase font-mono block">Age Bracket Distribution</span>
-                    {[
-                      { age: '18-24', pct: 18, spend: '$2,450.00', conv: 34 },
-                      { age: '25-34', pct: 44, spend: '$5,980.00', conv: 112 },
-                      { age: '35-44', pct: 24, spend: '$3,260.00', conv: 58 },
-                      { age: '45-54', pct: 10, spend: '$1,360.00', conv: 19 },
-                      { age: '55+', pct: 4, spend: '$540.00', conv: 6 }
-                    ].map(item => (
-                      <div key={item.age} className="space-y-1 text-xs">
-                        <div className="flex justify-between text-white/80 font-mono">
-                          <span className="font-bold text-white">{item.age} years</span>
-                          <span>{item.pct}% • {item.spend} ({item.conv} conv)</span>
+                    {analyticsData?.demographics?.age && analyticsData.demographics.age.length > 0 ? (
+                      analyticsData.demographics.age.map(item => (
+                        <div key={item.age} className="space-y-1 text-xs">
+                          <div className="flex justify-between text-white/80 font-mono">
+                            <span className="font-bold text-white">{item.age} years</span>
+                            <span>{item.pct}% • {item.spend} ({item.conv} conv)</span>
+                          </div>
+                          <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
+                            <div className="h-full bg-gradient-to-r from-brand to-rose-500 rounded-full" style={{ width: `${Math.min(item.pct, 100)}%` }} />
+                          </div>
                         </div>
-                        <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
-                          <div className="h-full bg-gradient-to-r from-brand to-rose-500 rounded-full" style={{ width: `${item.pct}%` }} />
-                        </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-6 text-white/40 text-xs font-mono">
+                        No demographic age data available for the active filter range.
                       </div>
-                    ))}
+                    )}
                   </div>
 
                   {/* Gender Distribution */}
                   <div className="space-y-3 bg-zinc-900/60 p-4 rounded-lg border border-white/5">
                     <span className="text-xs font-bold text-white uppercase font-mono block">Gender Performance Split</span>
-                    {[
-                      { gender: 'Female', pct: 54, spend: '$7,340.00', conv: 124, roas: '3.42x' },
-                      { gender: 'Male', pct: 41, spend: '$5,570.00', conv: 96, roas: '2.98x' },
-                      { gender: 'Unknown / Other', pct: 5, spend: '$680.00', conv: 9, roas: '1.85x' }
-                    ].map(item => (
-                      <div key={item.gender} className="space-y-1 text-xs">
-                        <div className="flex justify-between text-white/80 font-mono">
-                          <span className="font-bold text-white">{item.gender}</span>
-                          <span>{item.pct}% • {item.spend} ({item.roas})</span>
+                    {analyticsData?.demographics?.gender && analyticsData.demographics.gender.length > 0 ? (
+                      analyticsData.demographics.gender.map(item => (
+                        <div key={item.gender} className="space-y-1 text-xs">
+                          <div className="flex justify-between text-white/80 font-mono">
+                            <span className="font-bold text-white">{item.gender}</span>
+                            <span>{item.pct}% • {item.spend} ({item.roas || '0.00x'})</span>
+                          </div>
+                          <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
+                            <div className="h-full bg-gradient-to-r from-cyan-400 to-emerald-400 rounded-full" style={{ width: `${Math.min(item.pct, 100)}%` }} />
+                          </div>
                         </div>
-                        <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
-                          <div className="h-full bg-gradient-to-r from-cyan-400 to-emerald-400 rounded-full" style={{ width: `${item.pct}%` }} />
-                        </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-6 text-white/40 text-xs font-mono">
+                        No gender performance data available for the active filter range.
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
               )}
@@ -2016,42 +2038,45 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                   {/* Device Platforms */}
                   <div className="space-y-3 bg-zinc-900/60 p-4 rounded-lg border border-white/5">
                     <span className="text-xs font-bold text-white uppercase font-mono block">Device Platform (Mobile vs Desktop)</span>
-                    {[
-                      { device: 'Mobile Devices (iOS & Android)', pct: 76, spend: '$10,320.00', conv: 174 },
-                      { device: 'Desktop / Laptop Computers', pct: 21, spend: '$2,850.00', conv: 49 },
-                      { device: 'Tablet & Connected TV', pct: 3, spend: '$420.00', conv: 6 }
-                    ].map(item => (
-                      <div key={item.device} className="space-y-1 text-xs">
-                        <div className="flex justify-between text-white/80 font-mono">
-                          <span className="font-bold text-white">{item.device}</span>
-                          <span>{item.pct}% • {item.spend}</span>
+                    {analyticsData?.placements?.devices && analyticsData.placements.devices.length > 0 ? (
+                      analyticsData.placements.devices.map(item => (
+                        <div key={item.device} className="space-y-1 text-xs">
+                          <div className="flex justify-between text-white/80 font-mono">
+                            <span className="font-bold text-white">{item.device}</span>
+                            <span>{item.pct}% • {item.spend} ({item.conv} conv)</span>
+                          </div>
+                          <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
+                            <div className="h-full bg-brand rounded-full" style={{ width: `${Math.min(item.pct, 100)}%` }} />
+                          </div>
                         </div>
-                        <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
-                          <div className="h-full bg-brand rounded-full" style={{ width: `${item.pct}%` }} />
-                        </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-6 text-white/40 text-xs font-mono">
+                        No device platform data available for the active filter range.
                       </div>
-                    ))}
+                    )}
                   </div>
 
                   {/* Publisher Platforms */}
                   <div className="space-y-3 bg-zinc-900/60 p-4 rounded-lg border border-white/5">
                     <span className="text-xs font-bold text-white uppercase font-mono block">Publisher Placement Network</span>
-                    {[
-                      { pub: 'Instagram Feed & Stories', pct: 42, spend: '$5,700.00', conv: 98 },
-                      { pub: 'Facebook Feeds & Video', pct: 33, spend: '$4,480.00', conv: 74 },
-                      { pub: 'Google Search & PMax', pct: 15, spend: '$2,040.00', conv: 35 },
-                      { pub: 'TikTok In-Feed & Spark Ads', pct: 10, spend: '$1,360.00', conv: 22 }
-                    ].map(item => (
-                      <div key={item.pub} className="space-y-1 text-xs">
-                        <div className="flex justify-between text-white/80 font-mono">
-                          <span className="font-bold text-white">{item.pub}</span>
-                          <span>{item.pct}% • {item.spend}</span>
+                    {analyticsData?.placements?.publishers && analyticsData.placements.publishers.length > 0 ? (
+                      analyticsData.placements.publishers.map(item => (
+                        <div key={item.pub} className="space-y-1 text-xs">
+                          <div className="flex justify-between text-white/80 font-mono">
+                            <span className="font-bold text-white">{item.pub}</span>
+                            <span>{item.pct}% • {item.spend} ({item.conv} conv)</span>
+                          </div>
+                          <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
+                            <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${Math.min(item.pct, 100)}%` }} />
+                          </div>
                         </div>
-                        <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
-                          <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${item.pct}%` }} />
-                        </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-6 text-white/40 text-xs font-mono">
+                        No publisher network data available for the active filter range.
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
               )}
@@ -2060,20 +2085,21 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
               {activeBreakdownTab === 'geography' && (
                 <div className="space-y-3 bg-zinc-900/60 p-4 rounded-lg border border-white/5">
                   <span className="text-xs font-bold text-white uppercase font-mono block">Top Geographic Regions &amp; Countries</span>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-                    {[
-                      { country: '🇺🇸 United States', spend: '$8,450.00', conv: 142, roas: '3.65x' },
-                      { country: '🇬🇧 United Kingdom', spend: '$2,310.00', conv: 39, roas: '3.10x' },
-                      { country: '🇨🇦 Canada', spend: '$1,640.00', conv: 27, roas: '2.85x' },
-                      { country: '🇦🇺 Australia', spend: '$1,190.00', conv: 21, roas: '3.05x' }
-                    ].map(c => (
-                      <div key={c.country} className="bg-zinc-950 p-3 rounded border border-white/10 font-mono text-xs">
-                        <span className="font-bold text-white block mb-1">{c.country}</span>
-                        <span className="text-white/60 block">Spend: <strong className="text-white">{c.spend}</strong></span>
-                        <span className="text-emerald-400 block">Conv: {c.conv} • ROAS: {c.roas}</span>
-                      </div>
-                    ))}
-                  </div>
+                  {analyticsData?.geography?.countries && analyticsData.geography.countries.length > 0 ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+                      {analyticsData.geography.countries.map(c => (
+                        <div key={c.country} className="bg-zinc-950 p-3 rounded border border-white/10 font-mono text-xs">
+                          <span className="font-bold text-white block mb-1">{c.country}</span>
+                          <span className="text-white/60 block">Spend: <strong className="text-white">{c.spend}</strong></span>
+                          <span className="text-emerald-400 block">Conv: {c.conv} • ROAS: {c.roas}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-6 text-white/40 text-xs font-mono">
+                      No country geography data available for the active filter range.
+                    </div>
+                  )}
                 </div>
               )}
             </div>
