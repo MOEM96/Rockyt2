@@ -638,7 +638,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
           if (Array.isArray(data.walletTransactions)) setWalletTxns(data.walletTransactions);
           if (Array.isArray(data.webhooks)) setWebhooks(data.webhooks);
           if (Array.isArray(data.posts)) setPosts(data.posts);
-          if (data.analytics) setAnalyticsData(data.analytics);
+          if (data.analytics && data.analytics.totalSpend !== undefined) setAnalyticsData(data.analytics);
           loadedSuccessfully = true;
         } else if (dashRes.status === 401) {
           console.warn('[Dashboard] Unauthorized response from API, attempting Supabase direct query fallback');
@@ -669,13 +669,17 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
               if (Array.isArray(rpcData.walletTransactions)) setWalletTxns(rpcData.walletTransactions);
               if (Array.isArray(rpcData.webhooks)) setWebhooks(rpcData.webhooks);
               if (Array.isArray(rpcData.posts)) setPosts(rpcData.posts);
-              if (rpcData.analytics) setAnalyticsData(rpcData.analytics);
+              if (rpcData.analytics && rpcData.analytics.totalSpend !== undefined) setAnalyticsData(rpcData.analytics);
             }
           }
         } catch (dbErr) {
           console.error('[Dashboard direct Supabase fallback error]:', dbErr);
         }
       }
+
+      // Automatically sync ad campaigns and live ad analytics
+      fetchAdsData();
+      fetchAnalyticsData();
     } catch (err: any) {
       console.error('[Dashboard fetchLiveData error]:', err);
     } finally {
