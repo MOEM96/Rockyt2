@@ -13,6 +13,54 @@ export class ZernioWhatsAppService {
   }
 
   /**
+   * Get or create a valid 24-character hexadecimal profile ID from Zernio
+   */
+  public static async getOrCreateProfileId(): Promise<string> {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey && apiKey !== 'dummy_dev_key') {
+      try {
+        const res = await fetch('https://zernio.com/api/v1/profiles', {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const profiles = data.profiles || data.data || [];
+          if (profiles.length > 0 && (profiles[0]._id || profiles[0].id)) {
+            const id = String(profiles[0]._id || profiles[0].id);
+            if (/^[0-9a-fA-F]{24}$/.test(id)) return id;
+          }
+
+          // Create a new profile if none exist
+          const createRes = await fetch('https://zernio.com/api/v1/profiles', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ name: 'Rockyt WhatsApp Workspace' }),
+          });
+          if (createRes.ok) {
+            const createdData = await createRes.json();
+            const id = String(createdData.profile?._id || createdData.profile?.id || createdData._id || createdData.id || '');
+            if (/^[0-9a-fA-F]{24}$/.test(id)) return id;
+          }
+        }
+      } catch (err: any) {
+        console.warn('[Zernio getOrCreateProfileId Notice]:', err.message);
+      }
+    }
+
+    // Fallback: Generate a standard 24-character hex MongoDB ObjectId format
+    const timestamp = Math.floor(Date.now() / 1000).toString(16).padStart(8, '0');
+    const machineId = 'f4a28c9b1d';
+    const counter = Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0');
+    return `${timestamp}${machineId}${counter}`.substring(0, 24);
+  }
+
+  /**
    * List connected WhatsApp accounts from Zernio
    */
   public static async listWhatsAppAccounts(profileId?: string): Promise<WhatsAppAccount[]> {

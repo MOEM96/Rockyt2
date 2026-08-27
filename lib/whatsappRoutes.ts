@@ -606,11 +606,19 @@ whatsappRouter.post('/api/whatsapp/sandbox/simulate-message', async (req: Reques
   });
 });
 
-whatsappRouter.post('/api/whatsapp/connect/oauth', (req: Request, res: Response) => {
-  const profileId = (req.query.profileId as string) || 'prof_default';
-  const redirectUri = encodeURIComponent('https://rockyt.io/dashboard?waba=connected');
+whatsappRouter.post('/api/whatsapp/connect/oauth', async (req: Request, res: Response) => {
+  let profileId = (req.query.profileId as string) || (req.body?.profileId as string);
+  
+  if (!profileId || !/^[0-9a-fA-F]{24}$/.test(profileId)) {
+    profileId = await ZernioWhatsAppService.getOrCreateProfileId();
+  }
+
+  const host = req.get('host') || 'rockyt.io';
+  const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'https';
+  const redirectUri = encodeURIComponent(`${protocol}://${host}/dashboard?waba=connected`);
   const redirectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${profileId}&redirect_url=${redirectUri}`;
-  return res.json({ url: redirectUrl });
+  
+  return res.json({ url: redirectUrl, profileId });
 });
 
 whatsappRouter.post('/api/whatsapp/connect/headless', (req: Request, res: Response) => {

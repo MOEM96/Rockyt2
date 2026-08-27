@@ -313,6 +313,49 @@ var ZernioWhatsAppService = class {
     return this.zernioClient;
   }
   /**
+   * Get or create a valid 24-character hexadecimal profile ID from Zernio
+   */
+  static async getOrCreateProfileId() {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey && apiKey !== "dummy_dev_key") {
+      try {
+        const res = await fetch("https://zernio.com/api/v1/profiles", {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json"
+          }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const profiles = data.profiles || data.data || [];
+          if (profiles.length > 0 && (profiles[0]._id || profiles[0].id)) {
+            const id = String(profiles[0]._id || profiles[0].id);
+            if (/^[0-9a-fA-F]{24}$/.test(id)) return id;
+          }
+          const createRes = await fetch("https://zernio.com/api/v1/profiles", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ name: "Rockyt WhatsApp Workspace" })
+          });
+          if (createRes.ok) {
+            const createdData = await createRes.json();
+            const id = String(createdData.profile?._id || createdData.profile?.id || createdData._id || createdData.id || "");
+            if (/^[0-9a-fA-F]{24}$/.test(id)) return id;
+          }
+        }
+      } catch (err) {
+        console.warn("[Zernio getOrCreateProfileId Notice]:", err.message);
+      }
+    }
+    const timestamp = Math.floor(Date.now() / 1e3).toString(16).padStart(8, "0");
+    const machineId = "f4a28c9b1d";
+    const counter = Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0");
+    return `${timestamp}${machineId}${counter}`.substring(0, 24);
+  }
+  /**
    * List connected WhatsApp accounts from Zernio
    */
   static async listWhatsAppAccounts(profileId) {
@@ -1633,11 +1676,16 @@ whatsappRouter.post("/api/whatsapp/sandbox/simulate-message", async (req, res) =
     triggered_flows: triggeredFlows
   });
 });
-whatsappRouter.post("/api/whatsapp/connect/oauth", (req, res) => {
-  const profileId = req.query.profileId || "prof_default";
-  const redirectUri = encodeURIComponent("https://rockyt.io/dashboard?waba=connected");
+whatsappRouter.post("/api/whatsapp/connect/oauth", async (req, res) => {
+  let profileId = req.query.profileId || req.body?.profileId;
+  if (!profileId || !/^[0-9a-fA-F]{24}$/.test(profileId)) {
+    profileId = await ZernioWhatsAppService.getOrCreateProfileId();
+  }
+  const host = req.get("host") || "rockyt.io";
+  const protocol = req.protocol === "https" || req.get("x-forwarded-proto") === "https" ? "https" : "https";
+  const redirectUri = encodeURIComponent(`${protocol}://${host}/dashboard?waba=connected`);
   const redirectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${profileId}&redirect_url=${redirectUri}`;
-  return res.json({ url: redirectUrl });
+  return res.json({ url: redirectUrl, profileId });
 });
 whatsappRouter.post("/api/whatsapp/connect/headless", (req, res) => {
   const { waba_id, phone_number_id, access_token, name, phone_number } = req.body;
