@@ -1677,15 +1677,42 @@ whatsappRouter.post("/api/whatsapp/sandbox/simulate-message", async (req, res) =
   });
 });
 whatsappRouter.post("/api/whatsapp/connect/oauth", async (req, res) => {
-  let profileId = req.query.profileId || req.body?.profileId;
-  if (!profileId || !/^[0-9a-fA-F]{24}$/.test(profileId)) {
-    profileId = await ZernioWhatsAppService.getOrCreateProfileId();
+  try {
+    let profileId = req.query.profileId || req.body?.profileId;
+    if (!profileId || !/^[0-9a-fA-F]{24}$/.test(profileId)) {
+      profileId = await ZernioWhatsAppService.getOrCreateProfileId();
+    }
+    const host = req.get("host") || "rockyt.io";
+    const protocol = req.protocol === "https" || req.get("x-forwarded-proto") === "https" ? "https" : "https";
+    const redirectUri = encodeURIComponent(`${protocol}://${host}/dashboard?waba=connected`);
+    const zernioConnectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${profileId}&redirect_url=${redirectUri}`;
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    const headers = { "Content-Type": "application/json" };
+    if (apiKey && apiKey !== "dummy_dev_key") {
+      headers["Authorization"] = `Bearer ${apiKey}`;
+    }
+    try {
+      const zernioRes = await fetch(zernioConnectUrl, { headers });
+      if (zernioRes.ok) {
+        const data = await zernioRes.json();
+        if (data.authUrl) {
+          return res.json({
+            url: data.authUrl,
+            authUrl: data.authUrl,
+            state: data.state,
+            profileId
+          });
+        }
+      }
+    } catch (fetchErr) {
+      console.warn("[Zernio connect fetch notice]:", fetchErr.message);
+    }
+    const metaDialogUrl = `https://www.facebook.com/v22.0/dialog/oauth?client_id=712341431446535&redirect_uri=${encodeURIComponent("https://zernio.com/api/v1/connect/whatsapp/callback")}&scope=whatsapp_business_management%2Cwhatsapp_business_messaging%2Cwhatsapp_business_manage_events%2Cbusiness_management&response_type=code&config_id=920007930882314&override_default_response_type=true&state=${profileId}-${Date.now()}-${redirectUri}&extras=${encodeURIComponent(JSON.stringify({ sessionInfoVersion: "3", featureType: "whatsapp_business_app_onboarding" }))}`;
+    return res.json({ url: metaDialogUrl, authUrl: metaDialogUrl, profileId });
+  } catch (err) {
+    console.error("[WhatsApp Connect OAuth Error]:", err.message);
+    return res.status(500).json({ error: "Failed to generate Meta Embedded Signup authorization URL" });
   }
-  const host = req.get("host") || "rockyt.io";
-  const protocol = req.protocol === "https" || req.get("x-forwarded-proto") === "https" ? "https" : "https";
-  const redirectUri = encodeURIComponent(`${protocol}://${host}/dashboard?waba=connected`);
-  const redirectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${profileId}&redirect_url=${redirectUri}`;
-  return res.json({ url: redirectUrl, profileId });
 });
 whatsappRouter.post("/api/whatsapp/connect/headless", (req, res) => {
   const { waba_id, phone_number_id, access_token, name, phone_number } = req.body;
