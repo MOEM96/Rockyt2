@@ -104,37 +104,120 @@ export class ZernioWhatsAppService {
   }
 
   /**
+   * Discover Sandbox phone number and configuration from Zernio
+   */
+  public static async getSandboxDiscovery(): Promise<{ accountId?: string; phoneNumber: string; template: { name: string; language: string } }> {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey && apiKey !== 'dummy_dev_key') {
+      try {
+        const res = await fetch('https://zernio.com/api/v1/whatsapp/phone-numbers', {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.sandbox) {
+            return {
+              accountId: data.sandbox.accountId,
+              phoneNumber: data.sandbox.phoneNumber || '+1 202 908 7457',
+              template: data.sandbox.template || { name: 'sandbox_start', language: 'en' },
+            };
+          }
+        }
+      } catch (err: any) {
+        console.warn('[Zernio getSandboxDiscovery notice]:', err.message);
+      }
+    }
+    return {
+      phoneNumber: '+1 202 908 7457',
+      template: { name: 'sandbox_start', language: 'en' },
+    };
+  }
+
+  /**
+   * List active/pending Sandbox sessions from Zernio
+   */
+  public static async listSandboxSessions(): Promise<any[]> {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey && apiKey !== 'dummy_dev_key') {
+      try {
+        const res = await fetch('https://zernio.com/api/v1/whatsapp/sandbox/sessions', {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          return data.sessions || data.data || [];
+        }
+      } catch (err: any) {
+        console.warn('[Zernio listSandboxSessions notice]:', err.message);
+      }
+    }
+    return [];
+  }
+
+  /**
    * Create a WhatsApp Sandbox session on Zernio for testing
    */
   public static async createSandboxSession(phoneNumber: string): Promise<WhatsAppSandboxSession | null> {
     const cleanPhone = phoneNumber.replace(/[^0-9+]/g, '');
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    const sandboxDiscovery = await this.getSandboxDiscovery();
+    const sandboxNumber = sandboxDiscovery.phoneNumber || '+1 202 908 7457';
 
     // Try calling Zernio API if key is present
-    if (apiKey) {
+    if (apiKey && apiKey !== 'dummy_dev_key') {
       try {
-        const res = await fetch('https://zernio.com/api/v1/whatsapp/sandbox/sessions', {
+        // Send with field name 'phone' as required by Zernio Sandbox API
+        let res = await fetch('https://zernio.com/api/v1/whatsapp/sandbox/sessions', {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ phone_number: cleanPhone }),
+          body: JSON.stringify({ phone: cleanPhone, phone_number: cleanPhone }),
         });
+
+        // If a session already exists for another phone, delete previous sessions and retry
+        if (res.status === 400) {
+          const errData = await res.json().catch(() => ({}));
+          if (errData.error?.includes('Revoke') || errData.message?.includes('Revoke') || errData.error_code === 'invalid_field_value') {
+            const existingSessions = await this.listSandboxSessions();
+            for (const s of existingSessions) {
+              const sid = s.id || s._id;
+              if (sid) {
+                await this.deleteSandboxSession(sid);
+              }
+            }
+            // Retry session creation after revoking
+            res = await fetch('https://zernio.com/api/v1/whatsapp/sandbox/sessions', {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ phone: cleanPhone, phone_number: cleanPhone }),
+            });
+          }
+        }
 
         if (res.ok) {
           const data = await res.json();
           const session = data.session || data;
           return {
-            id: session.id || `sbx_${Date.now()}`,
+            id: session.id || session._id || `sbx_${Date.now()}`,
             phone_number: cleanPhone,
             formatted_phone: session.formatted_phone || cleanPhone,
-            sandbox_number: session.sandbox_number || '+1 415 523 8886',
-            join_code: session.join_code || `join-rockyt-${Math.floor(1000 + Math.random() * 9000)}`,
-            instructions: session.instructions || `Send "${session.join_code || 'join-rockyt'}" to +1 415 523 8886 on WhatsApp to activate sandbox testing.`,
-            status: 'active',
-            expires_at: session.expires_at || new Date(Date.now() + 3 * 86400000).toISOString(),
-            created_at: new Date().toISOString(),
+            sandbox_number: session.sandbox_number || sandboxNumber,
+            join_code: session.join_code || 'sandbox_start',
+            instructions: `We sent a verification template from ${sandboxNumber} to ${cleanPhone}. Open WhatsApp and reply to activate the session.`,
+            status: session.status || 'pending',
+            expires_at: session.expires_at || session.expiresAt || new Date(Date.now() + 7 * 86400000).toISOString(),
+            created_at: session.created_at || session.createdAt || new Date().toISOString(),
           };
         }
       } catch (err: any) {
@@ -143,16 +226,15 @@ export class ZernioWhatsAppService {
     }
 
     // Standard Sandbox Session instance
-    const joinCode = `join-rockyt-${Math.floor(1000 + Math.random() * 9000)}`;
     return {
       id: `sbx_${Date.now()}`,
       phone_number: cleanPhone,
       formatted_phone: cleanPhone,
-      sandbox_number: '+1 415 523 8886',
-      join_code: joinCode,
-      instructions: `Send "${joinCode}" to +1 415 523 8886 from your WhatsApp app to start instant two-way testing.`,
+      sandbox_number: sandboxNumber,
+      join_code: 'sandbox_start',
+      instructions: `Check WhatsApp on ${cleanPhone} and reply to the activation message from ${sandboxNumber} to verify your test phone.`,
       status: 'active',
-      expires_at: new Date(Date.now() + 3 * 86400000).toISOString(),
+      expires_at: new Date(Date.now() + 7 * 86400000).toISOString(),
       created_at: new Date().toISOString(),
     };
   }
@@ -162,7 +244,7 @@ export class ZernioWhatsAppService {
    */
   public static async deleteSandboxSession(sessionId: string): Promise<boolean> {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
-    if (apiKey) {
+    if (apiKey && apiKey !== 'dummy_dev_key') {
       try {
         await fetch(`https://zernio.com/api/v1/whatsapp/sandbox/sessions/${sessionId}`, {
           method: 'DELETE',

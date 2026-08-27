@@ -512,13 +512,13 @@ whatsappRouter.post('/api/whatsapp/account/disconnect', (req: Request, res: Resp
 });
 
 // WhatsApp Sandbox Endpoints (as per Zernio platform docs)
-whatsappRouter.post('/api/whatsapp/sandbox/session', async (req: Request, res: Response) => {
-  const { phone_number } = req.body;
-  if (!phone_number) {
+const handleCreateSandbox = async (req: Request, res: Response) => {
+  const phone = req.body.phone || req.body.phone_number;
+  if (!phone) {
     return res.status(400).json({ error: 'Phone number is required to start a sandbox activation.' });
   }
 
-  const session = await ZernioWhatsAppService.createSandboxSession(phone_number);
+  const session = await ZernioWhatsAppService.createSandboxSession(phone);
   if (!session) {
     return res.status(500).json({ error: 'Failed to initialize sandbox session.' });
   }
@@ -529,11 +529,19 @@ whatsappRouter.post('/api/whatsapp/sandbox/session', async (req: Request, res: R
     session,
     account: whatsappStore.getAccount(),
   });
-});
+};
+
+whatsappRouter.post('/api/whatsapp/sandbox/session', handleCreateSandbox);
+whatsappRouter.post('/api/whatsapp/sandbox/sessions', handleCreateSandbox);
 
 whatsappRouter.get('/api/whatsapp/sandbox/session', (req: Request, res: Response) => {
   const session = whatsappStore.getSandboxSession();
   return res.json({ session: session || null });
+});
+
+whatsappRouter.get('/api/whatsapp/sandbox/sessions', (req: Request, res: Response) => {
+  const session = whatsappStore.getSandboxSession();
+  return res.json({ sessions: session ? [session] : [] });
 });
 
 whatsappRouter.delete('/api/whatsapp/sandbox/session', async (req: Request, res: Response) => {
