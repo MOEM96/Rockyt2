@@ -35,13 +35,27 @@ function startServer() {
 
   // Normalize Vercel serverless rewritten API URLs before any router
   app.use((req, _res, next) => {
-    const candidate = req.headers['x-forwarded-uri'] || req.headers['x-invoke-path'] || req.headers['x-matched-path'] || req.headers['x-now-route-matches'];
-    if (candidate && typeof candidate === 'string') {
-      const uriStr = candidate.trim();
-      if (uriStr.startsWith('/api') || uriStr.startsWith('/oauth') || uriStr.startsWith('/connect')) {
-        req.url = uriStr;
+    try {
+      const urlObj = new URL(req.url, 'http://localhost');
+      const pathParam = urlObj.searchParams.get('__path');
+      if (pathParam) {
+        urlObj.searchParams.delete('__path');
+        const qs = urlObj.searchParams.toString();
+        req.url = pathParam + (qs ? '?' + qs : '');
+        return next();
       }
-    }
+      const routeMatch = req.headers['x-now-route-matches'] as string;
+      if (routeMatch && typeof routeMatch === 'string' && routeMatch.includes('1=')) {
+        const match = decodeURIComponent(routeMatch.split('1=')[1].split('&')[0]);
+        req.url = '/api/' + match;
+        return next();
+      }
+      const forwardedUri = req.headers['x-forwarded-uri'] as string;
+      if (forwardedUri && typeof forwardedUri === 'string' && forwardedUri !== '/api') {
+        req.url = forwardedUri.trim();
+        return next();
+      }
+    } catch {}
     next();
   });
 
@@ -4734,11 +4748,20 @@ function startServer() {
     });
   }
 
+  // Global Express error handler to ensure JSON response on any error
+  app.use((err: any, _req: any, res: any, _next: any) => {
+    console.error('[Server Error]:', err);
+    if (!res.headersSent) {
+      res.status(err?.status || 500).json({
+        error: err?.message || 'Internal server error',
+      });
+    }
+  });
+
   return app;
 }
 
 const app = startServer();
 
-export default function handler(req: any, res: any) {
-  return app(req, res);
-}
+export { app };
+export default app;
