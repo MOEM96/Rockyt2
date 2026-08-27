@@ -24,3 +24,10 @@ dist-ssr
 *.sw?
 Documenta
 
+# Test artifacts
+scratch/
+
+# Environment files
+.env
+.env.local
+.env.production

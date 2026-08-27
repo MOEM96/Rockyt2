@@ -1,0 +1,580 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Search, Filter, Send, Check, CheckCheck, Clock, AlertTriangle, 
+  Sparkles, Megaphone, Tag, User, Phone, Mail, DollarSign, 
+  ChevronRight, RefreshCw, Paperclip, Smile, Zap, MessageSquare, 
+  ShieldCheck, LayoutTemplate, ArrowUpRight, CheckCircle2, Loader2, Bot
+} from 'lucide-react';
+import { WhatsAppConversation, WhatsAppMessage, WhatsAppTemplate } from '../../lib/whatsappTypes';
+
+interface WhatsAppInboxProps {
+  onTriggerCapi?: (convId: string, eventName: string, value?: number) => void;
+}
+
+export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = () => {
+  const [conversations, setConversations] = useState<WhatsAppConversation[]>([]);
+  const [activeConvId, setActiveConvId] = useState<string>('');
+  const [messages, setMessages] = useState<WhatsAppMessage[]>([]);
+  const [templates, setTemplates] = useState<WhatsAppTemplate[]>([]);
+  const [inputText, setInputText] = useState('');
+  const [selectedTemplate, setSelectedTemplate] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterTag, setFilterTag] = useState<string>('all');
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [capiSuccess, setCapiSuccess] = useState<string | null>(null);
+  const [isCapiSending, setIsCapiSending] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Load conversations and templates
+  const loadConversations = async () => {
+    try {
+      setIsLoading(true);
+      const res = await fetch('/api/whatsapp/conversations');
+      const data = await res.json();
+      if (data.data) {
+        setConversations(data.data);
+        if (!activeConvId && data.data.length > 0) {
+          setActiveConvId(data.data[0].id);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const loadTemplates = async () => {
+    try {
+      const res = await fetch('/api/whatsapp/templates');
+      const data = await res.json();
+      if (data.data) setTemplates(data.data);
+    } catch (e) {}
+  };
+
+  const loadMessages = async (convId: string) => {
+    if (!convId) return;
+    try {
+      const res = await fetch(`/api/whatsapp/conversations/${convId}/messages`);
+      const data = await res.json();
+      if (data.data) {
+        setMessages(data.data);
+      }
+    } catch (e) {}
+  };
+
+  useEffect(() => {
+    loadConversations();
+    loadTemplates();
+    const interval = setInterval(loadConversations, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (activeConvId) {
+      loadMessages(activeConvId);
+      // Mark as read
+      fetch(`/api/whatsapp/conversations/${activeConvId}/read`, { method: 'POST' }).catch(() => {});
+    }
+  }, [activeConvId]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const activeConv = conversations.find((c) => c.id === activeConvId);
+
+  // Calculate 24-hour remaining time
+  const getWindowTimeLeft = (expiresAt?: string) => {
+    if (!expiresAt) return { isOpen: false, text: 'Expired' };
+    const diff = new Date(expiresAt).getTime() - Date.now();
+    if (diff <= 0) return { isOpen: false, text: 'Window Closed (24h Expired)' };
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    return { isOpen: true, text: `${hours}h ${mins}m left in 24h window` };
+  };
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if ((!inputText && !selectedTemplate) || isSending || !activeConvId) return;
+
+    setIsSending(true);
+    try {
+      const body: any = {};
+      if (selectedTemplate) {
+        body.template_name = selectedTemplate;
+      } else {
+        body.text = inputText;
+      }
+
+      const res = await fetch(`/api/whatsapp/conversations/${activeConvId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (res.ok) {
+        setInputText('');
+        setSelectedTemplate('');
+        await loadMessages(activeConvId);
+        await loadConversations();
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Failed to send WhatsApp message');
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const handleTriggerCapi = async (eventName: 'Lead' | 'Schedule' | 'Purchase' | 'Contact', defaultVal = 35) => {
+    if (!activeConvId) return;
+    setIsCapiSending(true);
+    setCapiSuccess(null);
+    try {
+      const res = await fetch('/api/whatsapp/capi/trigger', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversation_id: activeConvId,
+          event_name: eventName,
+          value: defaultVal,
+          currency: 'USD',
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setCapiSuccess(`Dispatched "${eventName}" to Meta CAPI! Event ID: ${data.event.event_id.slice(0, 14)}...`);
+        setTimeout(() => setCapiSuccess(null), 4500);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsCapiSending(false);
+    }
+  };
+
+  const filteredConversations = conversations.filter((c) => {
+    const matchQuery =
+      c.contact.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      c.contact.formatted_phone.includes(searchQuery) ||
+      (c.last_message?.text && c.last_message.text.toLowerCase().includes(searchQuery.toLowerCase()));
+    const matchTag = filterTag === 'all' || c.contact.tags.includes(filterTag);
+    return matchQuery && matchTag;
+  });
+
+  const windowInfo = activeConv ? getWindowTimeLeft(activeConv.window_expires_at) : { isOpen: false, text: '' };
+
+  return (
+    <div className="h-[calc(100vh-140px)] flex bg-zinc-950 border border-zinc-800/80 rounded-2xl overflow-hidden shadow-2xl">
+      {/* ─── COLUMN 1: Conversation List ─── */}
+      <div className="w-80 lg:w-96 border-r border-zinc-800/80 flex flex-col bg-zinc-950/60">
+        {/* Search & Header */}
+        <div className="p-3.5 border-b border-zinc-800/80 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <MessageSquare className="w-4 h-4 text-emerald-400" />
+              <h2 className="text-sm font-bold text-white tracking-tight">WhatsApp Inbound CRM</h2>
+            </div>
+            <button
+              onClick={loadConversations}
+              className="p-1.5 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-900 transition-colors"
+              title="Refresh"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-zinc-500" />
+            <input
+              type="text"
+              placeholder="Search conversations, numbers, tags..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-8 pr-3 py-1.5 bg-zinc-900 border border-zinc-800 rounded-xl text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500/50"
+            />
+          </div>
+
+          {/* Quick Tag Filter */}
+          <div className="flex gap-1 overflow-x-auto pb-1 text-[11px] no-scrollbar">
+            {['all', 'CTWA_Lead', 'High_Intent', 'VIP_Customer', 'Enterprise'].map((tag) => (
+              <button
+                key={tag}
+                onClick={() => setFilterTag(tag)}
+                className={`px-2.5 py-1 rounded-lg font-medium whitespace-nowrap transition-colors ${
+                  filterTag === tag
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                    : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200 border border-zinc-800'
+                }`}
+              >
+                {tag === 'all' ? 'All Chats' : tag.replace('_', ' ')}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Conversation Items */}
+        <div className="flex-1 overflow-y-auto divide-y divide-zinc-900/60">
+          {filteredConversations.length === 0 ? (
+            <div className="p-8 text-center text-zinc-500 text-xs">No active WhatsApp conversations found.</div>
+          ) : (
+            filteredConversations.map((conv) => {
+              const isSelected = conv.id === activeConvId;
+              const win = getWindowTimeLeft(conv.window_expires_at);
+
+              return (
+                <div
+                  key={conv.id}
+                  onClick={() => setActiveConvId(conv.id)}
+                  className={`p-3.5 cursor-pointer transition-all flex gap-3 items-start ${
+                    isSelected
+                      ? 'bg-emerald-500/10 border-l-2 border-emerald-400'
+                      : 'hover:bg-zinc-900/50'
+                  }`}
+                >
+                  <div className="relative">
+                    <img
+                      src={conv.contact.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100'}
+                      alt={conv.contact.name}
+                      className="w-10 h-10 rounded-full object-cover border border-zinc-800"
+                    />
+                    {conv.unread_count > 0 && (
+                      <span className="absolute -top-1 -right-1 w-4 h-4 bg-emerald-500 text-black text-[10px] font-bold rounded-full flex items-center justify-center shadow">
+                        {conv.unread_count}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-1 mb-0.5">
+                      <h4 className="text-xs font-bold text-white truncate">{conv.contact.name}</h4>
+                      <span className="text-[10px] text-zinc-500 flex-shrink-0">
+                        {conv.last_message?.timestamp
+                          ? new Date(conv.last_message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                          : ''}
+                      </span>
+                    </div>
+
+                    <p className="text-[11px] text-zinc-400 truncate mb-1.5">
+                      {conv.last_message?.direction === 'outgoing' ? 'You: ' : ''}
+                      {conv.last_message?.text || (conv.last_message?.template_name ? `[${conv.last_message.template_name}]` : 'New conversation')}
+                    </p>
+
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {/* CTWA Referral Tag */}
+                      {conv.ctwa_referral && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-500/10 border border-blue-500/30 text-blue-400 text-[9px] font-semibold">
+                          <Megaphone className="w-2.5 h-2.5" />
+                          CTWA Ad
+                        </span>
+                      )}
+
+                      {/* 24h Window Badge */}
+                      <span
+                        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold ${
+                          win.isOpen
+                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                            : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                        }`}
+                      >
+                        <Clock className="w-2.5 h-2.5" />
+                        {win.isOpen ? '24h Active' : 'Template Req'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* ─── COLUMN 2: Active Chat Window ─── */}
+      {activeConv ? (
+        <div className="flex-1 flex flex-col bg-zinc-950 relative">
+          {/* Chat Header */}
+          <div className="p-3.5 px-5 border-b border-zinc-800/80 bg-zinc-950/80 backdrop-blur flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <img
+                src={activeConv.contact.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100'}
+                alt={activeConv.contact.name}
+                className="w-9 h-9 rounded-full object-cover border border-zinc-800"
+              />
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-white">{activeConv.contact.name}</h3>
+                  <span className="text-xs text-zinc-400 font-mono">{activeConv.contact.formatted_phone}</span>
+                </div>
+                <div className="flex items-center gap-2 text-[11px]">
+                  <span className={`flex items-center gap-1 font-medium ${windowInfo.isOpen ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    <Clock className="w-3 h-3" />
+                    {windowInfo.text}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400 text-xs font-semibold flex items-center gap-1.5">
+                <Bot className="w-3.5 h-3.5" />
+                <span>MCP Agent Sync Active</span>
+              </div>
+            </div>
+          </div>
+
+          {/* CTWA Referral Banner if from Meta Ads */}
+          {activeConv.ctwa_referral && (
+            <div className="bg-blue-950/40 border-b border-blue-800/40 p-2.5 px-5 flex items-center justify-between text-xs text-blue-300">
+              <div className="flex items-center gap-2">
+                <Megaphone className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                <div>
+                  <span className="font-semibold text-blue-200">Click-to-WhatsApp Ad:</span>{' '}
+                  <span>{activeConv.ctwa_referral.headline || activeConv.ctwa_referral.campaign_name}</span>
+                  {activeConv.ctwa_referral.ctwa_clid && (
+                    <span className="ml-2 font-mono text-[10px] text-blue-400/80 bg-blue-900/40 px-1.5 py-0.5 rounded">
+                      CLID: {activeConv.ctwa_referral.ctwa_clid.slice(0, 12)}...
+                    </span>
+                  )}
+                </div>
+              </div>
+              <span className="text-[10px] text-blue-400 font-semibold uppercase tracking-wider">Attributed</span>
+            </div>
+          )}
+
+          {/* Messages Stream */}
+          <div className="flex-1 overflow-y-auto p-5 space-y-3.5 bg-zinc-950/40">
+            {messages.map((msg) => {
+              const isOutgoing = msg.direction === 'outgoing';
+
+              return (
+                <div
+                  key={msg.id}
+                  className={`flex flex-col ${isOutgoing ? 'items-end' : 'items-start'}`}
+                >
+                  <div
+                    className={`max-w-[75%] rounded-2xl p-3.5 text-xs shadow-sm ${
+                      isOutgoing
+                        ? 'bg-emerald-600 text-white rounded-br-none'
+                        : 'bg-zinc-900 text-zinc-200 border border-zinc-800 rounded-bl-none'
+                    }`}
+                  >
+                    {msg.sender_name && isOutgoing && (
+                      <div className="text-[10px] text-emerald-200 font-semibold mb-1 flex items-center gap-1">
+                        <Sparkles className="w-2.5 h-2.5" />
+                        {msg.sender_name}
+                      </div>
+                    )}
+
+                    {msg.template_name && (
+                      <div className="mb-1 text-[10px] uppercase font-bold text-emerald-200/90 bg-emerald-700/50 px-1.5 py-0.5 rounded w-max">
+                        Template: {msg.template_name}
+                      </div>
+                    )}
+
+                    <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+
+                    <div
+                      className={`flex items-center justify-end gap-1 mt-1.5 text-[9px] ${
+                        isOutgoing ? 'text-emerald-200' : 'text-zinc-500'
+                      }`}
+                    >
+                      <span>{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      {isOutgoing && (
+                        <span>
+                          {msg.status === 'read' ? (
+                            <CheckCheck className="w-3 h-3 text-cyan-200" />
+                          ) : msg.status === 'delivered' ? (
+                            <CheckCheck className="w-3 h-3 text-emerald-200" />
+                          ) : (
+                            <Check className="w-3 h-3 text-emerald-200" />
+                          )}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* 24h Policy Warning & Template Switcher */}
+          {!windowInfo.isOpen && (
+            <div className="p-2.5 px-5 bg-amber-950/30 border-t border-amber-800/40 text-xs text-amber-300 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                <span>
+                  <strong>24-Hour Customer Window Closed.</strong> Meta requires an approved template message to resume.
+                </span>
+              </div>
+              <select
+                value={selectedTemplate}
+                onChange={(e) => setSelectedTemplate(e.target.value)}
+                className="bg-zinc-900 border border-amber-700/50 rounded-lg px-2.5 py-1 text-xs text-amber-200 focus:outline-none"
+              >
+                <option value="">Select Approved Template...</option>
+                {templates.map((t) => (
+                  <option key={t.name} value={t.name}>
+                    {t.name} ({t.category})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Chat Input Bar */}
+          <form onSubmit={handleSendMessage} className="p-3.5 border-t border-zinc-800 bg-zinc-950/90 flex gap-2 items-center">
+            {windowInfo.isOpen ? (
+              <>
+                <input
+                  type="text"
+                  placeholder="Type a WhatsApp reply (within 24h window)..."
+                  value={inputText}
+                  onChange={(e) => setInputText(e.target.value)}
+                  className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition-colors"
+                />
+                <button
+                  type="submit"
+                  disabled={!inputText || isSending}
+                  className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 disabled:opacity-40"
+                >
+                  {isSending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                  <span>Send</span>
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="flex-1 text-xs text-zinc-400 italic">
+                  {selectedTemplate ? `Ready to dispatch template: "${selectedTemplate}"` : 'Select a Meta Template above to message this contact.'}
+                </div>
+                <button
+                  type="submit"
+                  disabled={!selectedTemplate || isSending}
+                  className="px-4 py-2.5 bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 disabled:opacity-40"
+                >
+                  {isSending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                  <span>Send Template</span>
+                </button>
+              </>
+            )}
+          </form>
+        </div>
+      ) : (
+        <div className="flex-1 flex items-center justify-center text-zinc-500 text-xs">
+          Select a conversation from the left to start messaging.
+        </div>
+      )}
+
+      {/* ─── COLUMN 3: Contact Profile & 1-Click Meta CAPI Trigger ─── */}
+      {activeConv && (
+        <div className="w-80 border-l border-zinc-800/80 p-5 overflow-y-auto bg-zinc-950/90 space-y-5 hidden xl:block">
+          <div>
+            <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-3">Contact Information</h3>
+            <div className="space-y-2.5 text-xs">
+              <div className="flex items-center gap-2 text-zinc-300">
+                <User className="w-3.5 h-3.5 text-zinc-500" />
+                <span className="font-semibold">{activeConv.contact.name}</span>
+              </div>
+              <div className="flex items-center gap-2 text-zinc-300">
+                <Phone className="w-3.5 h-3.5 text-zinc-500" />
+                <span className="font-mono">{activeConv.contact.formatted_phone}</span>
+              </div>
+              {activeConv.contact.email && (
+                <div className="flex items-center gap-2 text-zinc-300">
+                  <Mail className="w-3.5 h-3.5 text-zinc-500" />
+                  <span>{activeConv.contact.email}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Tags */}
+          <div>
+            <h4 className="text-[11px] font-bold text-zinc-400 mb-2">CRM Tags</h4>
+            <div className="flex flex-wrap gap-1.5">
+              {activeConv.contact.tags.map((t) => (
+                <span key={t} className="px-2 py-0.5 bg-zinc-900 border border-zinc-800 rounded-md text-[10px] text-zinc-300 font-medium">
+                  #{t}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* CTWA Referral Attribution */}
+          {activeConv.ctwa_referral && (
+            <div className="p-3 bg-blue-950/30 border border-blue-800/40 rounded-xl space-y-2 text-xs">
+              <div className="flex items-center gap-1.5 text-blue-400 font-bold">
+                <Megaphone className="w-3.5 h-3.5" />
+                <span>CTWA Attribution</span>
+              </div>
+              <div className="text-[11px] text-zinc-300 space-y-1">
+                <div>Campaign: <span className="text-white font-medium">{activeConv.ctwa_referral.campaign_name || 'Inbound'}</span></div>
+                <div>Ad ID: <span className="text-white font-mono">{activeConv.ctwa_referral.ad_id || '9823412093'}</span></div>
+                {activeConv.ctwa_referral.ctwa_clid && (
+                  <div className="truncate text-zinc-400">
+                    CLID: <span className="text-blue-300 font-mono">{activeConv.ctwa_referral.ctwa_clid}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Instant Meta CAPI Dispatcher */}
+          <div className="pt-2 border-t border-zinc-800/80 space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                <Zap className="w-3.5 h-3.5 text-emerald-400" />
+                <span>1-Click Meta CAPI Trigger</span>
+              </h4>
+            </div>
+            <p className="text-[11px] text-zinc-400">
+              Fire verified conversion events to Meta Conversions API with contact phone/email SHA-256 hashes and CTWA Click ID.
+            </p>
+
+            {capiSuccess && (
+              <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 text-[11px] flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>{capiSuccess}</span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => handleTriggerCapi('Lead', 25)}
+                disabled={isCapiSending}
+                className="p-2 bg-zinc-900 hover:bg-emerald-500/20 hover:border-emerald-500/40 border border-zinc-800 rounded-xl text-xs font-semibold text-zinc-200 hover:text-emerald-300 transition-all text-center"
+              >
+                + Lead ($25)
+              </button>
+              <button
+                onClick={() => handleTriggerCapi('Schedule', 50)}
+                disabled={isCapiSending}
+                className="p-2 bg-zinc-900 hover:bg-emerald-500/20 hover:border-emerald-500/40 border border-zinc-800 rounded-xl text-xs font-semibold text-zinc-200 hover:text-emerald-300 transition-all text-center"
+              >
+                + Demo Booked ($50)
+              </button>
+              <button
+                onClick={() => handleTriggerCapi('Purchase', 150)}
+                disabled={isCapiSending}
+                className="p-2 bg-zinc-900 hover:bg-emerald-500/20 hover:border-emerald-500/40 border border-zinc-800 rounded-xl text-xs font-semibold text-zinc-200 hover:text-emerald-300 transition-all text-center"
+              >
+                + Purchase ($150)
+              </button>
+              <button
+                onClick={() => handleTriggerCapi('Contact', 10)}
+                disabled={isCapiSending}
+                className="p-2 bg-zinc-900 hover:bg-emerald-500/20 hover:border-emerald-500/40 border border-zinc-800 rounded-xl text-xs font-semibold text-zinc-200 hover:text-emerald-300 transition-all text-center"
+              >
+                + Contact ($10)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

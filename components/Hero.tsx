@@ -51,57 +51,50 @@ const Hero: React.FC<HeroProps> = ({ onStart }) => {
   };
 
   const codeSnippets = {
-    node: `import Rockyt from "@rockyt/sdk";
+    node: `import Rockyt from "@rockyt/whatsapp-sdk";
 const rockyt = new Rockyt(process.env.ROCKYT_API_KEY!);
 
-// 1. Create & Draft Ad Campaign (Meta Ads / Google Ads / TikTok Ads)
-const { campaign } = await rockyt.ads.createCampaign({
-  name: "Q3 High-ROAS Conversion Campaign",
-  platform: "meta-ads",
-  objective: "CONVERSIONS",
-  dailyBudget: 150.00
+// 1. Ingest WhatsApp message & auto-capture CTWA Meta referral
+await rockyt.whatsapp.handleWebhook(event);
+
+// 2. Dispatch Meta Conversions API (CAPI) Event with CTWA CLID
+await rockyt.capi.trackConversion({
+  conversationId: "conv_wa_001",
+  eventName: "Lead",
+  value: 45.00,
+  ctwaClid: "ctwa_clid_8f7b2a9e"
 });
 
-// 2. Dual-dispatch Conversion API (CAPI) Event
-await rockyt.conversions.track({
-  eventName: "Purchase",
-  eventData: { value: 149.00, currency: "USD", gclid: "Cj0KCQiA..." },
-  posthogDistinctId: "user_8921a"
-});
-
-// 3. Closed-Loop Revenue Attribution
-await rockyt.attribution.linkRevenue({
-  orderId: "ord_99812",
-  amount: 149.00,
-  clickId: "gclid_Cj0KCQiA..."
+// 3. Automate WhatsApp journeys with 24-hour compliance checks
+await rockyt.automations.triggerFlow({
+  flowId: "flow_ctwa_qualifier",
+  phone: "+14155552671"
 });`,
-    python: `from rockyt import Rockyt
+    python: `from rockyt import WhatsAppClient
 import os
 
-client = Rockyt(api_key=os.getenv("ROCKYT_API_KEY"))
+client = WhatsAppClient(api_key=os.getenv("ROCKYT_API_KEY"))
 
-# Create & Draft Ad Campaign across Meta & Google Ads
-campaign = client.ads.create_campaign(
-    name="High ROAS Retargeting",
-    platform="google-ads",
-    objective="SEARCH_LEADS",
-    daily_budget=200.00
+# Send approved Meta WhatsApp template
+msg = client.messages.send_template(
+    phone="+14155552671",
+    template_name="lead_welcome_v1",
+    variables={"1": "Sarah"}
 )
 
-# Dispatch Conversion Event to CAPI
-client.conversions.track(
+# Dispatch closed-loop Meta CAPI conversion event
+client.capi.dispatch_event(
     event_name="Lead",
-    event_data={"lead_type": "enterprise_demo", "fbclid": "IwAR3..."}
+    phone="+14155552671",
+    ctwa_clid="ctwa_clid_8f7b2a9e"
 )
-
-print(f"Campaign Created: {campaign['id']}")`,
+print(f"CAPI Event Dispatched: {msg['id']}")`,
     mcp: `{
   "mcpServers": {
-    "rockyt-ads": {
-      "command": "npx",
-      "args": ["-y", "@rockyt/mcp-ads"],
-      "env": {
-        "ROCKYT_API_KEY": "rockyt_live_99f381a94b8e21c"
+    "rockyt-whatsapp": {
+      "url": "https://api.rockyt.io/api/mcp",
+      "headers": {
+        "Authorization": "Bearer mcp_wa_live_key_2026"
       }
     }
   }
@@ -121,20 +114,20 @@ print(f"Campaign Created: {campaign['id']}")`,
         {/* TOP BADGE */}
         <div className="inline-flex items-center gap-2 border border-white/20 bg-black/60 backdrop-blur-md px-4 py-1.5 rounded-sm font-mono text-xs text-white/90 mb-8 shadow-glow">
           <span className="w-2 h-2 rounded-full bg-brand animate-ping"></span>
-          <span className="font-bold text-brand uppercase tracking-wider">UNIFIED ADS API &amp; CAPI ENGINE</span>
+          <span className="font-bold text-brand uppercase tracking-wider">WHATSAPP API · CRM · CTWA · META CAPI</span>
           <span className="opacity-50">|</span>
-          <span className="opacity-80">META · GOOGLE · TIKTOK · LINKEDIN ADS</span>
+          <span className="opacity-80">EXTERNAL MCP AGENTS · ZERNIO SDK</span>
         </div>
 
         {/* MAIN HEADLINE WITH GLITCH */}
         <h1 className="font-display font-bold text-5xl sm:text-7xl lg:text-9xl uppercase tracking-tighter text-white leading-[0.9] mb-8">
-          UNIFIED <GlitchText /><br />
-          FOR ADS &amp; CAPI
+          WHATSAPP <GlitchText /><br />
+          &amp; CTWA META CAPI
         </h1>
 
         {/* SUBTITLE */}
         <p className="font-mono text-sm sm:text-base text-white/80 max-w-2xl mx-auto leading-relaxed mb-10">
-          Draft ad campaigns, pull ad analytics, capture conversion events, and attribute revenue back to ad spend. Powered by PostHog SDK &amp; Zernio Conversion API.
+          Build visual WhatsApp automations, manage multi-tenant CRM inboxes with 24h compliance, capture CTWA Meta Ads clicks, and dispatch verified conversions to Meta CAPI. Connect your external AI agent via MCP to manage everything autonomously.
         </p>
 
         {/* ACTION BUTTONS */}

@@ -19,6 +19,7 @@ const Onboarding = lazy(() => import('./components/Onboarding'));
 const PlatformPage = lazy(() => import('./components/PlatformPage'));
 const DocsPage = lazy(() => import('./components/DocsPage'));
 const Dashboard = lazy(() => import('./components/Dashboard'));
+const WhatsAppDashboard = lazy(() => import('./components/whatsapp/WhatsAppDashboard'));
 
 const validPlatformPaths = [
   '/x', '/instagram', '/whatsapp', '/tiktok', '/linkedin', 
@@ -216,15 +217,19 @@ const App: React.FC = () => {
       )}
 
       {/* MAIN VIEW / ONBOARDING / PLATFORM ROUTE / DOCS ROUTE / DASHBOARD ROUTE */}
-      <Suspense fallback={<div className="min-h-screen bg-black flex items-center justify-center font-mono text-brand text-xs font-bold relative z-30">LOADING ROCKYT INFRASTRUCTURE...</div>}>
+      <Suspense fallback={<div className="min-h-screen bg-black flex items-center justify-center font-mono text-brand text-xs font-bold relative z-30">LOADING ROCKYT WHATSAPP CLOUD...</div>}>
         {isDashboardRoute ? (
-          <Dashboard 
+          <WhatsAppDashboard 
             userSession={userSession} 
             onBackHome={() => navigateTo('/')} 
             onSignOut={handleSignOut}
           />
         ) : (currentPath === '/dashboard' && !userSession) ? (
-          <Onboarding onCancel={() => navigateTo('/')} initialMode="signin" />
+          <WhatsAppDashboard 
+            userSession={{ name: 'Demo Workspace', email: 'demo@rockyt.io' }} 
+            onBackHome={() => navigateTo('/')} 
+            onSignOut={handleSignOut}
+          />
         ) : isOnboarding ? (
           <Onboarding onCancel={cancelOnboarding} initialMode="signup" />
         ) : docsTab ? (

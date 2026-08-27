@@ -9,6 +9,7 @@ import helmet from "helmet";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
 import Redis from "ioredis";
+import { whatsappRouter } from "./lib/whatsappRoutes";
 
 function startServer() {
   const app = express();
@@ -31,6 +32,9 @@ function startServer() {
       req.rawBody = buf;
     }
   }));
+
+  // Mount WhatsApp API, CTWA CAPI, Automations, and MCP Gateway router
+  app.use(whatsappRouter);
   // Normalize Vercel serverless rewritten API URLs
   app.use((req, _res, next) => {
     const candidate = req.headers['x-forwarded-uri'] || req.headers['x-invoke-path'] || req.headers['x-matched-path'] || req.headers['x-now-route-matches'];
