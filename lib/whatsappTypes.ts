@@ -179,3 +179,30 @@ export interface MCPToken {
   last_used_at?: string;
   created_at: string;
 }
+
+export interface WhatsAppAccount {
+  id: string;
+  platform: 'whatsapp';
+  name: string;
+  phone_number: string;
+  phone_number_id?: string;
+  waba_id?: string;
+  status: 'connected' | 'disconnected' | 'pending' | 'sandbox';
+  mode: 'production' | 'sandbox';
+  quality_rating?: 'GREEN' | 'YELLOW' | 'RED' | 'UNKNOWN';
+  messaging_limit_tier?: string;
+  verified_name?: string;
+  connected_at: string;
+}
+
+export interface WhatsAppSandboxSession {
+  id: string;
+  phone_number: string;
+  formatted_phone: string;
+  sandbox_number: string;
+  join_code: string;
+  instructions: string;
+  status: 'active' | 'expired' | 'pending';
+  expires_at: string;
+  created_at: string;
+}

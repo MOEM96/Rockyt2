@@ -486,43 +486,177 @@ whatsappRouter.delete('/api/mcp/tokens/:id', (req: Request<IdParams>, res: Respo
   return res.json({ success: true });
 });
 
-// ─── 9. WABA Connection & Phone Numbers ───
+// ─── 9. WABA Connection, Phone Numbers & Sandbox ───
+whatsappRouter.get('/api/whatsapp/account', async (req: Request, res: Response) => {
+  let account = whatsappStore.getAccount();
+  const sandbox = whatsappStore.getSandboxSession();
+
+  // If no account stored yet, attempt to discover live accounts from Zernio if API key exists
+  if (!account && process.env.ZERNIO_API_KEY) {
+    const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts();
+    if (liveAccounts.length > 0) {
+      account = whatsappStore.setAccount(liveAccounts[0]);
+    }
+  }
+
+  return res.json({
+    connected: Boolean(account && account.status !== 'disconnected'),
+    account: account || null,
+    sandbox: sandbox || null,
+  });
+});
+
+whatsappRouter.post('/api/whatsapp/account/disconnect', (req: Request, res: Response) => {
+  whatsappStore.disconnectAccount();
+  return res.json({ success: true, message: 'WhatsApp account disconnected' });
+});
+
+// WhatsApp Sandbox Endpoints (as per Zernio platform docs)
+whatsappRouter.post('/api/whatsapp/sandbox/session', async (req: Request, res: Response) => {
+  const { phone_number } = req.body;
+  if (!phone_number) {
+    return res.status(400).json({ error: 'Phone number is required to start a sandbox activation.' });
+  }
+
+  const session = await ZernioWhatsAppService.createSandboxSession(phone_number);
+  if (!session) {
+    return res.status(500).json({ error: 'Failed to initialize sandbox session.' });
+  }
+
+  whatsappStore.setSandboxSession(session);
+  return res.json({
+    success: true,
+    session,
+    account: whatsappStore.getAccount(),
+  });
+});
+
+whatsappRouter.get('/api/whatsapp/sandbox/session', (req: Request, res: Response) => {
+  const session = whatsappStore.getSandboxSession();
+  return res.json({ session: session || null });
+});
+
+whatsappRouter.delete('/api/whatsapp/sandbox/session', async (req: Request, res: Response) => {
+  const session = whatsappStore.getSandboxSession();
+  if (session) {
+    await ZernioWhatsAppService.deleteSandboxSession(session.id);
+  }
+  whatsappStore.deleteSandboxSession();
+  return res.json({ success: true, message: 'Sandbox session revoked.' });
+});
+
+// Simulate Sandbox Inbound Message for interactive testing
+whatsappRouter.post('/api/whatsapp/sandbox/simulate-message', async (req: Request, res: Response) => {
+  const session = whatsappStore.getSandboxSession();
+  const phone = req.body.phone_number || session?.phone_number || '+14155552671';
+  const text = req.body.text || 'Hi! Testing WhatsApp sandbox automation and CRM response.';
+  const name = req.body.name || 'Sandbox Tester';
+
+  let contact = whatsappStore.getContactByPhone(phone);
+  if (!contact) {
+    contact = {
+      id: `cnt_${Date.now()}`,
+      phone_number: phone,
+      formatted_phone: phone,
+      name,
+      tags: ['Sandbox_User', 'Live_Test'],
+      custom_fields: { source: 'WhatsApp Sandbox' },
+      lifecycle_stage: 'lead',
+      created_at: new Date().toISOString(),
+      last_activity_at: new Date().toISOString(),
+    };
+    whatsappStore.saveContact(contact);
+  }
+
+  const conv = whatsappStore.getOrCreateConversation(
+    contact,
+    whatsappStore.getAccount()?.id || 'acc_sandbox',
+    'prof_default'
+  );
+
+  const incomingMsg: WhatsAppMessage = {
+    id: `msg_sbx_${Date.now()}`,
+    conversation_id: conv.id,
+    direction: 'incoming',
+    type: 'text',
+    text,
+    status: 'delivered',
+    timestamp: new Date().toISOString(),
+    sender_name: name,
+    sender_phone: phone,
+  };
+
+  whatsappStore.appendMessage(incomingMsg);
+
+  // Trigger automation engine
+  const triggeredFlows = await AutomationEngine.evaluateTrigger(
+    'incoming_message',
+    {
+      conversation: conv,
+      message: incomingMsg,
+      contact,
+    }
+  );
+
+  return res.json({
+    success: true,
+    conversation_id: conv.id,
+    message: incomingMsg,
+    triggered_flows: triggeredFlows,
+  });
+});
+
 whatsappRouter.post('/api/whatsapp/connect/oauth', (req: Request, res: Response) => {
-  const redirectUrl = `https://zernio.com/oauth/whatsapp?client_id=${process.env.ZERNIO_API_KEY || 'demo'}&redirect_uri=${encodeURIComponent('https://rockyt.io/dashboard?waba=connected')}`;
+  const profileId = (req.query.profileId as string) || 'prof_default';
+  const redirectUri = encodeURIComponent('https://rockyt.io/dashboard?waba=connected');
+  const redirectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${profileId}&redirect_url=${redirectUri}`;
   return res.json({ url: redirectUrl });
 });
 
 whatsappRouter.post('/api/whatsapp/connect/headless', (req: Request, res: Response) => {
-  const { waba_id, phone_number_id, access_token } = req.body;
+  const { waba_id, phone_number_id, access_token, name, phone_number } = req.body;
   if (!waba_id || !phone_number_id || !access_token) {
     return res.status(400).json({ error: 'Missing required credentials: waba_id, phone_number_id, access_token' });
   }
 
+  const account: any = {
+    id: `acc_waba_${waba_id.substring(0, 8)}`,
+    platform: 'whatsapp',
+    name: name || 'Connected WhatsApp Business Account',
+    phone_number: phone_number || '+1 (415) 555-0199',
+    phone_number_id,
+    waba_id,
+    status: 'connected',
+    mode: 'production',
+    quality_rating: 'GREEN',
+    messaging_limit_tier: 'TIER_100K_DAILY',
+    verified_name: name || 'Verified WABA',
+    connected_at: new Date().toISOString(),
+  };
+
+  whatsappStore.setAccount(account);
+
   return res.json({
     success: true,
-    account: {
-      id: `acc_waba_${waba_id.substring(0, 6)}`,
-      platform: 'whatsapp',
-      waba_id,
-      phone_number_id,
-      status: 'connected',
-      quality_rating: 'GREEN',
-      tier: 'TIER_100K_DAILY',
-      verified_name: 'Rockyt WhatsApp Business Hub',
-    },
+    account,
   });
 });
 
 whatsappRouter.get('/api/whatsapp/phone-numbers', (req: Request, res: Response) => {
+  const account = whatsappStore.getAccount();
+  if (!account) {
+    return res.json({ data: [] });
+  }
+
   return res.json({
     data: [
       {
-        id: 'pn_1001',
-        display_phone_number: '+1 (415) 555-0199',
-        verified_name: 'Rockyt WhatsApp Business Hub',
-        quality_rating: 'GREEN',
+        id: account.phone_number_id || 'pn_1001',
+        display_phone_number: account.phone_number,
+        verified_name: account.verified_name || account.name,
+        quality_rating: account.quality_rating || 'GREEN',
         code_verification_status: 'VERIFIED',
-        messaging_limit_tier: 'TIER_100K',
+        messaging_limit_tier: account.messaging_limit_tier || 'TIER_100K',
         status: 'CONNECTED',
       },
     ],

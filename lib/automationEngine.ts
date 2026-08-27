@@ -5,7 +5,42 @@ import crypto from 'crypto';
 
 export class AutomationEngine {
   /**
-   * Evaluate active flows when an incoming message or CTWA click is detected
+   * Evaluate active flows when an incoming message or trigger occurs
+   */
+  public static async evaluateTrigger(
+    type: 'incoming_message' | 'ctwa_click' | 'tag_added',
+    payload: { conversation: any; message?: any; contact?: any }
+  ) {
+    const flows = whatsappStore.getAutomations().filter((f) => f.is_active);
+    const triggered: string[] = [];
+
+    for (const flow of flows) {
+      let shouldRun = false;
+
+      if (type === 'ctwa_click' && flow.trigger_type === 'ctwa') {
+        shouldRun = true;
+      } else if (type === 'incoming_message') {
+        if (flow.trigger_type === 'keyword') {
+          const triggerNode = flow.nodes.find((n) => n.type === 'trigger_incoming_message' || n.type === 'condition_keyword');
+          const kw = triggerNode?.config?.keyword?.toLowerCase();
+          if (kw && payload.message?.text?.toLowerCase().includes(kw)) {
+            shouldRun = true;
+          }
+        } else if (flow.trigger_type === 'new_conversation' || !flow.trigger_type) {
+          shouldRun = true;
+        }
+      }
+
+      if (shouldRun) {
+        await this.executeFlow(flow, payload.conversation);
+        triggered.push(flow.id);
+      }
+    }
+    return triggered;
+  }
+
+  /**
+   * Process incoming trigger by ID
    */
   public static async processIncomingTrigger(params: {
     type: 'message_received' | 'ctwa_click';

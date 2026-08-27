@@ -18,6 +18,8 @@ import { Router } from "express";
 import crypto from "crypto";
 var WhatsAppStore = class {
   constructor() {
+    this.connectedAccount = null;
+    this.sandboxSession = null;
     this.contacts = /* @__PURE__ */ new Map();
     this.conversations = /* @__PURE__ */ new Map();
     this.messages = /* @__PURE__ */ new Map();
@@ -26,431 +28,52 @@ var WhatsAppStore = class {
     this.automations = /* @__PURE__ */ new Map();
     this.capiEvents = [];
     this.mcpTokens = /* @__PURE__ */ new Map();
-    this.seedInitialData();
   }
-  seedInitialData() {
-    const contact1 = {
-      id: "cnt_101",
-      phone_number: "+14155552671",
-      formatted_phone: "+1 (415) 555-2671",
-      name: "Sarah Jenkins",
-      email: "sarah.j@techflow.io",
-      avatar_url: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150",
-      tags: ["CTWA_Lead", "High_Intent", "Enterprise"],
-      custom_fields: { company: "TechFlow", size: "50-100", budget: "$5,000+" },
-      lifecycle_stage: "qualified_lead",
-      created_at: new Date(Date.now() - 36e5 * 2).toISOString(),
-      last_activity_at: new Date(Date.now() - 1e3 * 60 * 12).toISOString(),
-      ctwa_source: {
-        source_id: "ad_9823412093",
-        source_type: "ad",
-        source_url: "https://fb.me/ad_demo_whatsapp_scale",
-        headline: "Automate WhatsApp Sales with AI",
-        body: "Click to start a conversation with our AI consultant now.",
-        ad_id: "9823412093",
-        campaign_id: "cmp_ctwa_enterprise_scale",
-        campaign_name: "CTWA_Q3_Scale_Inbound",
-        ctwa_clid: "ctwa_clid_8f7b2a9e1d4c6"
-      },
-      notes: "Came via Meta CTWA Ad. Looking for automated WhatsApp order booking and CAPI conversion sync."
+  // --- Account & Connection Management ---
+  getAccount() {
+    return this.connectedAccount;
+  }
+  setAccount(account) {
+    this.connectedAccount = account;
+    return account;
+  }
+  disconnectAccount() {
+    this.connectedAccount = null;
+    this.sandboxSession = null;
+  }
+  getSandboxSession() {
+    return this.sandboxSession;
+  }
+  setSandboxSession(session) {
+    this.sandboxSession = session;
+    this.connectedAccount = {
+      id: `acc_sandbox_${session.id}`,
+      platform: "whatsapp",
+      name: `WhatsApp Sandbox (${session.formatted_phone || session.phone_number})`,
+      phone_number: session.phone_number,
+      phone_number_id: `pn_sandbox_${session.id}`,
+      status: "sandbox",
+      mode: "sandbox",
+      quality_rating: "GREEN",
+      messaging_limit_tier: "SANDBOX_DEV",
+      verified_name: "Zernio Dev Sandbox",
+      connected_at: session.created_at
     };
-    const contact2 = {
-      id: "cnt_102",
-      phone_number: "+447911123456",
-      formatted_phone: "+44 7911 123456",
-      name: "Alexander Rossi",
-      email: "alex.rossi@luxe-retail.co.uk",
-      avatar_url: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150",
-      tags: ["ECommerce", "VIP_Customer"],
-      custom_fields: { store_type: "Luxury Fashion", order_volume: "1500/mo" },
-      lifecycle_stage: "customer",
-      created_at: new Date(Date.now() - 864e5 * 3).toISOString(),
-      last_activity_at: new Date(Date.now() - 36e5 * 26).toISOString(),
-      // 26 hours ago (outside 24h window)
-      notes: "Customer requires template messages to resume conversation outside 24h window."
-    };
-    const contact3 = {
-      id: "cnt_103",
-      phone_number: "+971501234567",
-      formatted_phone: "+971 50 123 4567",
-      name: "Mariam Al-Mansoor",
-      email: "mariam@gulfcapital.ae",
-      avatar_url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
-      tags: ["CTWA_Lead", "Demo_Booked"],
-      custom_fields: { region: "MENA", interested_product: "WhatsApp CRM Pro" },
-      lifecycle_stage: "lead",
-      created_at: new Date(Date.now() - 36e5 * 6).toISOString(),
-      last_activity_at: new Date(Date.now() - 1e3 * 60 * 45).toISOString(),
-      ctwa_source: {
-        source_id: "ad_4421098871",
-        source_type: "ad",
-        source_url: "https://fb.me/ad_dubai_b2b",
-        headline: "Scale WhatsApp Support in UAE",
-        ad_id: "4421098871",
-        campaign_id: "cmp_mena_b2b_growth",
-        campaign_name: "MENA_B2B_LeadGen",
-        ctwa_clid: "ctwa_clid_3309aef81923"
-      }
-    };
-    this.contacts.set(contact1.id, contact1);
-    this.contacts.set(contact2.id, contact2);
-    this.contacts.set(contact3.id, contact3);
-    const conv1Id = "conv_wa_001";
-    const lastCustomerMsg1 = new Date(Date.now() - 1e3 * 60 * 12);
-    const expiresAt1 = new Date(lastCustomerMsg1.getTime() + 864e5);
-    this.conversations.set(conv1Id, {
-      id: conv1Id,
-      account_id: "acc_waba_primary",
-      profile_id: "prof_default",
-      contact: contact1,
-      unread_count: 1,
-      status: "active",
-      last_customer_message_at: lastCustomerMsg1.toISOString(),
-      window_expires_at: expiresAt1.toISOString(),
-      is_window_open: true,
-      ctwa_referral: contact1.ctwa_source,
-      ai_agent_enabled: true,
-      created_at: contact1.created_at,
-      updated_at: (/* @__PURE__ */ new Date()).toISOString()
-    });
-    const conv2Id = "conv_wa_002";
-    const lastCustomerMsg2 = new Date(Date.now() - 36e5 * 26);
-    const expiresAt2 = new Date(lastCustomerMsg2.getTime() + 864e5);
-    this.conversations.set(conv2Id, {
-      id: conv2Id,
-      account_id: "acc_waba_primary",
-      profile_id: "prof_default",
-      contact: contact2,
-      unread_count: 0,
-      status: "active",
-      last_customer_message_at: lastCustomerMsg2.toISOString(),
-      window_expires_at: expiresAt2.toISOString(),
-      is_window_open: false,
-      // Window closed!
-      ai_agent_enabled: false,
-      created_at: contact2.created_at,
-      updated_at: lastCustomerMsg2.toISOString()
-    });
-    const conv3Id = "conv_wa_003";
-    const lastCustomerMsg3 = new Date(Date.now() - 1e3 * 60 * 45);
-    const expiresAt3 = new Date(lastCustomerMsg3.getTime() + 864e5);
-    this.conversations.set(conv3Id, {
-      id: conv3Id,
-      account_id: "acc_waba_primary",
-      profile_id: "prof_default",
-      contact: contact3,
-      unread_count: 0,
-      status: "active",
-      last_customer_message_at: lastCustomerMsg3.toISOString(),
-      window_expires_at: expiresAt3.toISOString(),
-      is_window_open: true,
-      ctwa_referral: contact3.ctwa_source,
-      ai_agent_enabled: true,
-      created_at: contact3.created_at,
-      updated_at: (/* @__PURE__ */ new Date()).toISOString()
-    });
-    this.messages.set(conv1Id, [
-      {
-        id: "msg_1001",
-        conversation_id: conv1Id,
-        direction: "incoming",
-        type: "text",
-        text: "Hi! I saw your Meta Ad about WhatsApp automation. Can we sync with our custom CRM and track Meta CAPI conversions?",
-        status: "read",
-        timestamp: new Date(Date.now() - 1e3 * 60 * 30).toISOString(),
-        referral: contact1.ctwa_source
-      },
-      {
-        id: "msg_1002",
-        conversation_id: conv1Id,
-        direction: "outgoing",
-        type: "text",
-        text: "Hello Sarah! Absolutely. We support realtime Zernio webhooks, custom webhook actions, and automated Meta Conversions API (CAPI) events with CTWA attribution matching.",
-        status: "read",
-        timestamp: new Date(Date.now() - 1e3 * 60 * 25).toISOString()
-      },
-      {
-        id: "msg_1003",
-        conversation_id: conv1Id,
-        direction: "incoming",
-        type: "text",
-        text: "That sounds perfect! Can you send me a quick breakdown or schedule a demo for our team?",
-        status: "delivered",
-        timestamp: new Date(Date.now() - 1e3 * 60 * 12).toISOString()
-      }
-    ]);
-    this.messages.set(conv2Id, [
-      {
-        id: "msg_2001",
-        conversation_id: conv2Id,
-        direction: "incoming",
-        type: "text",
-        text: "Hello, checking order status for shipment #LK-994.",
-        status: "read",
-        timestamp: new Date(Date.now() - 36e5 * 26).toISOString()
-      },
-      {
-        id: "msg_2002",
-        conversation_id: conv2Id,
-        direction: "outgoing",
-        type: "text",
-        text: "Your order #LK-994 has been dispatched with express tracking!",
-        status: "read",
-        timestamp: new Date(Date.now() - 36e5 * 25).toISOString()
-      }
-    ]);
-    this.messages.set(conv3Id, [
-      {
-        id: "msg_3001",
-        conversation_id: conv3Id,
-        direction: "incoming",
-        type: "text",
-        text: "We are expanding our WhatsApp operations in the UAE and need multi-agent routing.",
-        status: "read",
-        timestamp: new Date(Date.now() - 1e3 * 60 * 45).toISOString(),
-        referral: contact3.ctwa_source
-      },
-      {
-        id: "msg_3002",
-        conversation_id: conv3Id,
-        direction: "outgoing",
-        type: "text",
-        text: "Hi Mariam! We offer multi-tenant team inboxes, automated agent assignment, and external MCP agents for autonomous workflows.",
-        status: "read",
-        timestamp: new Date(Date.now() - 1e3 * 60 * 40).toISOString()
-      }
-    ]);
-    this.templates.set("lead_welcome_v1", {
-      id: "tmpl_001",
-      name: "lead_welcome_v1",
-      category: "MARKETING",
-      language: "en_US",
-      status: "APPROVED",
-      components: [
-        {
-          type: "HEADER",
-          format: "TEXT",
-          text: "Welcome to {{1}}! \u{1F680}"
-        },
-        {
-          type: "BODY",
-          text: "Hi {{1}}, thank you for reaching out through WhatsApp! Our AI assistant and team are here to help you automate customer journeys and track Meta conversions."
-        },
-        {
-          type: "FOOTER",
-          text: "Reply STOP to opt out"
-        },
-        {
-          type: "BUTTONS",
-          buttons: [
-            { type: "QUICK_REPLY", text: "Book a Demo \u{1F4C5}" },
-            { type: "URL", text: "Explore Dashboard", url: "https://rockyt.io/dashboard" }
-          ]
-        }
-      ],
-      last_updated: (/* @__PURE__ */ new Date()).toISOString()
-    });
-    this.templates.set("order_update_alert", {
-      id: "tmpl_002",
-      name: "order_update_alert",
-      category: "UTILITY",
-      language: "en_US",
-      status: "APPROVED",
-      components: [
-        {
-          type: "BODY",
-          text: "Hello {{1}}, your order #{{2}} is currently {{3}}. Track your package in real-time below."
-        },
-        {
-          type: "BUTTONS",
-          buttons: [
-            { type: "URL", text: "Track Order", url: "https://rockyt.io/track/{{1}}" },
-            { type: "PHONE_NUMBER", text: "Call Support", phone_number: "+18005550199" }
-          ]
-        }
-      ],
-      last_updated: (/* @__PURE__ */ new Date()).toISOString()
-    });
-    this.templates.set("re_engage_promo_24h", {
-      id: "tmpl_003",
-      name: "re_engage_promo_24h",
-      category: "MARKETING",
-      language: "en_US",
-      status: "APPROVED",
-      components: [
-        {
-          type: "HEADER",
-          format: "TEXT",
-          text: "Exclusive Offer for {{1}} \u{1F381}"
-        },
-        {
-          type: "BODY",
-          text: "Hi {{1}}, we noticed you were interested in our WhatsApp API & Automations suite. Enjoy 20% off your first 3 months with code WA20!"
-        },
-        {
-          type: "FOOTER",
-          text: "Valid for the next 48 hours only"
-        },
-        {
-          type: "BUTTONS",
-          buttons: [
-            { type: "QUICK_REPLY", text: "Claim 20% Discount" },
-            { type: "QUICK_REPLY", text: "Talk to an Agent" }
-          ]
-        }
-      ],
-      last_updated: (/* @__PURE__ */ new Date()).toISOString()
-    });
-    this.broadcasts.set("bc_001", {
-      id: "bc_001",
-      title: "Q3 Enterprise WhatsApp Onboarding Blast",
-      template_name: "lead_welcome_v1",
-      target_tags: ["CTWA_Lead", "High_Intent"],
-      total_recipients: 1420,
-      sent_count: 1420,
-      delivered_count: 1398,
-      read_count: 1145,
-      failed_count: 22,
-      status: "completed",
-      created_at: new Date(Date.now() - 864e5 * 2).toISOString()
-    });
-    this.broadcasts.set("bc_002", {
-      id: "bc_002",
-      title: "VIP Re-engagement Flash Promo",
-      template_name: "re_engage_promo_24h",
-      target_tags: ["VIP_Customer"],
-      total_recipients: 450,
-      sent_count: 450,
-      delivered_count: 442,
-      read_count: 389,
-      failed_count: 8,
-      status: "completed",
-      created_at: new Date(Date.now() - 36e5 * 5).toISOString()
-    });
-    this.automations.set("flow_ctwa_qualifier", {
-      id: "flow_ctwa_qualifier",
-      title: "CTWA Inbound Qualifier & Meta CAPI Sync",
-      description: "Auto-captures CTWA ad clicks, welcomes lead, checks 24h window, and fires Lead event to Meta CAPI.",
-      is_active: true,
-      trigger_type: "ctwa",
-      execution_count: 842,
-      last_triggered_at: new Date(Date.now() - 1e3 * 60 * 12).toISOString(),
-      created_at: new Date(Date.now() - 864e5 * 7).toISOString(),
-      updated_at: (/* @__PURE__ */ new Date()).toISOString(),
-      nodes: [
-        {
-          id: "node_1",
-          type: "trigger_ctwa_click",
-          title: "Trigger: CTWA Ad Click",
-          config: { match_campaign: "All CTWA Campaigns" },
-          position: { x: 100, y: 150 }
-        },
-        {
-          id: "node_2",
-          type: "condition_24h_window",
-          title: "Condition: 24h Window Check",
-          config: {},
-          position: { x: 380, y: 150 }
-        },
-        {
-          id: "node_3",
-          type: "action_send_message",
-          title: "Action: Send Warm Welcome",
-          config: { text: "Hi! Welcome to our WhatsApp assistant. How can we help you scale your business today?" },
-          position: { x: 660, y: 80 }
-        },
-        {
-          id: "node_4",
-          type: "action_send_template",
-          title: "Action: Send Approved Template",
-          config: { template_name: "lead_welcome_v1" },
-          position: { x: 660, y: 240 }
-        },
-        {
-          id: "node_5",
-          type: "action_trigger_capi",
-          title: 'Action: Fire Meta CAPI "Lead"',
-          config: { event_name: "Lead", include_ctwa_clid: true, default_value: 25 },
-          position: { x: 940, y: 150 }
-        },
-        {
-          id: "node_6",
-          type: "action_add_tag",
-          title: "Action: Tag Contact",
-          config: { tag: "CTWA_Qualified" },
-          position: { x: 1200, y: 150 }
-        }
-      ],
-      edges: [
-        { id: "e1_2", source: "node_1", target: "node_2" },
-        { id: "e2_3", source: "node_2", target: "node_3", label: "Window Open" },
-        { id: "e2_4", source: "node_2", target: "node_4", label: "Window Closed" },
-        { id: "e3_5", source: "node_3", target: "node_5" },
-        { id: "e4_5", source: "node_4", target: "node_5" },
-        { id: "e5_6", source: "node_5", target: "node_6" }
-      ]
-    });
-    this.capiEvents = [
-      {
-        id: "capi_log_001",
-        event_id: "wa_capi_1740689400_a1b2",
-        event_name: "Lead",
-        event_time: Math.floor(Date.now() / 1e3) - 720,
-        contact_id: contact1.id,
-        conversation_id: conv1Id,
-        phone_number: contact1.phone_number,
-        email: contact1.email,
-        ctwa_clid: contact1.ctwa_source?.ctwa_clid,
-        ad_id: contact1.ctwa_source?.ad_id,
-        campaign_id: contact1.ctwa_source?.campaign_id,
-        value: 45,
-        currency: "USD",
-        status: "delivered",
-        meta_response: {
-          events_received: 1,
-          fbtrace_id: "F4k_872xL9mN2q",
-          messages: ["Event matched via ctwa_clid and hashed phone/email"]
-        },
-        created_at: new Date(Date.now() - 72e4).toISOString()
-      },
-      {
-        id: "capi_log_002",
-        event_id: "wa_capi_1740688100_c3d4",
-        event_name: "Schedule",
-        event_time: Math.floor(Date.now() / 1e3) - 2700,
-        contact_id: contact3.id,
-        conversation_id: conv3Id,
-        phone_number: contact3.phone_number,
-        email: contact3.email,
-        ctwa_clid: contact3.ctwa_source?.ctwa_clid,
-        ad_id: contact3.ctwa_source?.ad_id,
-        campaign_id: contact3.ctwa_source?.campaign_id,
-        value: 120,
-        currency: "USD",
-        status: "delivered",
-        meta_response: {
-          events_received: 1,
-          fbtrace_id: "M9v_112zP4sA7w",
-          messages: ["Event matched via ctwa_clid with 99% match quality"]
-        },
-        created_at: new Date(Date.now() - 27e5).toISOString()
-      }
-    ];
-    const defaultMcpToken = {
-      id: "mcp_tok_001",
-      name: "Claude Desktop Agent Token",
-      token_prefix: "mcp_wa_live_",
-      token_hash: crypto.createHash("sha256").update("mcp_wa_live_demo_agent_key_2026").digest("hex"),
-      scopes: ["whatsapp:read", "whatsapp:write", "capi:dispatch", "contacts:manage"],
-      last_used_at: new Date(Date.now() - 1e3 * 60 * 5).toISOString(),
-      created_at: new Date(Date.now() - 864e5 * 14).toISOString()
-    };
-    this.mcpTokens.set(defaultMcpToken.id, defaultMcpToken);
+    return session;
+  }
+  deleteSandboxSession() {
+    this.sandboxSession = null;
+    if (this.connectedAccount?.mode === "sandbox") {
+      this.connectedAccount = null;
+    }
+  }
+  isConnected() {
+    return this.connectedAccount !== null && this.connectedAccount.status !== "disconnected";
   }
   // --- Contacts ---
   getContacts() {
     return Array.from(this.contacts.values()).sort(
-      (a, b) => new Date(b.last_activity_at).getTime() - new Date(a.last_activity_at).getTime()
+      (a, b) => new Date(b.last_activity_at || b.created_at).getTime() - new Date(a.last_activity_at || a.created_at).getTime()
     );
   }
   getContact(id) {
@@ -465,6 +88,9 @@ var WhatsAppStore = class {
   saveContact(contact) {
     this.contacts.set(contact.id, contact);
     return contact;
+  }
+  deleteContact(id) {
+    return this.contacts.delete(id);
   }
   // --- Conversations ---
   getConversations() {
@@ -493,8 +119,51 @@ var WhatsAppStore = class {
     conv.last_message = this.getLatestMessage(id) || conv.last_message;
     return conv;
   }
-  saveConversation(conv) {
-    this.conversations.set(conv.id, conv);
+  getOrCreateConversation(contact, accountId = this.connectedAccount?.id || "acc_primary", profileId = "prof_default", initialReferral) {
+    let existing = Array.from(this.conversations.values()).find(
+      (c) => c.contact.phone_number === contact.phone_number || c.contact.id === contact.id
+    );
+    if (existing) {
+      existing.contact = contact;
+      if (initialReferral && !existing.ctwa_referral) {
+        existing.ctwa_referral = initialReferral;
+      }
+      return existing;
+    }
+    const now = /* @__PURE__ */ new Date();
+    const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1e3);
+    const newConvId = `conv_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
+    const newConv = {
+      id: newConvId,
+      account_id: accountId,
+      profile_id: profileId,
+      contact,
+      unread_count: 0,
+      status: "active",
+      last_customer_message_at: now.toISOString(),
+      window_expires_at: expiresAt.toISOString(),
+      is_window_open: true,
+      ctwa_referral: initialReferral || contact.ctwa_source,
+      ai_agent_enabled: true,
+      created_at: now.toISOString(),
+      updated_at: now.toISOString()
+    };
+    this.conversations.set(newConvId, newConv);
+    return newConv;
+  }
+  markConversationRead(id) {
+    const conv = this.conversations.get(id);
+    if (conv) {
+      conv.unread_count = 0;
+      conv.updated_at = (/* @__PURE__ */ new Date()).toISOString();
+    }
+  }
+  toggleAIAgent(id, enabled) {
+    const conv = this.conversations.get(id);
+    if (conv) {
+      conv.ai_agent_enabled = enabled;
+      conv.updated_at = (/* @__PURE__ */ new Date()).toISOString();
+    }
     return conv;
   }
   // --- Messages ---
@@ -507,37 +176,28 @@ var WhatsAppStore = class {
     return msgs[msgs.length - 1];
   }
   appendMessage(msg) {
-    const existing = this.messages.get(msg.conversation_id) || [];
-    existing.push(msg);
-    this.messages.set(msg.conversation_id, existing);
     const conv = this.conversations.get(msg.conversation_id);
+    if (!this.messages.has(msg.conversation_id)) {
+      this.messages.set(msg.conversation_id, []);
+    }
+    this.messages.get(msg.conversation_id).push(msg);
     if (conv) {
       conv.last_message = msg;
-      conv.updated_at = msg.timestamp;
+      conv.updated_at = msg.timestamp || (/* @__PURE__ */ new Date()).toISOString();
       if (msg.direction === "incoming") {
-        conv.last_customer_message_at = msg.timestamp;
-        conv.window_expires_at = new Date(new Date(msg.timestamp).getTime() + 864e5).toISOString();
-        conv.is_window_open = true;
         conv.unread_count += 1;
-        if (msg.referral) {
+        conv.last_customer_message_at = msg.timestamp || (/* @__PURE__ */ new Date()).toISOString();
+        const newExpiry = new Date(new Date(conv.last_customer_message_at).getTime() + 24 * 60 * 60 * 1e3);
+        conv.window_expires_at = newExpiry.toISOString();
+        conv.is_window_open = true;
+        if (msg.referral && !conv.ctwa_referral) {
           conv.ctwa_referral = msg.referral;
-          if (conv.contact) {
-            conv.contact.ctwa_source = msg.referral;
-          }
         }
       }
-      this.conversations.set(conv.id, conv);
     }
     return msg;
   }
-  markConversationRead(conversationId) {
-    const conv = this.conversations.get(conversationId);
-    if (conv) {
-      conv.unread_count = 0;
-      this.conversations.set(conv.id, conv);
-    }
-  }
-  // --- Templates ---
+  // --- Meta Templates ---
   getTemplates() {
     return Array.from(this.templates.values());
   }
@@ -557,9 +217,12 @@ var WhatsAppStore = class {
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
   }
-  saveBroadcast(bc) {
-    this.broadcasts.set(bc.id, bc);
-    return bc;
+  getBroadcast(id) {
+    return this.broadcasts.get(id);
+  }
+  saveBroadcast(campaign) {
+    this.broadcasts.set(campaign.id, campaign);
+    return campaign;
   }
   // --- Automations ---
   getAutomations() {
@@ -571,46 +234,67 @@ var WhatsAppStore = class {
     return this.automations.get(id);
   }
   saveAutomation(flow) {
+    flow.updated_at = (/* @__PURE__ */ new Date()).toISOString();
     this.automations.set(flow.id, flow);
     return flow;
   }
   deleteAutomation(id) {
     return this.automations.delete(id);
   }
-  // --- CAPI Events ---
+  // --- Meta CAPI Events ---
   getCAPIEvents() {
-    return [...this.capiEvents].sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
+    return [...this.capiEvents].sort((a, b) => b.event_time - a.event_time);
   }
   logCAPIEvent(event) {
     this.capiEvents.unshift(event);
     if (this.capiEvents.length > 500) {
-      this.capiEvents.pop();
+      this.capiEvents = this.capiEvents.slice(0, 500);
     }
     return event;
   }
   // --- MCP Tokens ---
   getMCPTokens() {
-    return Array.from(this.mcpTokens.values()).sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
+    return Array.from(this.mcpTokens.values()).map(({ token_hash, ...rest }) => rest);
   }
   createMCPToken(name, scopes = ["*"]) {
-    const rawKey = `mcp_wa_${crypto.randomBytes(16).toString("hex")}`;
+    const rawSecret = `mcp_wa_${crypto.randomBytes(24).toString("hex")}`;
+    const tokenHash = crypto.createHash("sha256").update(rawSecret).digest("hex");
     const tokenRecord = {
-      id: `tok_${Date.now()}`,
+      id: `mcp_tok_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`,
       name,
-      token_prefix: rawKey.substring(0, 12) + "...",
-      token_hash: crypto.createHash("sha256").update(rawKey).digest("hex"),
+      token_prefix: rawSecret.substring(0, 10),
+      token_hash: tokenHash,
       scopes,
       created_at: (/* @__PURE__ */ new Date()).toISOString()
     };
     this.mcpTokens.set(tokenRecord.id, tokenRecord);
-    return { token: rawKey, record: tokenRecord };
+    return { token: rawSecret, record: tokenRecord };
+  }
+  validateMCPToken(token) {
+    if (!token) return null;
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    const found = Array.from(this.mcpTokens.values()).find((t) => t.token_hash === tokenHash);
+    if (found) {
+      found.last_used_at = (/* @__PURE__ */ new Date()).toISOString();
+      return found;
+    }
+    return null;
   }
   deleteMCPToken(id) {
     return this.mcpTokens.delete(id);
+  }
+  // --- Clear / Reset ---
+  clearAllData() {
+    this.contacts.clear();
+    this.conversations.clear();
+    this.messages.clear();
+    this.templates.clear();
+    this.broadcasts.clear();
+    this.automations.clear();
+    this.capiEvents = [];
+    this.mcpTokens.clear();
+    this.connectedAccount = null;
+    this.sandboxSession = null;
   }
 };
 var whatsappStore = new WhatsAppStore();
@@ -627,6 +311,109 @@ var ZernioWhatsAppService = class {
       this.zernioClient = new Zernio({ apiKey });
     }
     return this.zernioClient;
+  }
+  /**
+   * List connected WhatsApp accounts from Zernio
+   */
+  static async listWhatsAppAccounts(profileId) {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey) return [];
+    try {
+      const url = new URL("https://zernio.com/api/v1/accounts");
+      url.searchParams.set("platform", "whatsapp");
+      if (profileId) url.searchParams.set("profileId", profileId);
+      const res = await fetch(url.toString(), {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        }
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const accounts = json.accounts || json.data || [];
+        return accounts.map((acc) => ({
+          id: acc._id || acc.id,
+          platform: "whatsapp",
+          name: acc.name || acc.username || "WhatsApp Business Account",
+          phone_number: acc.phoneNumber || acc.phone || "+1 (415) 555-0199",
+          phone_number_id: acc.phoneNumberId || acc.id,
+          waba_id: acc.wabaId,
+          status: "connected",
+          mode: "production",
+          quality_rating: acc.qualityRating || "GREEN",
+          messaging_limit_tier: acc.messagingLimitTier || "TIER_10K",
+          verified_name: acc.verifiedName || acc.name,
+          connected_at: acc.createdAt || (/* @__PURE__ */ new Date()).toISOString()
+        }));
+      }
+    } catch (err) {
+      console.warn("[Zernio SDK listWhatsAppAccounts Notice]:", err.message);
+    }
+    return [];
+  }
+  /**
+   * Create a WhatsApp Sandbox session on Zernio for testing
+   */
+  static async createSandboxSession(phoneNumber) {
+    const cleanPhone = phoneNumber.replace(/[^0-9+]/g, "");
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey) {
+      try {
+        const res = await fetch("https://zernio.com/api/v1/whatsapp/sandbox/sessions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ phone_number: cleanPhone })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const session = data.session || data;
+          return {
+            id: session.id || `sbx_${Date.now()}`,
+            phone_number: cleanPhone,
+            formatted_phone: session.formatted_phone || cleanPhone,
+            sandbox_number: session.sandbox_number || "+1 415 523 8886",
+            join_code: session.join_code || `join-rockyt-${Math.floor(1e3 + Math.random() * 9e3)}`,
+            instructions: session.instructions || `Send "${session.join_code || "join-rockyt"}" to +1 415 523 8886 on WhatsApp to activate sandbox testing.`,
+            status: "active",
+            expires_at: session.expires_at || new Date(Date.now() + 3 * 864e5).toISOString(),
+            created_at: (/* @__PURE__ */ new Date()).toISOString()
+          };
+        }
+      } catch (err) {
+        console.warn("[Zernio WhatsApp Sandbox API notice]:", err.message);
+      }
+    }
+    const joinCode = `join-rockyt-${Math.floor(1e3 + Math.random() * 9e3)}`;
+    return {
+      id: `sbx_${Date.now()}`,
+      phone_number: cleanPhone,
+      formatted_phone: cleanPhone,
+      sandbox_number: "+1 415 523 8886",
+      join_code: joinCode,
+      instructions: `Send "${joinCode}" to +1 415 523 8886 from your WhatsApp app to start instant two-way testing.`,
+      status: "active",
+      expires_at: new Date(Date.now() + 3 * 864e5).toISOString(),
+      created_at: (/* @__PURE__ */ new Date()).toISOString()
+    };
+  }
+  /**
+   * Delete / revoke a WhatsApp Sandbox session
+   */
+  static async deleteSandboxSession(sessionId) {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey) {
+      try {
+        await fetch(`https://zernio.com/api/v1/whatsapp/sandbox/sessions/${sessionId}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${apiKey}` }
+        });
+      } catch {
+      }
+    }
+    return true;
   }
   /**
    * List inbox conversations for a given tenant profile
@@ -1178,7 +965,35 @@ var MCPServerHandler = class {
 import crypto4 from "crypto";
 var AutomationEngine = class {
   /**
-   * Evaluate active flows when an incoming message or CTWA click is detected
+   * Evaluate active flows when an incoming message or trigger occurs
+   */
+  static async evaluateTrigger(type, payload) {
+    const flows = whatsappStore.getAutomations().filter((f) => f.is_active);
+    const triggered = [];
+    for (const flow of flows) {
+      let shouldRun = false;
+      if (type === "ctwa_click" && flow.trigger_type === "ctwa") {
+        shouldRun = true;
+      } else if (type === "incoming_message") {
+        if (flow.trigger_type === "keyword") {
+          const triggerNode = flow.nodes.find((n) => n.type === "trigger_incoming_message" || n.type === "condition_keyword");
+          const kw = triggerNode?.config?.keyword?.toLowerCase();
+          if (kw && payload.message?.text?.toLowerCase().includes(kw)) {
+            shouldRun = true;
+          }
+        } else if (flow.trigger_type === "new_conversation" || !flow.trigger_type) {
+          shouldRun = true;
+        }
+      }
+      if (shouldRun) {
+        await this.executeFlow(flow, payload.conversation);
+        triggered.push(flow.id);
+      }
+    }
+    return triggered;
+  }
+  /**
+   * Process incoming trigger by ID
    */
   static async processIncomingTrigger(params) {
     const flows = whatsappStore.getAutomations().filter((f) => f.is_active);
@@ -1719,39 +1534,150 @@ whatsappRouter.delete("/api/mcp/tokens/:id", (req, res) => {
   whatsappStore.deleteMCPToken(id);
   return res.json({ success: true });
 });
+whatsappRouter.get("/api/whatsapp/account", async (req, res) => {
+  let account = whatsappStore.getAccount();
+  const sandbox = whatsappStore.getSandboxSession();
+  if (!account && process.env.ZERNIO_API_KEY) {
+    const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts();
+    if (liveAccounts.length > 0) {
+      account = whatsappStore.setAccount(liveAccounts[0]);
+    }
+  }
+  return res.json({
+    connected: Boolean(account && account.status !== "disconnected"),
+    account: account || null,
+    sandbox: sandbox || null
+  });
+});
+whatsappRouter.post("/api/whatsapp/account/disconnect", (req, res) => {
+  whatsappStore.disconnectAccount();
+  return res.json({ success: true, message: "WhatsApp account disconnected" });
+});
+whatsappRouter.post("/api/whatsapp/sandbox/session", async (req, res) => {
+  const { phone_number } = req.body;
+  if (!phone_number) {
+    return res.status(400).json({ error: "Phone number is required to start a sandbox activation." });
+  }
+  const session = await ZernioWhatsAppService.createSandboxSession(phone_number);
+  if (!session) {
+    return res.status(500).json({ error: "Failed to initialize sandbox session." });
+  }
+  whatsappStore.setSandboxSession(session);
+  return res.json({
+    success: true,
+    session,
+    account: whatsappStore.getAccount()
+  });
+});
+whatsappRouter.get("/api/whatsapp/sandbox/session", (req, res) => {
+  const session = whatsappStore.getSandboxSession();
+  return res.json({ session: session || null });
+});
+whatsappRouter.delete("/api/whatsapp/sandbox/session", async (req, res) => {
+  const session = whatsappStore.getSandboxSession();
+  if (session) {
+    await ZernioWhatsAppService.deleteSandboxSession(session.id);
+  }
+  whatsappStore.deleteSandboxSession();
+  return res.json({ success: true, message: "Sandbox session revoked." });
+});
+whatsappRouter.post("/api/whatsapp/sandbox/simulate-message", async (req, res) => {
+  const session = whatsappStore.getSandboxSession();
+  const phone = req.body.phone_number || session?.phone_number || "+14155552671";
+  const text = req.body.text || "Hi! Testing WhatsApp sandbox automation and CRM response.";
+  const name = req.body.name || "Sandbox Tester";
+  let contact = whatsappStore.getContactByPhone(phone);
+  if (!contact) {
+    contact = {
+      id: `cnt_${Date.now()}`,
+      phone_number: phone,
+      formatted_phone: phone,
+      name,
+      tags: ["Sandbox_User", "Live_Test"],
+      custom_fields: { source: "WhatsApp Sandbox" },
+      lifecycle_stage: "lead",
+      created_at: (/* @__PURE__ */ new Date()).toISOString(),
+      last_activity_at: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    whatsappStore.saveContact(contact);
+  }
+  const conv = whatsappStore.getOrCreateConversation(
+    contact,
+    whatsappStore.getAccount()?.id || "acc_sandbox",
+    "prof_default"
+  );
+  const incomingMsg = {
+    id: `msg_sbx_${Date.now()}`,
+    conversation_id: conv.id,
+    direction: "incoming",
+    type: "text",
+    text,
+    status: "delivered",
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    sender_name: name,
+    sender_phone: phone
+  };
+  whatsappStore.appendMessage(incomingMsg);
+  const triggeredFlows = await AutomationEngine.evaluateTrigger(
+    "incoming_message",
+    {
+      conversation: conv,
+      message: incomingMsg,
+      contact
+    }
+  );
+  return res.json({
+    success: true,
+    conversation_id: conv.id,
+    message: incomingMsg,
+    triggered_flows: triggeredFlows
+  });
+});
 whatsappRouter.post("/api/whatsapp/connect/oauth", (req, res) => {
-  const redirectUrl = `https://zernio.com/oauth/whatsapp?client_id=${process.env.ZERNIO_API_KEY || "demo"}&redirect_uri=${encodeURIComponent("https://rockyt.io/dashboard?waba=connected")}`;
+  const profileId = req.query.profileId || "prof_default";
+  const redirectUri = encodeURIComponent("https://rockyt.io/dashboard?waba=connected");
+  const redirectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${profileId}&redirect_url=${redirectUri}`;
   return res.json({ url: redirectUrl });
 });
 whatsappRouter.post("/api/whatsapp/connect/headless", (req, res) => {
-  const { waba_id, phone_number_id, access_token } = req.body;
+  const { waba_id, phone_number_id, access_token, name, phone_number } = req.body;
   if (!waba_id || !phone_number_id || !access_token) {
     return res.status(400).json({ error: "Missing required credentials: waba_id, phone_number_id, access_token" });
   }
+  const account = {
+    id: `acc_waba_${waba_id.substring(0, 8)}`,
+    platform: "whatsapp",
+    name: name || "Connected WhatsApp Business Account",
+    phone_number: phone_number || "+1 (415) 555-0199",
+    phone_number_id,
+    waba_id,
+    status: "connected",
+    mode: "production",
+    quality_rating: "GREEN",
+    messaging_limit_tier: "TIER_100K_DAILY",
+    verified_name: name || "Verified WABA",
+    connected_at: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  whatsappStore.setAccount(account);
   return res.json({
     success: true,
-    account: {
-      id: `acc_waba_${waba_id.substring(0, 6)}`,
-      platform: "whatsapp",
-      waba_id,
-      phone_number_id,
-      status: "connected",
-      quality_rating: "GREEN",
-      tier: "TIER_100K_DAILY",
-      verified_name: "Rockyt WhatsApp Business Hub"
-    }
+    account
   });
 });
 whatsappRouter.get("/api/whatsapp/phone-numbers", (req, res) => {
+  const account = whatsappStore.getAccount();
+  if (!account) {
+    return res.json({ data: [] });
+  }
   return res.json({
     data: [
       {
-        id: "pn_1001",
-        display_phone_number: "+1 (415) 555-0199",
-        verified_name: "Rockyt WhatsApp Business Hub",
-        quality_rating: "GREEN",
+        id: account.phone_number_id || "pn_1001",
+        display_phone_number: account.phone_number,
+        verified_name: account.verified_name || account.name,
+        quality_rating: account.quality_rating || "GREEN",
         code_verification_status: "VERIFIED",
-        messaging_limit_tier: "TIER_100K",
+        messaging_limit_tier: account.messaging_limit_tier || "TIER_100K",
         status: "CONNECTED"
       }
     ]

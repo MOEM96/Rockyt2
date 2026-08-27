@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { 
-  X, CheckCircle2, ShieldCheck, Sparkles, ExternalLink, Key, 
-  Phone, Globe, Zap, AlertCircle, Loader2 
+  X, CheckCircle2, Sparkles, ExternalLink, Key, 
+  Phone, AlertCircle, Loader2, PlayCircle, Info
 } from 'lucide-react';
 
 interface WABAConnectionModalProps {
@@ -15,15 +15,86 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
   onClose,
   onConnected,
 }) => {
-  const [activeTab, setActiveTab] = useState<'embedded' | 'headless'>('embedded');
+  const [activeTab, setActiveTab] = useState<'sandbox' | 'embedded' | 'headless'>('sandbox');
+  const [sandboxPhone, setSandboxPhone] = useState('+14155552671');
+  const [sandboxSession, setSandboxSession] = useState<any>(null);
   const [wabaId, setWabaId] = useState('');
   const [phoneNumberId, setPhoneNumberId] = useState('');
   const [accessToken, setAccessToken] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isSimulating, setIsSimulating] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
   if (!isOpen) return null;
+
+  const handleCreateSandbox = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!sandboxPhone) {
+      setErrorMsg('Please enter a valid phone number with country code (e.g. +14155552671)');
+      return;
+    }
+
+    setIsLoading(true);
+    setErrorMsg('');
+    try {
+      const res = await fetch('/api/whatsapp/sandbox/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone_number: sandboxPhone }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSandboxSession(data.session);
+        setSuccessMsg('WhatsApp Sandbox session activated! You can now test messaging and automations.');
+        if (onConnected) {
+          onConnected(data.account || {
+            name: `WhatsApp Sandbox (${data.session.phone_number})`,
+            phone: data.session.phone_number,
+            status: 'sandbox',
+            mode: 'sandbox',
+            quality_rating: 'GREEN',
+            tier: 'SANDBOX_DEV',
+          });
+        }
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Failed to create sandbox session' }));
+        setErrorMsg(err.error || 'Failed to initialize sandbox session');
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Network error');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSimulateInbound = async () => {
+    setIsSimulating(true);
+    setErrorMsg('');
+    try {
+      const res = await fetch('/api/whatsapp/sandbox/simulate-message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone_number: sandboxPhone,
+          text: 'Hello Rockyt team! Testing WhatsApp CRM sandbox and AI automation.',
+          name: 'Sandbox Test User',
+        }),
+      });
+      if (res.ok) {
+        setSuccessMsg('Simulated test WhatsApp message delivered into your Realtime CRM Inbox!');
+        setTimeout(() => {
+          onClose();
+        }, 1500);
+      } else {
+        setErrorMsg('Failed to dispatch simulated message.');
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Error simulating message');
+    } finally {
+      setIsSimulating(false);
+    }
+  };
 
   const handleEmbeddedConnect = async () => {
     setIsLoading(true);
@@ -33,16 +104,15 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
       if (res.ok) {
         const data = await res.json();
         if (data.url) {
-          // Open OAuth or simulate instant connect in development
-          setSuccessMsg('Meta WhatsApp Business Account connected successfully via Embedded Signup!');
+          setSuccessMsg('Redirecting to official Meta WhatsApp Embedded Signup...');
           if (onConnected) {
             onConnected({
-              id: 'acc_waba_primary',
-              platform: 'whatsapp',
-              waba_id: 'waba_992817264',
-              phone_number_id: 'pn_1001',
+              name: 'Connected Meta WABA',
+              phone: '+1 (415) 555-0199',
               status: 'connected',
-              verified_name: 'Rockyt WhatsApp Business Hub',
+              mode: 'production',
+              quality_rating: 'GREEN',
+              tier: 'TIER_100K',
             });
           }
           setTimeout(() => {
@@ -111,13 +181,23 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
             <Phone className="w-5 h-5" />
           </div>
           <div>
-            <h3 className="text-lg font-bold tracking-tight">Connect WhatsApp Business (WABA)</h3>
+            <h3 className="text-lg font-bold tracking-tight">Connect WhatsApp Account</h3>
             <p className="text-xs text-zinc-400">Powered by Zernio WhatsApp API & Meta Cloud Gateway</p>
           </div>
         </div>
 
         {/* Mode Selector */}
         <div className="flex bg-zinc-900/80 p-1 rounded-xl border border-zinc-800 mb-5">
+          <button
+            onClick={() => setActiveTab('sandbox')}
+            className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${
+              activeTab === 'sandbox'
+                ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/20 font-bold'
+                : 'text-zinc-400 hover:text-white'
+            }`}
+          >
+            🧪 WhatsApp Sandbox (Instant Test)
+          </button>
           <button
             onClick={() => setActiveTab('embedded')}
             className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${
@@ -126,7 +206,7 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
                 : 'text-zinc-400 hover:text-white'
             }`}
           >
-            1-Click Embedded Signup (OAuth)
+            1-Click Embedded (OAuth)
           </button>
           <button
             onClick={() => setActiveTab('headless')}
@@ -136,7 +216,7 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
                 : 'text-zinc-400 hover:text-white'
             }`}
           >
-            Headless Credentials (BYO-WABA)
+            BYO WABA
           </button>
         </div>
 
@@ -154,7 +234,87 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
           </div>
         )}
 
-        {/* Tab 1: Embedded Signup */}
+        {/* Tab 1: WhatsApp Sandbox */}
+        {activeTab === 'sandbox' && (
+          <div className="space-y-4">
+            <div className="p-3.5 bg-zinc-900/60 border border-zinc-800 rounded-xl text-xs text-zinc-300 space-y-2">
+              <div className="flex items-center gap-2 text-amber-400 font-semibold">
+                <Info className="w-4 h-4" />
+                <span>Zero-Verification WhatsApp Developer Sandbox</span>
+              </div>
+              <p className="text-zinc-400 leading-relaxed">
+                Test the full WhatsApp CRM Inbox, 24-hour service window, visual automations, and Meta CAPI tracking immediately without waiting for Meta business verification.
+              </p>
+            </div>
+
+            {!sandboxSession ? (
+              <form onSubmit={handleCreateSandbox} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1">
+                    Your Test Phone Number (E.164 with Country Code)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="+1 (415) 555-2671"
+                    value={sandboxPhone}
+                    onChange={(e) => setSandboxPhone(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-xl text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500 font-mono transition-colors"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-black font-bold rounded-xl text-sm transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 disabled:opacity-50"
+                >
+                  {isLoading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      <span>Activate WhatsApp Sandbox Session</span>
+                    </>
+                  )}
+                </button>
+              </form>
+            ) : (
+              <div className="p-4 bg-emerald-950/20 border border-emerald-500/30 rounded-xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Active Sandbox Session</span>
+                  <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 text-[10px] font-mono font-bold">ACTIVE</span>
+                </div>
+                <div className="p-3 bg-black/50 border border-zinc-800 rounded-lg text-xs font-mono text-zinc-300 space-y-1">
+                  <div><strong>Your Test Phone:</strong> {sandboxSession.phone_number}</div>
+                  <div><strong>Sandbox Number:</strong> {sandboxSession.sandbox_number}</div>
+                  <div><strong>Join Code:</strong> <span className="text-emerald-400 font-bold">{sandboxSession.join_code}</span></div>
+                </div>
+                <p className="text-[11px] text-zinc-400 leading-relaxed">
+                  {sandboxSession.instructions}
+                </p>
+
+                <div className="pt-2 flex gap-2">
+                  <button
+                    onClick={handleSimulateInbound}
+                    disabled={isSimulating}
+                    className="flex-1 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 shadow-md shadow-emerald-500/20 disabled:opacity-50"
+                  >
+                    {isSimulating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />}
+                    <span>Simulate Inbound Test Message</span>
+                  </button>
+
+                  <button
+                    onClick={onClose}
+                    className="px-4 py-2.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-xs font-semibold text-zinc-300 transition-colors"
+                  >
+                    Open CRM Inbox
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab 2: Embedded Signup */}
         {activeTab === 'embedded' && (
           <div className="space-y-4">
             <div className="p-4 bg-zinc-900/50 border border-zinc-800/80 rounded-xl text-xs text-zinc-300 space-y-2">
@@ -166,11 +326,6 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
                 Connect your Meta WhatsApp Business Account seamlessly with Zernio's official hosted flow.
                 Automatically provisions phone numbers, sets up webhook subscriptions, and enables CTWA ad tracking.
               </p>
-              <ul className="text-zinc-400 space-y-1 list-disc list-inside pt-1">
-                <li>Zero server configuration required</li>
-                <li>Instant 24-hour window webhook routing</li>
-                <li>Meta Conversions API (CAPI) auto-enabled</li>
-              </ul>
             </div>
 
             <button
@@ -190,7 +345,7 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
           </div>
         )}
 
-        {/* Tab 2: Headless Credentials */}
+        {/* Tab 3: Headless Credentials */}
         {activeTab === 'headless' && (
           <form onSubmit={handleHeadlessConnect} className="space-y-3.5">
             <div>

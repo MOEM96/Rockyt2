@@ -208,7 +208,14 @@ export const ContactsCRM: React.FC<ContactsCRMProps> = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-900">
-              {filteredContacts.map((cnt) => (
+              {filteredContacts.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="p-8 text-center text-zinc-500 text-xs">
+                    No WhatsApp contacts found. Add a contact above or activate sandbox messaging.
+                  </td>
+                </tr>
+              ) : (
+                filteredContacts.map((cnt) => (
                 <tr key={cnt.id} className="hover:bg-zinc-900/40 transition-colors">
                   <td className="p-3.5 pl-5 font-bold text-white flex items-center gap-3">
                     <img
@@ -250,7 +257,7 @@ export const ContactsCRM: React.FC<ContactsCRMProps> = () => {
                     {new Date(cnt.last_activity_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </td>
                 </tr>
-              ))}
+              )))}
             </tbody>
           </table>
         </div>

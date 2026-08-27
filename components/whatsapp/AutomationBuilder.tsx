@@ -432,8 +432,21 @@ export const AutomationBuilder: React.FC = () => {
           </div>
         </div>
       ) : (
-        <div className="flex-1 flex items-center justify-center text-zinc-500 text-xs">
-          Select or create an automation flow to begin.
+        <div className="flex-1 flex flex-col items-center justify-center p-8 bg-zinc-950/40 text-center">
+          <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mb-3">
+            <Zap className="w-6 h-6" />
+          </div>
+          <h3 className="text-sm font-bold text-white mb-1">No Visual Automation Flow Selected</h3>
+          <p className="text-xs text-zinc-400 mb-4 max-w-sm leading-relaxed">
+            Create automated WhatsApp workflows with keyword matching, 24h window checks, and Meta CAPI conversion triggers.
+          </p>
+          <button
+            onClick={handleCreateFlow}
+            className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-bold rounded-xl text-xs transition-all shadow-md shadow-emerald-500/20 flex items-center gap-2"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Create New WhatsApp Flow</span>
+          </button>
         </div>
       )}
 

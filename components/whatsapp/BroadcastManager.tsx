@@ -208,7 +208,14 @@ export const BroadcastManager: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-900">
-              {broadcasts.map((bc) => {
+              {broadcasts.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="p-8 text-center text-zinc-500 text-xs">
+                    No broadcast campaigns scheduled yet. Click "+ New Broadcast" to send a template blast.
+                  </td>
+                </tr>
+              ) : (
+                broadcasts.map((bc) => {
                 const readRate = bc.sent_count > 0 ? ((bc.read_count / bc.sent_count) * 100).toFixed(1) : '0';
 
                 return (
@@ -232,7 +239,7 @@ export const BroadcastManager: React.FC = () => {
                     </td>
                   </tr>
                 );
-              })}
+              }))}
             </tbody>
           </table>
         </div>
