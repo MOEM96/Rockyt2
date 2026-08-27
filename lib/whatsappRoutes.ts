@@ -34,7 +34,7 @@ whatsappRouter.post('/api/webhooks/zernio', async (req: Request, res: Response) 
     }
 
     const event = req.body;
-    if (!event || !event.event) {
+    if (!event || (!event.event && !event.action && !event.type)) {
       return res.status(400).json({ error: 'Invalid payload structure' });
     }
 
@@ -50,34 +50,57 @@ whatsappRouter.post('/api/webhooks/zernio', async (req: Request, res: Response) 
       }
     }
 
-    // Process asynchronously off the request path
-    setImmediate(async () => {
-      try {
-        const eventType = event.event;
-        const msgData = event.message;
-        const convData = event.conversation;
-        const accountData = event.account;
+    const eventType = event.event || event.action;
+    const metadata = event.metadata || {};
+    const msgData = event.message || {
+      id: metadata.messageId || event.id || `msg_${Date.now()}`,
+      conversationId: metadata.conversationId,
+      text: metadata.messagePreview || metadata.text,
+      sender: {
+        name: metadata.senderName,
+        phone: metadata.senderPhone,
+      },
+      timestamp: event.created_at || new Date().toISOString(),
+    };
+    const convData = event.conversation;
+    const accountData = event.account;
 
-        if (eventType === 'conversation.started' && convData) {
-          let contact = whatsappStore.getContactByPhone(convData.contact?.phone_number || '');
-          if (!contact) {
-            contact = {
-              id: `cnt_${Date.now()}`,
-              phone_number: convData.contact?.phone_number || '+1000000000',
-              formatted_phone: convData.contact?.phone_number || '+1 (000) 000-0000',
-              name: convData.contact?.name || 'WhatsApp Contact',
-              tags: ['New_Inbound'],
-              custom_fields: {},
-              lifecycle_stage: 'subscriber',
-              created_at: new Date().toISOString(),
-              last_activity_at: new Date().toISOString(),
-            };
-            whatsappStore.saveContact(contact);
-          }
+    // If sandbox reply message received, flip sandbox to active
+    if (eventType === 'message.received' || eventType === 'whatsapp.sandbox.verified') {
+      const sandbox = whatsappStore.getSandboxSession();
+      if (sandbox) {
+        sandbox.status = 'active';
+        whatsappStore.setSandboxSession(sandbox);
+      }
+    }
 
-          whatsappStore.saveConversation({
-            id: convData.id || `conv_${Date.now()}`,
-            account_id: accountData?.id || 'acc_waba_primary',
+    const phone = msgData.sender?.phone || metadata.senderPhone || convData?.contact?.phone_number || '';
+    const name = msgData.sender?.name || metadata.senderName || convData?.contact?.name || 'WhatsApp Contact';
+    const convId = msgData.conversationId || msgData.conversation_id || convData?.id || metadata.conversationId || `conv_${Date.now()}`;
+
+    if (phone || convId) {
+      let contact = phone ? whatsappStore.getContactByPhone(phone) : undefined;
+      if (!contact && phone) {
+        contact = {
+          id: `cnt_${Date.now()}`,
+          phone_number: phone,
+          formatted_phone: phone,
+          name,
+          tags: ['Sandbox_User', 'WhatsApp_Contact'],
+          custom_fields: {},
+          lifecycle_stage: 'lead',
+          created_at: new Date().toISOString(),
+          last_activity_at: new Date().toISOString(),
+        };
+        whatsappStore.saveContact(contact);
+      }
+
+      if (contact) {
+        let conv = whatsappStore.getConversation(convId);
+        if (!conv) {
+          conv = {
+            id: convId,
+            account_id: accountData?.id || event.account_id || 'acc_sandbox',
             profile_id: event.profile_id || 'prof_default',
             contact,
             unread_count: 1,
@@ -88,69 +111,42 @@ whatsappRouter.post('/api/webhooks/zernio', async (req: Request, res: Response) 
             ai_agent_enabled: true,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
-          });
+          };
+          whatsappStore.saveConversation(conv);
+        } else {
+          conv.unread_count += 1;
+          conv.last_customer_message_at = new Date().toISOString();
+          conv.window_expires_at = new Date(Date.now() + 86400000).toISOString();
+          conv.is_window_open = true;
+          whatsappStore.saveConversation(conv);
         }
 
-        if (eventType === 'message.received' && msgData) {
-          const convId = msgData.conversationId || msgData.conversation_id;
-          let conv = convId ? whatsappStore.getConversation(convId) : undefined;
-          
-          let referral = msgData.referral;
-          if (referral) {
-            // Normalize CTWA referral metadata
-            referral = {
-              source_id: referral.source_id || referral.ad_id,
-              source_type: referral.source_type || 'ad',
-              source_url: referral.source_url,
-              headline: referral.headline,
-              body: referral.body,
-              media_url: referral.media_url,
-              ad_id: referral.ad_id,
-              campaign_id: referral.campaign_id,
-              campaign_name: referral.campaign_name,
-              ctwa_clid: referral.ctwa_clid,
-            };
-          }
-
+        if (msgData.text || metadata.messagePreview) {
           const newMsg: WhatsAppMessage = {
             id: msgData.id || `msg_${Date.now()}`,
-            conversation_id: convId || 'conv_wa_001',
+            conversation_id: convId,
             direction: 'incoming',
             type: msgData.type || 'text',
-            text: msgData.text,
+            text: msgData.text || metadata.messagePreview,
             media_url: msgData.media_url,
             status: 'delivered',
             timestamp: msgData.timestamp || new Date().toISOString(),
-            sender_name: msgData.sender?.name || 'Customer',
-            sender_phone: msgData.sender?.phone,
-            referral,
+            sender_name: name,
+            sender_phone: phone,
           };
-
           whatsappStore.appendMessage(newMsg);
 
-          // Trigger Visual Automations
-          await AutomationEngine.processIncomingTrigger({
-            type: referral ? 'ctwa_click' : 'message_received',
-            conversationId: newMsg.conversation_id,
-            messageText: newMsg.text,
-            ctwaData: referral,
-          });
+          // Trigger visual automations
+          try {
+            await AutomationEngine.processIncomingTrigger({
+              type: 'message_received',
+              conversationId: convId,
+              messageText: newMsg.text,
+            });
+          } catch (autoErr) {}
         }
-
-        if (['message.sent', 'message.delivered', 'message.read', 'message.failed'].includes(eventType) && msgData) {
-          const convId = msgData.conversationId || msgData.conversation_id;
-          if (convId) {
-            const msgs = whatsappStore.getMessages(convId);
-            const target = msgs.find((m) => m.id === msgData.id);
-            if (target) {
-              target.status = eventType.replace('message.', '') as any;
-            }
-          }
-        }
-      } catch (err: any) {
-        console.error('[Zernio Webhook Worker Error]:', err);
       }
-    });
+    }
 
     // Return instant 200 OK within 5s SLA
     return res.status(200).json({ ok: true, received: true });
@@ -161,15 +157,112 @@ whatsappRouter.post('/api/webhooks/zernio', async (req: Request, res: Response) 
 });
 
 // ─── 2. WhatsApp Conversations & Messages ───
-whatsappRouter.get('/api/whatsapp/conversations', (req: Request, res: Response) => {
-  const conversations = whatsappStore.getConversations();
-  return res.json({ data: conversations });
+whatsappRouter.get('/api/whatsapp/conversations', async (req: Request, res: Response) => {
+  let localConversations = whatsappStore.getConversations();
+
+  // Sync live conversations from Zernio if API key is present
+  const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+  if (apiKey && apiKey !== 'dummy_dev_key') {
+    try {
+      const liveConversations = await ZernioWhatsAppService.listConversations();
+      if (Array.isArray(liveConversations) && liveConversations.length > 0) {
+        for (const item of liveConversations) {
+          const phone = item.participantId || item.accountUsername || item.id;
+          const name = item.participantName || item.accountUsername || 'WhatsApp User';
+          
+          let contact = whatsappStore.getContactByPhone(phone);
+          if (!contact) {
+            contact = {
+              id: `cnt_${item.participantId || item.id}`,
+              phone_number: phone,
+              formatted_phone: phone,
+              name,
+              avatar_url: item.participantPicture || undefined,
+              tags: ['WhatsApp_User', 'Sandbox_User'],
+              custom_fields: {},
+              lifecycle_stage: 'lead',
+              created_at: item.updatedTime || new Date().toISOString(),
+              last_activity_at: item.updatedTime || new Date().toISOString(),
+            };
+            whatsappStore.saveContact(contact);
+          }
+
+          const lastMsgTime = item.updatedTime || new Date().toISOString();
+          const winExpiry = new Date(new Date(lastMsgTime).getTime() + 24 * 60 * 60 * 1000).toISOString();
+          const isWindowOpen = new Date() < new Date(winExpiry);
+
+          const conv: WhatsAppConversation = {
+            id: item.id,
+            account_id: item.accountId || 'acc_sandbox',
+            profile_id: item.profileId || 'prof_default',
+            contact,
+            unread_count: item.unreadCount || 0,
+            status: item.status || 'active',
+            last_customer_message_at: lastMsgTime,
+            window_expires_at: winExpiry,
+            is_window_open: isWindowOpen,
+            ai_agent_enabled: true,
+            created_at: item.updatedTime || new Date().toISOString(),
+            updated_at: item.updatedTime || new Date().toISOString(),
+            last_message: item.lastMessage ? {
+              id: `msg_sync_${Date.now()}`,
+              conversation_id: item.id,
+              direction: 'incoming',
+              type: 'text',
+              text: item.lastMessage,
+              status: 'delivered',
+              timestamp: lastMsgTime,
+              sender_name: name,
+              sender_phone: phone,
+            } : undefined,
+          };
+
+          whatsappStore.saveConversation(conv);
+        }
+        localConversations = whatsappStore.getConversations();
+      }
+    } catch (syncErr: any) {
+      console.warn('[Zernio live sync notice]:', syncErr.message);
+    }
+  }
+
+  return res.json({ data: localConversations });
 });
 
-whatsappRouter.get('/api/whatsapp/conversations/:id/messages', (req: Request<IdParams>, res: Response) => {
+whatsappRouter.get('/api/whatsapp/conversations/:id/messages', async (req: Request<IdParams>, res: Response) => {
   const { id } = req.params;
-  const messages = whatsappStore.getMessages(id);
+  let messages = whatsappStore.getMessages(id);
   const conversation = whatsappStore.getConversation(id);
+
+  // Sync live messages from Zernio if conversation belongs to Zernio
+  if (/^[0-9a-fA-F]{24}$/.test(id)) {
+    try {
+      const liveMessages = await ZernioWhatsAppService.listMessages(id, conversation?.account_id);
+      if (Array.isArray(liveMessages) && liveMessages.length > 0) {
+        for (const m of liveMessages) {
+          const isFromContact = m.senderId === conversation?.contact.phone_number || m.source === 'contact';
+          const direction = isFromContact ? 'incoming' : (m.direction || 'incoming');
+          const msg: WhatsAppMessage = {
+            id: m.id || m.messageId || `msg_${Date.now()}`,
+            conversation_id: id,
+            direction: direction as any,
+            type: m.attachmentUrl ? 'image' : 'text',
+            text: m.message || m.text,
+            media_url: m.attachmentUrl,
+            status: m.status || 'delivered',
+            timestamp: m.createdAt || m.timestamp || new Date().toISOString(),
+            sender_name: m.senderName || (direction === 'incoming' ? conversation?.contact.name : 'Support Agent'),
+            sender_phone: m.senderPhone || (direction === 'incoming' ? conversation?.contact.phone_number : undefined),
+          };
+          whatsappStore.appendMessage(msg);
+        }
+        messages = whatsappStore.getMessages(id);
+      }
+    } catch (mErr: any) {
+      console.warn('[Zernio live messages notice]:', mErr.message);
+    }
+  }
+
   return res.json({ data: messages, conversation });
 });
 
@@ -191,6 +284,18 @@ whatsappRouter.post('/api/whatsapp/conversations/:id/messages', async (req: Requ
     });
   }
 
+  // Dispatch via Zernio SDK if online and thread is Zernio ID
+  if (/^[0-9a-fA-F]{24}$/.test(id)) {
+    await ZernioWhatsAppService.sendInboxMessage({
+      conversationId: id,
+      accountId: conv.account_id,
+      text,
+      mediaUrl: media_url,
+      participantId: conv.contact.phone_number,
+      templateName: template_name,
+    });
+  }
+
   const msg: WhatsAppMessage = {
     id: `msg_out_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
     conversation_id: id,
@@ -206,10 +311,6 @@ whatsappRouter.post('/api/whatsapp/conversations/:id/messages', async (req: Requ
   };
 
   whatsappStore.appendMessage(msg);
-
-  // Dispatch via Zernio SDK if online
-  ZernioWhatsAppService.sendInboxMessage(id, text, media_url).catch(() => {});
-
   return res.json({ success: true, message: msg });
 });
 
@@ -219,10 +320,12 @@ whatsappRouter.post('/api/whatsapp/conversations/:id/typing', async (req: Reques
   return res.json({ ok: true });
 });
 
-whatsappRouter.post('/api/whatsapp/conversations/:id/read', (req: Request<IdParams>, res: Response) => {
+whatsappRouter.post('/api/whatsapp/conversations/:id/read', async (req: Request<IdParams>, res: Response) => {
   const { id } = req.params;
   whatsappStore.markConversationRead(id);
-  ZernioWhatsAppService.markConversationRead(id).catch(() => {});
+  if (/^[0-9a-fA-F]{24}$/.test(id)) {
+    ZernioWhatsAppService.markConversationRead(id).catch(() => {});
+  }
   return res.json({ ok: true });
 });
 

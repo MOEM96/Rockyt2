@@ -256,40 +256,95 @@ export class ZernioWhatsAppService {
   }
 
   /**
-   * List inbox conversations for a given tenant profile
+   * List inbox conversations from Zernio
    */
-  public static async listConversations(profileId?: string, limit: number = 50) {
-    const client = this.getClient();
-    try {
-      if (client.messages?.listInboxConversations) {
-        return await client.messages.listInboxConversations({
-          query: {
-            profileId,
-            status: 'active',
-            limit,
+  public static async listConversations(profileId?: string, limit: number = 50): Promise<any[]> {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey && apiKey !== 'dummy_dev_key') {
+      try {
+        const url = new URL('https://zernio.com/api/v1/inbox/conversations');
+        url.searchParams.set('platform', 'whatsapp');
+        if (profileId) url.searchParams.set('profileId', profileId);
+        url.searchParams.set('limit', String(limit));
+
+        const res = await fetch(url.toString(), {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
           },
         });
+        if (res.ok) {
+          const json = await res.json();
+          return json.data || json.conversations || [];
+        }
+      } catch (err: any) {
+        console.warn('[Zernio SDK listConversations Notice]:', err.message);
       }
-    } catch (err: any) {
-      console.warn('[Zernio SDK listConversations Notice]:', err.message);
     }
-    return null;
+    return [];
   }
 
   /**
-   * Send WhatsApp message to a conversation
+   * List messages in a conversation from Zernio
    */
-  public static async sendInboxMessage(conversationId: string, text?: string, mediaUrl?: string) {
-    const client = this.getClient();
-    try {
-      if (client.messages?.sendInboxMessage) {
-        return await client.messages.sendInboxMessage({
-          path: { conversationId },
-          body: { text: text || '', mediaUrl },
+  public static async listMessages(conversationId: string, accountId?: string): Promise<any[]> {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey && apiKey !== 'dummy_dev_key' && /^[0-9a-fA-F]{24}$/.test(conversationId)) {
+      try {
+        const url = new URL(`https://zernio.com/api/v1/inbox/conversations/${conversationId}/messages`);
+        if (accountId) url.searchParams.set('accountId', accountId);
+
+        const res = await fetch(url.toString(), {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
         });
+        if (res.ok) {
+          const json = await res.json();
+          return json.messages || json.data || [];
+        }
+      } catch (err: any) {
+        console.warn('[Zernio SDK listMessages Notice]:', err.message);
       }
-    } catch (err: any) {
-      console.warn('[Zernio SDK sendInboxMessage Notice]:', err.message);
+    }
+    return [];
+  }
+
+  /**
+   * Send WhatsApp message to a conversation via Zernio
+   */
+  public static async sendInboxMessage(params: {
+    conversationId: string;
+    accountId?: string;
+    text?: string;
+    mediaUrl?: string;
+    participantId?: string;
+    templateName?: string;
+  }) {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey && apiKey !== 'dummy_dev_key') {
+      try {
+        if (/^[0-9a-fA-F]{24}$/.test(params.conversationId)) {
+          const res = await fetch(`https://zernio.com/api/v1/inbox/conversations/${params.conversationId}/messages`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              accountId: params.accountId,
+              message: params.text || '',
+              attachmentUrl: params.mediaUrl,
+            }),
+          });
+          if (res.ok) {
+            return await res.json();
+          }
+        }
+      } catch (err: any) {
+        console.warn('[Zernio SDK sendInboxMessage Notice]:', err.message);
+      }
     }
     return null;
   }
@@ -298,15 +353,17 @@ export class ZernioWhatsAppService {
    * Send typing indicator to WhatsApp thread
    */
   public static async sendTypingIndicator(conversationId: string) {
-    const client = this.getClient();
-    try {
-      if ((client.messages as any)?.sendTypingIndicator) {
-        return await (client.messages as any).sendTypingIndicator({
-          path: { conversationId },
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey && apiKey !== 'dummy_dev_key' && /^[0-9a-fA-F]{24}$/.test(conversationId)) {
+      try {
+        await fetch(`https://zernio.com/api/v1/inbox/conversations/${conversationId}/typing`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
         });
-      }
-    } catch (err: any) {
-      // Quietly ignore typing indicator errors
+      } catch {}
     }
     return null;
   }
@@ -315,15 +372,17 @@ export class ZernioWhatsAppService {
    * Mark conversation as read
    */
   public static async markConversationRead(conversationId: string) {
-    const client = this.getClient();
-    try {
-      if ((client.messages as any)?.markConversationRead) {
-        return await (client.messages as any).markConversationRead({
-          path: { conversationId },
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey && apiKey !== 'dummy_dev_key' && /^[0-9a-fA-F]{24}$/.test(conversationId)) {
+      try {
+        await fetch(`https://zernio.com/api/v1/inbox/conversations/${conversationId}/read`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
         });
-      }
-    } catch (err: any) {
-      // Quietly ignore
+      } catch {}
     }
     return null;
   }

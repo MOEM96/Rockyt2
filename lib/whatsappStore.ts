@@ -179,6 +179,11 @@ class WhatsAppStore {
     return newConv;
   }
 
+  public saveConversation(conv: WhatsAppConversation): WhatsAppConversation {
+    this.conversations.set(conv.id, conv);
+    return conv;
+  }
+
   public markConversationRead(id: string): void {
     const conv = this.conversations.get(id);
     if (conv) {

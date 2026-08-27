@@ -51,23 +51,27 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect }) =
   };
 
   // Load conversations and templates
-  const loadConversations = async () => {
+  const loadConversations = async (isInitial = false) => {
     try {
-      setIsLoading(true);
+      if (isInitial) setIsLoading(true);
       const res = await fetch('/api/whatsapp/conversations');
       if (res.ok) {
         const data = await res.json();
         if (data.data) {
           setConversations(data.data);
-          if (!activeConvId && data.data.length > 0) {
-            setActiveConvId(data.data[0].id);
+          if (data.data.length > 0) {
+            setActiveConvId((prev) => {
+              // Keep previous selection if it exists in current data, otherwise select first
+              const exists = data.data.some((c: any) => c.id === prev);
+              return exists ? prev : data.data[0].id;
+            });
           }
         }
       }
     } catch (e) {
       console.error('[WhatsApp CRM] Failed to load conversations:', e);
     } finally {
-      setIsLoading(false);
+      if (isInitial) setIsLoading(false);
     }
   };
 
@@ -81,7 +85,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect }) =
     } catch (e) {}
   };
 
-  const loadMessages = async (convId: string) => {
+  const loadMessages = async (convId: string, _isInitial = false) => {
     if (!convId) return;
     try {
       const res = await fetch(`/api/whatsapp/conversations/${convId}/messages`);
@@ -95,17 +99,22 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect }) =
   };
 
   useEffect(() => {
-    loadConversations();
+    loadConversations(true);
     loadTemplates();
-    const interval = setInterval(loadConversations, 10000);
+    const interval = setInterval(() => loadConversations(false), 5000);
     return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
     if (activeConvId) {
-      loadMessages(activeConvId);
+      loadMessages(activeConvId, true);
       // Mark as read
       fetch(`/api/whatsapp/conversations/${activeConvId}/read`, { method: 'POST' }).catch(() => {});
+
+      const msgInterval = setInterval(() => {
+        loadMessages(activeConvId, false);
+      }, 3000);
+      return () => clearInterval(msgInterval);
     }
   }, [activeConvId]);
 
@@ -129,13 +138,31 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect }) =
     e.preventDefault();
     if ((!inputText && !selectedTemplate) || isSending || !activeConvId) return;
 
+    const sentText = inputText;
+    const sentTemplate = selectedTemplate;
+
+    // Optimistic UI update
+    const optimisticMsg: WhatsAppMessage = {
+      id: `temp_${Date.now()}`,
+      conversation_id: activeConvId,
+      direction: 'outgoing',
+      type: sentTemplate ? 'template' : 'text',
+      text: sentText || (sentTemplate ? `[Template: ${sentTemplate}]` : ''),
+      status: 'delivered',
+      timestamp: new Date().toISOString(),
+      sender_name: 'You (Support)',
+    };
+    setMessages((prev) => [...prev, optimisticMsg]);
+    setInputText('');
+    setSelectedTemplate('');
+
     setIsSending(true);
     try {
       const body: any = {};
-      if (selectedTemplate) {
-        body.template_name = selectedTemplate;
+      if (sentTemplate) {
+        body.template_name = sentTemplate;
       } else {
-        body.text = inputText;
+        body.text = sentText;
       }
 
       const res = await fetch(`/api/whatsapp/conversations/${activeConvId}/messages`, {
@@ -145,10 +172,8 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect }) =
       });
 
       if (res.ok) {
-        setInputText('');
-        setSelectedTemplate('');
-        await loadMessages(activeConvId);
-        await loadConversations();
+        await loadMessages(activeConvId, false);
+        await loadConversations(false);
       } else {
         const err = await res.json().catch(() => ({ error: 'Failed to send message' }));
         alert(err.error || 'Failed to send WhatsApp message');
