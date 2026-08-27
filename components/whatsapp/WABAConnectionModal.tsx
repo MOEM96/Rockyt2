@@ -105,21 +105,15 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
         const data = await res.json();
         if (data.url) {
           setSuccessMsg('Redirecting to official Meta WhatsApp Embedded Signup...');
-          if (onConnected) {
-            onConnected({
-              name: 'Connected Meta WABA',
-              phone: '+1 (415) 555-0199',
-              status: 'connected',
-              mode: 'production',
-              quality_rating: 'GREEN',
-              tier: 'TIER_100K',
-            });
-          }
+          // Redirect the browser directly to the OAuth provider URL
           setTimeout(() => {
-            onClose();
-          }, 1500);
+            window.location.href = data.url;
+          }, 300);
+          return;
         }
       }
+      const err = await res.json().catch(() => ({ error: 'Failed to generate OAuth URL' }));
+      setErrorMsg(err.error || 'Failed to initialize Meta OAuth connection');
     } catch (err: any) {
       setErrorMsg(err.message || 'Failed to initiate Meta OAuth connection');
     } finally {
@@ -257,6 +251,7 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
                     type="text"
                     placeholder="+1 (415) 555-2671"
                     value={sandboxPhone}
+                    autoComplete="tel"
                     onChange={(e) => setSandboxPhone(e.target.value)}
                     className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-xl text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500 font-mono transition-colors"
                   />
@@ -356,6 +351,7 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
                 type="text"
                 placeholder="e.g. 109283746501928"
                 value={wabaId}
+                autoComplete="off"
                 onChange={(e) => setWabaId(e.target.value)}
                 className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-xl text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition-colors font-mono"
               />
@@ -369,6 +365,7 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
                 type="text"
                 placeholder="e.g. 100928347109283"
                 value={phoneNumberId}
+                autoComplete="off"
                 onChange={(e) => setPhoneNumberId(e.target.value)}
                 className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-xl text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition-colors font-mono"
               />
@@ -382,6 +379,7 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
                 type="password"
                 placeholder="EAAB..."
                 value={accessToken}
+                autoComplete="current-password"
                 onChange={(e) => setAccessToken(e.target.value)}
                 className="w-full px-3.5 py-2.5 bg-zinc-900 border border-zinc-800 rounded-xl text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition-colors font-mono"
               />
