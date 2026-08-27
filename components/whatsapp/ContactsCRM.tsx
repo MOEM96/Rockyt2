@@ -26,8 +26,10 @@ export const ContactsCRM: React.FC<ContactsCRMProps> = () => {
     try {
       setIsLoading(true);
       const res = await fetch('/api/whatsapp/contacts');
-      const data = await res.json();
-      if (data.data) setContacts(data.data);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.data) setContacts(data.data);
+      }
     } catch (e) {
       console.error(e);
     } finally {

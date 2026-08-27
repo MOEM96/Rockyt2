@@ -31,15 +31,17 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = () => {
     try {
       setIsLoading(true);
       const res = await fetch('/api/whatsapp/conversations');
-      const data = await res.json();
-      if (data.data) {
-        setConversations(data.data);
-        if (!activeConvId && data.data.length > 0) {
-          setActiveConvId(data.data[0].id);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.data) {
+          setConversations(data.data);
+          if (!activeConvId && data.data.length > 0) {
+            setActiveConvId(data.data[0].id);
+          }
         }
       }
     } catch (e) {
-      console.error(e);
+      console.error('[WhatsApp CRM] Failed to load conversations:', e);
     } finally {
       setIsLoading(false);
     }
@@ -48,8 +50,10 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = () => {
   const loadTemplates = async () => {
     try {
       const res = await fetch('/api/whatsapp/templates');
-      const data = await res.json();
-      if (data.data) setTemplates(data.data);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.data) setTemplates(data.data);
+      }
     } catch (e) {}
   };
 
@@ -57,9 +61,11 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = () => {
     if (!convId) return;
     try {
       const res = await fetch(`/api/whatsapp/conversations/${convId}/messages`);
-      const data = await res.json();
-      if (data.data) {
-        setMessages(data.data);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.data) {
+          setMessages(data.data);
+        }
       }
     } catch (e) {}
   };
@@ -120,7 +126,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = () => {
         await loadMessages(activeConvId);
         await loadConversations();
       } else {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({ error: 'Failed to send message' }));
         alert(err.error || 'Failed to send WhatsApp message');
       }
     } catch (e) {
@@ -145,9 +151,9 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = () => {
           currency: 'USD',
         }),
       });
-      const data = await res.json();
       if (res.ok) {
-        setCapiSuccess(`Dispatched "${eventName}" to Meta CAPI! Event ID: ${data.event.event_id.slice(0, 14)}...`);
+        const data = await res.json();
+        setCapiSuccess(`Dispatched "${eventName}" to Meta CAPI! Event ID: ${data.event?.event_id?.slice(0, 14) || 'wa_capi'}...`);
         setTimeout(() => setCapiSuccess(null), 4500);
       }
     } catch (e) {

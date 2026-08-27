@@ -24,13 +24,14 @@ export const MCPGateway: React.FC = () => {
         fetch('/api/mcp/tokens'),
         fetch('/api/mcp/manifest'),
       ]);
-      const [dataTokens, dataManifest] = await Promise.all([
-        resTokens.json(),
-        resManifest.json(),
-      ]);
-
-      if (dataTokens.data) setTokens(dataTokens.data);
-      if (dataManifest) setManifest(dataManifest);
+      if (resTokens.ok) {
+        const dataTokens = await resTokens.json();
+        if (dataTokens.data) setTokens(dataTokens.data);
+      }
+      if (resManifest.ok) {
+        const dataManifest = await resManifest.json();
+        if (dataManifest) setManifest(dataManifest);
+      }
     } catch (e) {
       console.error(e);
     }

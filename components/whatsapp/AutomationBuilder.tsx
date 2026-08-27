@@ -19,11 +19,13 @@ export const AutomationBuilder: React.FC = () => {
   const loadFlows = async () => {
     try {
       const res = await fetch('/api/whatsapp/automations');
-      const data = await res.json();
-      if (data.data) {
-        setFlows(data.data);
-        if (!activeFlowId && data.data.length > 0) {
-          setActiveFlowId(data.data[0].id);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.data) {
+          setFlows(data.data);
+          if (!activeFlowId && data.data.length > 0) {
+            setActiveFlowId(data.data[0].id);
+          }
         }
       }
     } catch (e) {

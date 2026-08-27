@@ -33,9 +33,7 @@ function startServer() {
     }
   }));
 
-  // Mount WhatsApp API, CTWA CAPI, Automations, and MCP Gateway router
-  app.use(whatsappRouter);
-  // Normalize Vercel serverless rewritten API URLs
+  // Normalize Vercel serverless rewritten API URLs before any router
   app.use((req, _res, next) => {
     const candidate = req.headers['x-forwarded-uri'] || req.headers['x-invoke-path'] || req.headers['x-matched-path'] || req.headers['x-now-route-matches'];
     if (candidate && typeof candidate === 'string') {
@@ -46,6 +44,9 @@ function startServer() {
     }
     next();
   });
+
+  // Mount WhatsApp API, CTWA CAPI, Automations, and MCP Gateway router
+  app.use(whatsappRouter);
 
   // Rate limiting for auth and API key creation
   const authLimiter = rateLimit({
@@ -4726,7 +4727,8 @@ function startServer() {
     });
   }
 
-  if (!process.env.VERCEL) {
+  const isServerless = !!(process.env.VERCEL || process.env.VERCEL_ENV || process.env.AWS_LAMBDA_FUNCTION_NAME);
+  if (!isServerless) {
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`Server running on http://localhost:${PORT}`);
     });

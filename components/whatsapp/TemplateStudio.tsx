@@ -24,11 +24,13 @@ export const TemplateStudio: React.FC = () => {
     try {
       setIsLoading(true);
       const res = await fetch('/api/whatsapp/templates');
-      const data = await res.json();
-      if (data.data) {
-        setTemplates(data.data);
-        if (!activeTemplateName && data.data.length > 0) {
-          setActiveTemplateName(data.data[0].name);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.data) {
+          setTemplates(data.data);
+          if (!activeTemplateName && data.data.length > 0) {
+            setActiveTemplateName(data.data[0].name);
+          }
         }
       }
     } catch (e) {

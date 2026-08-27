@@ -26,20 +26,24 @@ export const BroadcastManager: React.FC = () => {
         fetch('/api/whatsapp/templates'),
         fetch('/api/whatsapp/contacts'),
       ]);
-      const [dataBc, dataTmpl, dataCnt] = await Promise.all([
-        resBc.json(),
-        resTmpl.json(),
-        resCnt.json(),
-      ]);
 
-      if (dataBc.data) setBroadcasts(dataBc.data);
-      if (dataTmpl.data) {
-        setTemplates(dataTmpl.data);
-        if (dataTmpl.data.length > 0 && !selectedTemplate) {
-          setSelectedTemplate(dataTmpl.data[0].name);
+      if (resBc.ok) {
+        const dataBc = await resBc.json();
+        if (dataBc.data) setBroadcasts(dataBc.data);
+      }
+      if (resTmpl.ok) {
+        const dataTmpl = await resTmpl.json();
+        if (dataTmpl.data) {
+          setTemplates(dataTmpl.data);
+          if (dataTmpl.data.length > 0 && !selectedTemplate) {
+            setSelectedTemplate(dataTmpl.data[0].name);
+          }
         }
       }
-      if (dataCnt.data) setContacts(dataCnt.data);
+      if (resCnt.ok) {
+        const dataCnt = await resCnt.json();
+        if (dataCnt.data) setContacts(dataCnt.data);
+      }
     } catch (e) {
       console.error(e);
     } finally {

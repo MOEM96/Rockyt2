@@ -30,23 +30,25 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
     setErrorMsg('');
     try {
       const res = await fetch('/api/whatsapp/connect/oauth', { method: 'POST' });
-      const data = await res.json();
-      if (data.url) {
-        // Open OAuth or simulate instant connect in development
-        setSuccessMsg('Meta WhatsApp Business Account connected successfully via Embedded Signup!');
-        if (onConnected) {
-          onConnected({
-            id: 'acc_waba_primary',
-            platform: 'whatsapp',
-            waba_id: 'waba_992817264',
-            phone_number_id: 'pn_1001',
-            status: 'connected',
-            verified_name: 'Rockyt WhatsApp Business Hub',
-          });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.url) {
+          // Open OAuth or simulate instant connect in development
+          setSuccessMsg('Meta WhatsApp Business Account connected successfully via Embedded Signup!');
+          if (onConnected) {
+            onConnected({
+              id: 'acc_waba_primary',
+              platform: 'whatsapp',
+              waba_id: 'waba_992817264',
+              phone_number_id: 'pn_1001',
+              status: 'connected',
+              verified_name: 'Rockyt WhatsApp Business Hub',
+            });
+          }
+          setTimeout(() => {
+            onClose();
+          }, 1500);
         }
-        setTimeout(() => {
-          onClose();
-        }, 1500);
       }
     } catch (err: any) {
       setErrorMsg(err.message || 'Failed to initiate Meta OAuth connection');
@@ -74,14 +76,15 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
           access_token: accessToken,
         }),
       });
-      const data = await res.json();
       if (res.ok) {
+        const data = await res.json();
         setSuccessMsg('BYO WhatsApp Business Account registered successfully!');
         if (onConnected) onConnected(data.account);
         setTimeout(() => {
           onClose();
         }, 1500);
       } else {
+        const data = await res.json().catch(() => ({ error: 'Failed to validate Meta WABA credentials' }));
         setErrorMsg(data.error || 'Failed to validate Meta WABA credentials');
       }
     } catch (err: any) {

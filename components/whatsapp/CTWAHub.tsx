@@ -21,9 +21,11 @@ export const CTWAHub: React.FC = () => {
     try {
       setIsLoading(true);
       const res = await fetch('/api/whatsapp/capi/events');
-      const data = await res.json();
-      if (data.data) {
-        setCapiEvents(data.data);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.data) {
+          setCapiEvents(data.data);
+        }
       }
     } catch (e) {
       console.error(e);
