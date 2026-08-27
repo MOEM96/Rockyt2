@@ -275,26 +275,32 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
             ) : (
               <div className="p-4 bg-emerald-950/20 border border-emerald-500/30 rounded-xl space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Active Sandbox Session</span>
-                  <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 text-[10px] font-mono font-bold">ACTIVE</span>
+                  <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">WhatsApp Developer Sandbox</span>
+                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold uppercase ${
+                    sandboxSession.status === 'pending'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                      : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                  }`}>
+                    {sandboxSession.status === 'pending' ? 'PENDING REPLY' : 'ACTIVE'}
+                  </span>
                 </div>
-                <div className="p-3 bg-black/50 border border-zinc-800 rounded-lg text-xs font-mono text-zinc-300 space-y-1">
-                  <div><strong>Your Test Phone:</strong> {sandboxSession.phone_number}</div>
-                  <div><strong>Sandbox Number:</strong> {sandboxSession.sandbox_number}</div>
-                  <div><strong>Join Code:</strong> <span className="text-emerald-400 font-bold">{sandboxSession.join_code}</span></div>
+                <div className="p-3 bg-black/50 border border-zinc-800 rounded-lg text-xs font-mono text-zinc-300 space-y-1.5">
+                  <div><strong>Your Test Phone:</strong> <span className="text-white">{sandboxSession.phone_number}</span></div>
+                  <div><strong>Shared Sandbox Number:</strong> <span className="text-emerald-400 font-bold">{sandboxSession.sandbox_number || '+1 202 908 7457'}</span></div>
+                  <div><strong>Verified Template:</strong> <span className="text-zinc-400">sandbox_start</span></div>
                 </div>
-                <p className="text-[11px] text-zinc-400 leading-relaxed">
+                <p className="text-[11px] text-zinc-300 leading-relaxed bg-zinc-900/60 p-2.5 rounded-lg border border-zinc-800">
                   {sandboxSession.instructions}
                 </p>
 
-                <div className="pt-2 flex gap-2">
+                <div className="pt-2 flex flex-wrap gap-2">
                   <button
                     onClick={handleSimulateInbound}
                     disabled={isSimulating}
                     className="flex-1 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 shadow-md shadow-emerald-500/20 disabled:opacity-50"
                   >
                     {isSimulating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />}
-                    <span>Simulate Inbound Test Message</span>
+                    <span>Simulate Inbound Message</span>
                   </button>
 
                   <button
