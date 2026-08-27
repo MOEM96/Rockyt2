@@ -28,20 +28,83 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect }) =
   const [isCapiSending, setIsCapiSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  const STORAGE_KEY_CONVS = 'rockyt_wa_conversations';
+  const STORAGE_KEY_MSGS = 'rockyt_wa_messages';
+
+  const getStoredConversations = (): WhatsAppConversation[] => {
+    try {
+      const item = localStorage.getItem(STORAGE_KEY_CONVS);
+      return item ? JSON.parse(item) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const setStoredConversations = (convs: WhatsAppConversation[]) => {
+    try {
+      localStorage.setItem(STORAGE_KEY_CONVS, JSON.stringify(convs));
+    } catch {}
+  };
+
+  const getStoredMessages = (convId: string): WhatsAppMessage[] => {
+    try {
+      const item = localStorage.getItem(`${STORAGE_KEY_MSGS}_${convId}`);
+      return item ? JSON.parse(item) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const setStoredMessages = (convId: string, msgs: WhatsAppMessage[]) => {
+    try {
+      localStorage.setItem(`${STORAGE_KEY_MSGS}_${convId}`, JSON.stringify(msgs));
+    } catch {}
+  };
+
   const handleSimulateSandboxInbound = async () => {
     setIsSimulating(true);
     try {
+      const storedSbx = localStorage.getItem('rockyt_wa_sandbox_session');
+      let phone = '+201018252128';
+      let name = 'Moamen';
+      if (storedSbx) {
+        try {
+          const parsed = JSON.parse(storedSbx);
+          if (parsed.phone_number) phone = parsed.phone_number;
+        } catch {}
+      } else if (activeConv?.contact?.phone_number) {
+        phone = activeConv.contact.phone_number;
+        name = activeConv.contact.name || 'WhatsApp Contact';
+      }
+
       const res = await fetch('/api/whatsapp/sandbox/simulate-message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: 'Hi! Testing WhatsApp inbox automation and real-time CRM responses.',
-          name: 'Sarah (Sandbox Lead)',
-          phone_number: '+14155552671',
+          name,
+          phone_number: phone,
         }),
       });
       if (res.ok) {
-        await loadConversations();
+        const resData = await res.json();
+        if (resData.conversation) {
+          setConversations((prev) => {
+            const next = [resData.conversation, ...prev.filter((c) => c.id !== resData.conversation.id)];
+            setStoredConversations(next);
+            return next;
+          });
+          setActiveConvId(resData.conversation.id);
+        }
+        if (resData.message) {
+          setMessages((prev) => {
+            const next = [...prev, resData.message];
+            if (activeConvId) setStoredMessages(activeConvId, next);
+            return next;
+          });
+        }
+        await loadConversations(false);
+        if (activeConvId) await loadMessages(activeConvId, false);
       }
     } catch (e) {
       console.error(e);
@@ -53,17 +116,37 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect }) =
   // Load conversations and templates
   const loadConversations = async (isInitial = false) => {
     try {
-      if (isInitial) setIsLoading(true);
+      if (isInitial) {
+        setIsLoading(true);
+        // Instant load from localStorage cache
+        const cached = getStoredConversations();
+        if (cached.length > 0) {
+          setConversations(cached);
+          if (!activeConvId) setActiveConvId(cached[0].id);
+        }
+      }
       const res = await fetch('/api/whatsapp/conversations');
       if (res.ok) {
         const data = await res.json();
-        if (data.data) {
-          setConversations(data.data);
+        if (data.data && Array.isArray(data.data)) {
+          setConversations((prev) => {
+            // Merge server and client cached conversations
+            const map = new Map<string, WhatsAppConversation>();
+            prev.forEach((c) => map.set(c.id, c));
+            data.data.forEach((c: WhatsAppConversation) => map.set(c.id, c));
+            const merged = Array.from(map.values()).sort((a, b) => {
+              const timeA = new Date(a.last_message?.timestamp || a.updated_at || a.created_at).getTime();
+              const timeB = new Date(b.last_message?.timestamp || b.updated_at || b.created_at).getTime();
+              return timeB - timeA;
+            });
+            setStoredConversations(merged);
+            return merged;
+          });
+
           if (data.data.length > 0) {
             setActiveConvId((prev) => {
-              // Keep previous selection if it exists in current data, otherwise select first
               const exists = data.data.some((c: any) => c.id === prev);
-              return exists ? prev : data.data[0].id;
+              return exists ? prev : (prev || data.data[0].id);
             });
           }
         }
@@ -85,14 +168,27 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect }) =
     } catch (e) {}
   };
 
-  const loadMessages = async (convId: string, _isInitial = false) => {
+  const loadMessages = async (convId: string, isInitial = false) => {
     if (!convId) return;
     try {
+      if (isInitial) {
+        const cachedMsgs = getStoredMessages(convId);
+        if (cachedMsgs.length > 0) setMessages(cachedMsgs);
+      }
       const res = await fetch(`/api/whatsapp/conversations/${convId}/messages`);
       if (res.ok) {
         const data = await res.json();
-        if (data.data) {
-          setMessages(data.data);
+        if (data.data && Array.isArray(data.data)) {
+          setMessages((prev) => {
+            const map = new Map<string, WhatsAppMessage>();
+            prev.forEach((m) => map.set(m.id, m));
+            data.data.forEach((m: WhatsAppMessage) => map.set(m.id, m));
+            const merged = Array.from(map.values()).sort(
+              (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+            );
+            setStoredMessages(convId, merged);
+            return merged;
+          });
         }
       }
     } catch (e) {}
