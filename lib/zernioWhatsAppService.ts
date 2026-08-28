@@ -386,4 +386,83 @@ export class ZernioWhatsAppService {
     }
     return null;
   }
+
+  /**
+   * Run historical backfill sweep on tenant onboarding
+   */
+  public static async backfillTenantHistory(profileId?: string): Promise<{ conversationsCount: number; messagesCount: number }> {
+    let convCount = 0;
+    let msgCount = 0;
+    try {
+      const liveConvs = await this.listConversations(profileId, 100);
+      if (Array.isArray(liveConvs)) {
+        for (const item of liveConvs) {
+          convCount++;
+          const convId = item.id;
+          const phone = item.participantId || item.accountUsername || item.id;
+          const name = item.participantName || item.accountUsername || 'WhatsApp Contact';
+
+          let contact = whatsappStore.getContactByPhone(phone);
+          if (!contact) {
+            contact = {
+              id: `cnt_${item.participantId || item.id}`,
+              phone_number: phone,
+              formatted_phone: phone,
+              name,
+              avatar_url: item.participantPicture || undefined,
+              tags: ['Backfill_User', 'WhatsApp_Contact'],
+              custom_fields: {},
+              lifecycle_stage: 'lead',
+              created_at: item.updatedTime || new Date().toISOString(),
+              last_activity_at: item.updatedTime || new Date().toISOString(),
+            };
+            whatsappStore.saveContact(contact);
+          }
+
+          const lastMsgTime = item.updatedTime || new Date().toISOString();
+          const winExpiry = new Date(new Date(lastMsgTime).getTime() + 24 * 60 * 60 * 1000).toISOString();
+
+          whatsappStore.saveConversation({
+            id: convId,
+            account_id: item.accountId || 'acc_primary',
+            profile_id: item.profileId || profileId || 'prof_default',
+            contact,
+            unread_count: item.unreadCount || 0,
+            status: item.status || 'active',
+            last_customer_message_at: lastMsgTime,
+            window_expires_at: winExpiry,
+            is_window_open: new Date() < new Date(winExpiry),
+            ai_agent_enabled: true,
+            created_at: item.updatedTime || new Date().toISOString(),
+            updated_at: item.updatedTime || new Date().toISOString(),
+          });
+
+          // Fetch messages for thread
+          const threadMsgs = await this.listMessages(convId, item.accountId);
+          if (Array.isArray(threadMsgs)) {
+            for (const m of threadMsgs) {
+              msgCount++;
+              const isFromContact = m.senderId === phone || m.source === 'contact';
+              const direction = isFromContact ? 'incoming' : 'outgoing';
+              whatsappStore.appendMessage({
+                id: m.id || m.messageId || `msg_${Date.now()}_${Math.random()}`,
+                conversation_id: convId,
+                direction,
+                type: m.attachmentUrl ? 'image' : 'text',
+                text: m.message || m.text,
+                media_url: m.attachmentUrl,
+                status: m.status || 'delivered',
+                timestamp: m.createdAt || m.timestamp || new Date().toISOString(),
+                sender_name: m.senderName || (direction === 'incoming' ? name : 'Support Agent'),
+                sender_phone: m.senderPhone || (direction === 'incoming' ? phone : undefined),
+              });
+            }
+          }
+        }
+      }
+    } catch (e: any) {
+      console.warn('[Zernio backfill notice]:', e.message);
+    }
+    return { conversationsCount: convCount, messagesCount: msgCount };
+  }
 }

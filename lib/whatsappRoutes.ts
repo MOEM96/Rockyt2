@@ -533,6 +533,34 @@ whatsappRouter.post('/api/whatsapp/contacts', (req: Request, res: Response) => {
   return res.json({ success: true, data: newContact });
 });
 
+whatsappRouter.put('/api/whatsapp/contacts/:id', (req: Request<IdParams>, res: Response) => {
+  const { id } = req.params;
+  const existing = whatsappStore.getContact(id);
+  if (!existing) return res.status(404).json({ error: 'Contact not found' });
+
+  const updated: WhatsAppContact = {
+    ...existing,
+    ...req.body,
+    id,
+    last_activity_at: new Date().toISOString(),
+  };
+
+  whatsappStore.saveContact(updated);
+  return res.json({ success: true, data: updated });
+});
+
+whatsappRouter.delete('/api/whatsapp/contacts/:id', (req: Request<IdParams>, res: Response) => {
+  const { id } = req.params;
+  whatsappStore.deleteContact(id);
+  return res.json({ success: true });
+});
+
+whatsappRouter.post('/api/whatsapp/backfill', async (req: Request, res: Response) => {
+  const profileId = (req.query.profileId as string) || (req.body.profileId as string);
+  const result = await ZernioWhatsAppService.backfillTenantHistory(profileId);
+  return res.json({ success: true, ...result });
+});
+
 // ─── 8. External MCP (Model Context Protocol) Server ───
 whatsappRouter.post('/api/mcp', (req: Request, res: Response) => {
   const response = MCPServerHandler.handleJsonRpcRequest(req.body);

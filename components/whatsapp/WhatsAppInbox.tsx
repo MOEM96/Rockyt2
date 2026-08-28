@@ -10,9 +10,11 @@ import { PlayCircle, Plus } from 'lucide-react';
 interface WhatsAppInboxProps {
   onTriggerCapi?: (convId: string, eventName: string, value?: number) => void;
   onOpenConnect?: () => void;
+  initialPhone?: string;
+  initialName?: string;
 }
 
-export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect }) => {
+export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, initialPhone, initialName }) => {
   const [conversations, setConversations] = useState<WhatsAppConversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string>('');
   const [messages, setMessages] = useState<WhatsAppMessage[]>([]);
@@ -24,6 +26,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect }) =
   const [isLoading, setIsLoading] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [isSimulating, setIsSimulating] = useState(false);
+  const [isBackfilling, setIsBackfilling] = useState(false);
   const [capiSuccess, setCapiSuccess] = useState<string | null>(null);
   const [isCapiSending, setIsCapiSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -194,12 +197,70 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect }) =
     } catch (e) {}
   };
 
+  const handleBackfill = async () => {
+    setIsBackfilling(true);
+    try {
+      const res = await fetch('/api/whatsapp/backfill', { method: 'POST' });
+      if (res.ok) {
+        await loadConversations(false);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsBackfilling(false);
+    }
+  };
+
   useEffect(() => {
     loadConversations(true);
     loadTemplates();
     const interval = setInterval(() => loadConversations(false), 5000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (initialPhone) {
+      const cleanPhone = initialPhone.replace(/[^0-9]/g, '');
+      const existing = conversations.find(
+        (c) => c.contact?.phone_number?.replace(/[^0-9]/g, '') === cleanPhone
+      );
+      if (existing) {
+        setActiveConvId(existing.id);
+      } else {
+        const newConvId = `conv_${Date.now()}`;
+        const newConv: WhatsAppConversation = {
+          id: newConvId,
+          account_id: 'acc_primary',
+          profile_id: 'prof_default',
+          contact: {
+            id: `cnt_${Date.now()}`,
+            name: initialName || 'WhatsApp Contact',
+            phone_number: initialPhone,
+            formatted_phone: initialPhone,
+            tags: ['CRM_Direct'],
+            custom_fields: {},
+            lifecycle_stage: 'lead',
+            created_at: new Date().toISOString(),
+            last_activity_at: new Date().toISOString(),
+          },
+          unread_count: 0,
+          status: 'active',
+          last_customer_message_at: new Date().toISOString(),
+          window_expires_at: new Date(Date.now() + 86400000).toISOString(),
+          is_window_open: true,
+          ai_agent_enabled: true,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        setConversations((prev) => {
+          const next = [newConv, ...prev];
+          setStoredConversations(next);
+          return next;
+        });
+        setActiveConvId(newConvId);
+      }
+    }
+  }, [initialPhone, initialName, conversations.length]);
 
   useEffect(() => {
     if (activeConvId) {
@@ -330,13 +391,31 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect }) =
               <MessageSquare className="w-4 h-4 text-emerald-400" />
               <h2 className="text-sm font-bold text-white tracking-tight">WhatsApp Inbound CRM</h2>
             </div>
-            <button
-              onClick={loadConversations}
-              className="p-1.5 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-900 transition-colors"
-              title="Refresh"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={handleBackfill}
+                disabled={isBackfilling}
+                className="p-1.5 text-zinc-400 hover:text-emerald-400 rounded-lg hover:bg-zinc-900 transition-colors disabled:opacity-50"
+                title="Backfill History from Zernio"
+              >
+                <ArrowUpRight className={`w-3.5 h-3.5 ${isBackfilling ? 'animate-spin' : ''}`} />
+              </button>
+              <button
+                onClick={handleSimulateSandboxInbound}
+                disabled={isSimulating}
+                className="p-1.5 text-zinc-400 hover:text-emerald-400 rounded-lg hover:bg-zinc-900 transition-colors disabled:opacity-50"
+                title="Simulate Inbound WhatsApp Test Message"
+              >
+                <PlayCircle className={`w-3.5 h-3.5 ${isSimulating ? 'animate-spin' : ''}`} />
+              </button>
+              <button
+                onClick={() => loadConversations(false)}
+                className="p-1.5 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-900 transition-colors"
+                title="Refresh"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
           </div>
 
           <div className="relative">

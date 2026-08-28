@@ -40,6 +40,8 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
   const [account, setAccount] = useState<any>(null);
   const [sandboxSession, setSandboxSession] = useState<any>(null);
   const [isLoadingAccount, setIsLoadingAccount] = useState(true);
+  const [selectedPhone, setSelectedPhone] = useState<string | undefined>(undefined);
+  const [selectedName, setSelectedName] = useState<string | undefined>(undefined);
 
   const fetchAccountStatus = async () => {
     try {
@@ -286,13 +288,27 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
 
       {/* ─── Main Content Canvas ─── */}
       <main className="flex-1 p-4 sm:p-6 overflow-y-auto">
-        {activeTab === 'inbox' && <WhatsAppInbox onOpenConnect={() => setIsConnectModalOpen(true)} />}
+        {activeTab === 'inbox' && (
+          <WhatsAppInbox
+            onOpenConnect={() => setIsConnectModalOpen(true)}
+            initialPhone={selectedPhone}
+            initialName={selectedName}
+          />
+        )}
         {activeTab === 'automations' && <AutomationBuilder />}
         {activeTab === 'ctwa_capi' && <CTWAHub />}
         {activeTab === 'templates' && <TemplateStudio />}
         {activeTab === 'broadcasts' && <BroadcastManager />}
         {activeTab === 'mcp_gateway' && <MCPGateway />}
-        {activeTab === 'contacts' && <ContactsCRM />}
+        {activeTab === 'contacts' && (
+          <ContactsCRM
+            onSelectContactChat={(phone, name) => {
+              setSelectedPhone(phone);
+              setSelectedName(name);
+              setActiveTab('inbox');
+            }}
+          />
+        )}
       </main>
 
       {/* ─── WABA Embedded / Headless / Sandbox Connection Modal ─── */}

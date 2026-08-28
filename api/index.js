@@ -301,7 +301,7 @@ var WhatsAppStore = class {
     this.sandboxSession = null;
   }
 };
-var whatsappStore = new WhatsAppStore();
+var whatsappStore2 = new WhatsAppStore();
 
 // lib/zernioWhatsAppService.ts
 import { Zernio } from "@zernio/node";
@@ -658,6 +658,79 @@ var ZernioWhatsAppService = class {
     }
     return null;
   }
+  /**
+   * Run historical backfill sweep on tenant onboarding
+   */
+  static async backfillTenantHistory(profileId) {
+    let convCount = 0;
+    let msgCount = 0;
+    try {
+      const liveConvs = await this.listConversations(profileId, 100);
+      if (Array.isArray(liveConvs)) {
+        for (const item of liveConvs) {
+          convCount++;
+          const convId = item.id;
+          const phone = item.participantId || item.accountUsername || item.id;
+          const name = item.participantName || item.accountUsername || "WhatsApp Contact";
+          let contact = whatsappStore.getContactByPhone(phone);
+          if (!contact) {
+            contact = {
+              id: `cnt_${item.participantId || item.id}`,
+              phone_number: phone,
+              formatted_phone: phone,
+              name,
+              avatar_url: item.participantPicture || void 0,
+              tags: ["Backfill_User", "WhatsApp_Contact"],
+              custom_fields: {},
+              lifecycle_stage: "lead",
+              created_at: item.updatedTime || (/* @__PURE__ */ new Date()).toISOString(),
+              last_activity_at: item.updatedTime || (/* @__PURE__ */ new Date()).toISOString()
+            };
+            whatsappStore.saveContact(contact);
+          }
+          const lastMsgTime = item.updatedTime || (/* @__PURE__ */ new Date()).toISOString();
+          const winExpiry = new Date(new Date(lastMsgTime).getTime() + 24 * 60 * 60 * 1e3).toISOString();
+          whatsappStore.saveConversation({
+            id: convId,
+            account_id: item.accountId || "acc_primary",
+            profile_id: item.profileId || profileId || "prof_default",
+            contact,
+            unread_count: item.unreadCount || 0,
+            status: item.status || "active",
+            last_customer_message_at: lastMsgTime,
+            window_expires_at: winExpiry,
+            is_window_open: /* @__PURE__ */ new Date() < new Date(winExpiry),
+            ai_agent_enabled: true,
+            created_at: item.updatedTime || (/* @__PURE__ */ new Date()).toISOString(),
+            updated_at: item.updatedTime || (/* @__PURE__ */ new Date()).toISOString()
+          });
+          const threadMsgs = await this.listMessages(convId, item.accountId);
+          if (Array.isArray(threadMsgs)) {
+            for (const m of threadMsgs) {
+              msgCount++;
+              const isFromContact = m.senderId === phone || m.source === "contact";
+              const direction = isFromContact ? "incoming" : "outgoing";
+              whatsappStore.appendMessage({
+                id: m.id || m.messageId || `msg_${Date.now()}_${Math.random()}`,
+                conversation_id: convId,
+                direction,
+                type: m.attachmentUrl ? "image" : "text",
+                text: m.message || m.text,
+                media_url: m.attachmentUrl,
+                status: m.status || "delivered",
+                timestamp: m.createdAt || m.timestamp || (/* @__PURE__ */ new Date()).toISOString(),
+                sender_name: m.senderName || (direction === "incoming" ? name : "Support Agent"),
+                sender_phone: m.senderPhone || (direction === "incoming" ? phone : void 0)
+              });
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[Zernio backfill notice]:", e.message);
+    }
+    return { conversationsCount: convCount, messagesCount: msgCount };
+  }
 };
 
 // lib/metaCapiService.ts
@@ -984,7 +1057,7 @@ var MCPServerHandler = class {
   static executeTool(name, args) {
     switch (name) {
       case "whatsapp_list_conversations": {
-        const list = whatsappStore.getConversations();
+        const list = whatsappStore2.getConversations();
         return {
           total: list.length,
           conversations: list.map((c) => ({
@@ -1001,8 +1074,8 @@ var MCPServerHandler = class {
       }
       case "whatsapp_get_messages": {
         if (!args.conversation_id) throw new Error("Missing conversation_id");
-        const msgs = whatsappStore.getMessages(args.conversation_id);
-        const conv = whatsappStore.getConversation(args.conversation_id);
+        const msgs = whatsappStore2.getMessages(args.conversation_id);
+        const conv = whatsappStore2.getConversation(args.conversation_id);
         return {
           conversation_id: args.conversation_id,
           contact: conv?.contact,
@@ -1013,7 +1086,7 @@ var MCPServerHandler = class {
       case "whatsapp_send_message": {
         if (!args.conversation_id) throw new Error("Missing conversation_id");
         if (!args.text) throw new Error("Missing text");
-        const conv = whatsappStore.getConversation(args.conversation_id);
+        const conv = whatsappStore2.getConversation(args.conversation_id);
         if (!conv) throw new Error("Conversation not found");
         if (!conv.is_window_open) {
           throw new Error(
@@ -1031,7 +1104,7 @@ var MCPServerHandler = class {
           timestamp: (/* @__PURE__ */ new Date()).toISOString(),
           sender_name: "AI Agent (MCP)"
         };
-        whatsappStore.appendMessage(msg);
+        whatsappStore2.appendMessage(msg);
         return {
           success: true,
           message_id: msg.id,
@@ -1042,9 +1115,9 @@ var MCPServerHandler = class {
       case "whatsapp_send_template": {
         if (!args.conversation_id) throw new Error("Missing conversation_id");
         if (!args.template_name) throw new Error("Missing template_name");
-        const conv = whatsappStore.getConversation(args.conversation_id);
+        const conv = whatsappStore2.getConversation(args.conversation_id);
         if (!conv) throw new Error("Conversation not found");
-        const tmpl = whatsappStore.getTemplate(args.template_name);
+        const tmpl = whatsappStore2.getTemplate(args.template_name);
         if (!tmpl) throw new Error(`Template '${args.template_name}' not found`);
         const msg = {
           id: `msg_mcp_tmpl_${Date.now()}_${crypto3.randomBytes(3).toString("hex")}`,
@@ -1058,7 +1131,7 @@ var MCPServerHandler = class {
           timestamp: (/* @__PURE__ */ new Date()).toISOString(),
           sender_name: "AI Agent (MCP)"
         };
-        whatsappStore.appendMessage(msg);
+        whatsappStore2.appendMessage(msg);
         return {
           success: true,
           message_id: msg.id,
@@ -1068,7 +1141,7 @@ var MCPServerHandler = class {
       }
       case "whatsapp_trigger_capi_event": {
         if (!args.conversation_id) throw new Error("Missing conversation_id");
-        const conv = whatsappStore.getConversation(args.conversation_id);
+        const conv = whatsappStore2.getConversation(args.conversation_id);
         if (!conv) throw new Error("Conversation not found");
         const eventName = args.event_name || "Lead";
         const contact = conv.contact;
@@ -1097,7 +1170,7 @@ var MCPServerHandler = class {
           },
           created_at: (/* @__PURE__ */ new Date()).toISOString()
         };
-        whatsappStore.logCAPIEvent(capiEvent);
+        whatsappStore2.logCAPIEvent(capiEvent);
         return {
           success: true,
           event_id: eventId,
@@ -1108,7 +1181,7 @@ var MCPServerHandler = class {
       }
       case "whatsapp_update_contact": {
         if (!args.contact_id) throw new Error("Missing contact_id");
-        const contact = whatsappStore.getContact(args.contact_id);
+        const contact = whatsappStore2.getContact(args.contact_id);
         if (!contact) throw new Error("Contact not found");
         if (args.tags_to_add && Array.isArray(args.tags_to_add)) {
           contact.tags = Array.from(/* @__PURE__ */ new Set([...contact.tags, ...args.tags_to_add]));
@@ -1120,7 +1193,7 @@ var MCPServerHandler = class {
           contact.notes = contact.notes ? `${contact.notes}
 [AI Update]: ${args.notes}` : args.notes;
         }
-        whatsappStore.saveContact(contact);
+        whatsappStore2.saveContact(contact);
         return {
           success: true,
           contact
@@ -1128,7 +1201,7 @@ var MCPServerHandler = class {
       }
       case "whatsapp_get_templates": {
         return {
-          templates: whatsappStore.getTemplates()
+          templates: whatsappStore2.getTemplates()
         };
       }
       default:
@@ -1144,7 +1217,7 @@ var AutomationEngine = class {
    * Evaluate active flows when an incoming message or trigger occurs
    */
   static async evaluateTrigger(type, payload) {
-    const flows = whatsappStore.getAutomations().filter((f) => f.is_active);
+    const flows = whatsappStore2.getAutomations().filter((f) => f.is_active);
     const triggered = [];
     for (const flow of flows) {
       let shouldRun = false;
@@ -1172,8 +1245,8 @@ var AutomationEngine = class {
    * Process incoming trigger by ID
    */
   static async processIncomingTrigger(params) {
-    const flows = whatsappStore.getAutomations().filter((f) => f.is_active);
-    const conv = whatsappStore.getConversation(params.conversationId);
+    const flows = whatsappStore2.getAutomations().filter((f) => f.is_active);
+    const conv = whatsappStore2.getConversation(params.conversationId);
     if (!conv) return;
     for (const flow of flows) {
       let shouldRun = false;
@@ -1203,7 +1276,7 @@ var AutomationEngine = class {
     executionLogs.push(`[${(/* @__PURE__ */ new Date()).toISOString()}] Started flow "${flow.title}" (ID: ${flow.id})`);
     flow.execution_count = (flow.execution_count || 0) + 1;
     flow.last_triggered_at = (/* @__PURE__ */ new Date()).toISOString();
-    whatsappStore.saveAutomation(flow);
+    whatsappStore2.saveAutomation(flow);
     const triggerNode = flow.nodes.find((n) => n.type.startsWith("trigger_")) || flow.nodes[0];
     if (!triggerNode) {
       executionLogs.push("No trigger node found in flow graph.");
@@ -1236,13 +1309,13 @@ var AutomationEngine = class {
             timestamp: (/* @__PURE__ */ new Date()).toISOString(),
             sender_name: "Automation Bot"
           };
-          whatsappStore.appendMessage(msg);
+          whatsappStore2.appendMessage(msg);
           executionLogs.push(`Sent free-form automated reply: "${text.substring(0, 40)}..."`);
         }
       }
       if (currentNode.type === "action_send_template") {
         const templateName = currentNode.config.template_name || "lead_welcome_v1";
-        const tmpl = whatsappStore.getTemplate(templateName);
+        const tmpl = whatsappStore2.getTemplate(templateName);
         const msg = {
           id: `msg_auto_tmpl_${Date.now()}_${crypto4.randomBytes(3).toString("hex")}`,
           conversation_id: conv.id,
@@ -1254,7 +1327,7 @@ var AutomationEngine = class {
           timestamp: (/* @__PURE__ */ new Date()).toISOString(),
           sender_name: "Automation Bot"
         };
-        whatsappStore.appendMessage(msg);
+        whatsappStore2.appendMessage(msg);
         executionLogs.push(`Sent Meta-approved template "${templateName}"`);
       }
       if (currentNode.type === "action_trigger_capi") {
@@ -1274,7 +1347,7 @@ var AutomationEngine = class {
             campaignId: conv.ctwa_referral?.campaign_id
           }
         });
-        whatsappStore.logCAPIEvent({
+        whatsappStore2.logCAPIEvent({
           id: `capi_auto_${Date.now()}`,
           event_id: result.eventId,
           event_name: eventName,
@@ -1298,7 +1371,7 @@ var AutomationEngine = class {
         const tag = currentNode.config.tag || "Automated_Lead";
         if (conv.contact) {
           conv.contact.tags = Array.from(/* @__PURE__ */ new Set([...conv.contact.tags, tag]));
-          whatsappStore.saveContact(conv.contact);
+          whatsappStore2.saveContact(conv.contact);
           executionLogs.push(`Added CRM tag "${tag}" to contact`);
         }
       }
@@ -1357,17 +1430,17 @@ whatsappRouter.post("/api/webhooks/zernio", async (req, res) => {
     const convData = event.conversation;
     const accountData = event.account;
     if (eventType === "message.received" || eventType === "whatsapp.sandbox.verified") {
-      const sandbox = whatsappStore.getSandboxSession();
+      const sandbox = whatsappStore2.getSandboxSession();
       if (sandbox) {
         sandbox.status = "active";
-        whatsappStore.setSandboxSession(sandbox);
+        whatsappStore2.setSandboxSession(sandbox);
       }
     }
     const phone = msgData.sender?.phone || metadata.senderPhone || convData?.contact?.phone_number || "";
     const name = msgData.sender?.name || metadata.senderName || convData?.contact?.name || "WhatsApp Contact";
     const convId = msgData.conversationId || msgData.conversation_id || convData?.id || metadata.conversationId || `conv_${Date.now()}`;
     if (phone || convId) {
-      let contact = phone ? whatsappStore.getContactByPhone(phone) : void 0;
+      let contact = phone ? whatsappStore2.getContactByPhone(phone) : void 0;
       if (!contact && phone) {
         contact = {
           id: `cnt_${Date.now()}`,
@@ -1380,10 +1453,10 @@ whatsappRouter.post("/api/webhooks/zernio", async (req, res) => {
           created_at: (/* @__PURE__ */ new Date()).toISOString(),
           last_activity_at: (/* @__PURE__ */ new Date()).toISOString()
         };
-        whatsappStore.saveContact(contact);
+        whatsappStore2.saveContact(contact);
       }
       if (contact) {
-        let conv = whatsappStore.getConversation(convId);
+        let conv = whatsappStore2.getConversation(convId);
         if (!conv) {
           conv = {
             id: convId,
@@ -1399,13 +1472,13 @@ whatsappRouter.post("/api/webhooks/zernio", async (req, res) => {
             created_at: (/* @__PURE__ */ new Date()).toISOString(),
             updated_at: (/* @__PURE__ */ new Date()).toISOString()
           };
-          whatsappStore.saveConversation(conv);
+          whatsappStore2.saveConversation(conv);
         } else {
           conv.unread_count += 1;
           conv.last_customer_message_at = (/* @__PURE__ */ new Date()).toISOString();
           conv.window_expires_at = new Date(Date.now() + 864e5).toISOString();
           conv.is_window_open = true;
-          whatsappStore.saveConversation(conv);
+          whatsappStore2.saveConversation(conv);
         }
         if (msgData.text || metadata.messagePreview) {
           const newMsg = {
@@ -1420,7 +1493,7 @@ whatsappRouter.post("/api/webhooks/zernio", async (req, res) => {
             sender_name: name,
             sender_phone: phone
           };
-          whatsappStore.appendMessage(newMsg);
+          whatsappStore2.appendMessage(newMsg);
           try {
             await AutomationEngine.processIncomingTrigger({
               type: "message_received",
@@ -1439,7 +1512,7 @@ whatsappRouter.post("/api/webhooks/zernio", async (req, res) => {
   }
 });
 whatsappRouter.get("/api/whatsapp/conversations", async (req, res) => {
-  let localConversations = whatsappStore.getConversations();
+  let localConversations = whatsappStore2.getConversations();
   const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
   if (apiKey && apiKey !== "dummy_dev_key") {
     try {
@@ -1448,7 +1521,7 @@ whatsappRouter.get("/api/whatsapp/conversations", async (req, res) => {
         for (const item of liveConversations) {
           const phone = item.participantId || item.accountUsername || item.id;
           const name = item.participantName || item.accountUsername || "WhatsApp User";
-          let contact = whatsappStore.getContactByPhone(phone);
+          let contact = whatsappStore2.getContactByPhone(phone);
           if (!contact) {
             contact = {
               id: `cnt_${item.participantId || item.id}`,
@@ -1462,7 +1535,7 @@ whatsappRouter.get("/api/whatsapp/conversations", async (req, res) => {
               created_at: item.updatedTime || (/* @__PURE__ */ new Date()).toISOString(),
               last_activity_at: item.updatedTime || (/* @__PURE__ */ new Date()).toISOString()
             };
-            whatsappStore.saveContact(contact);
+            whatsappStore2.saveContact(contact);
           }
           const lastMsgTime = item.updatedTime || (/* @__PURE__ */ new Date()).toISOString();
           const winExpiry = new Date(new Date(lastMsgTime).getTime() + 24 * 60 * 60 * 1e3).toISOString();
@@ -1492,9 +1565,9 @@ whatsappRouter.get("/api/whatsapp/conversations", async (req, res) => {
               sender_phone: phone
             } : void 0
           };
-          whatsappStore.saveConversation(conv);
+          whatsappStore2.saveConversation(conv);
         }
-        localConversations = whatsappStore.getConversations();
+        localConversations = whatsappStore2.getConversations();
       }
     } catch (syncErr) {
       console.warn("[Zernio live sync notice]:", syncErr.message);
@@ -1504,8 +1577,8 @@ whatsappRouter.get("/api/whatsapp/conversations", async (req, res) => {
 });
 whatsappRouter.get("/api/whatsapp/conversations/:id/messages", async (req, res) => {
   const { id } = req.params;
-  let messages = whatsappStore.getMessages(id);
-  const conversation = whatsappStore.getConversation(id);
+  let messages = whatsappStore2.getMessages(id);
+  const conversation = whatsappStore2.getConversation(id);
   if (/^[0-9a-fA-F]{24}$/.test(id)) {
     try {
       const liveMessages = await ZernioWhatsAppService.listMessages(id, conversation?.account_id);
@@ -1525,9 +1598,9 @@ whatsappRouter.get("/api/whatsapp/conversations/:id/messages", async (req, res) 
             sender_name: m.senderName || (direction === "incoming" ? conversation?.contact.name : "Support Agent"),
             sender_phone: m.senderPhone || (direction === "incoming" ? conversation?.contact.phone_number : void 0)
           };
-          whatsappStore.appendMessage(msg);
+          whatsappStore2.appendMessage(msg);
         }
-        messages = whatsappStore.getMessages(id);
+        messages = whatsappStore2.getMessages(id);
       }
     } catch (mErr) {
       console.warn("[Zernio live messages notice]:", mErr.message);
@@ -1538,7 +1611,7 @@ whatsappRouter.get("/api/whatsapp/conversations/:id/messages", async (req, res) 
 whatsappRouter.post("/api/whatsapp/conversations/:id/messages", async (req, res) => {
   const { id } = req.params;
   const { text, media_url, template_name, template_params } = req.body;
-  const conv = whatsappStore.getConversation(id);
+  const conv = whatsappStore2.getConversation(id);
   if (!conv) {
     return res.status(404).json({ error: "Conversation not found" });
   }
@@ -1572,7 +1645,7 @@ whatsappRouter.post("/api/whatsapp/conversations/:id/messages", async (req, res)
     timestamp: (/* @__PURE__ */ new Date()).toISOString(),
     sender_name: "Support Agent"
   };
-  whatsappStore.appendMessage(msg);
+  whatsappStore2.appendMessage(msg);
   return res.json({ success: true, message: msg });
 });
 whatsappRouter.post("/api/whatsapp/conversations/:id/typing", async (req, res) => {
@@ -1583,7 +1656,7 @@ whatsappRouter.post("/api/whatsapp/conversations/:id/typing", async (req, res) =
 });
 whatsappRouter.post("/api/whatsapp/conversations/:id/read", async (req, res) => {
   const { id } = req.params;
-  whatsappStore.markConversationRead(id);
+  whatsappStore2.markConversationRead(id);
   if (/^[0-9a-fA-F]{24}$/.test(id)) {
     ZernioWhatsAppService.markConversationRead(id).catch(() => {
     });
@@ -1592,7 +1665,7 @@ whatsappRouter.post("/api/whatsapp/conversations/:id/read", async (req, res) => 
 });
 whatsappRouter.post("/api/whatsapp/capi/trigger", async (req, res) => {
   const { conversation_id, event_name, value, currency, custom_event_name } = req.body;
-  const conv = conversation_id ? whatsappStore.getConversation(conversation_id) : void 0;
+  const conv = conversation_id ? whatsappStore2.getConversation(conversation_id) : void 0;
   const contact = conv?.contact;
   const ctwaClid = conv?.ctwa_referral?.ctwa_clid || contact?.ctwa_source?.ctwa_clid;
   const result = await MetaCAPIService.dispatchEvent({
@@ -1629,7 +1702,7 @@ whatsappRouter.post("/api/whatsapp/capi/trigger", async (req, res) => {
     meta_response: result.metaResponse,
     created_at: (/* @__PURE__ */ new Date()).toISOString()
   };
-  whatsappStore.logCAPIEvent(capiEvent);
+  whatsappStore2.logCAPIEvent(capiEvent);
   return res.json({
     success: true,
     event: capiEvent,
@@ -1637,11 +1710,11 @@ whatsappRouter.post("/api/whatsapp/capi/trigger", async (req, res) => {
   });
 });
 whatsappRouter.get("/api/whatsapp/capi/events", (req, res) => {
-  const events = whatsappStore.getCAPIEvents();
+  const events = whatsappStore2.getCAPIEvents();
   return res.json({ data: events });
 });
 whatsappRouter.get("/api/whatsapp/automations", (req, res) => {
-  const flows = whatsappStore.getAutomations();
+  const flows = whatsappStore2.getAutomations();
   return res.json({ data: flows });
 });
 whatsappRouter.post("/api/whatsapp/automations", (req, res) => {
@@ -1658,12 +1731,12 @@ whatsappRouter.post("/api/whatsapp/automations", (req, res) => {
     created_at: (/* @__PURE__ */ new Date()).toISOString(),
     updated_at: (/* @__PURE__ */ new Date()).toISOString()
   };
-  whatsappStore.saveAutomation(newFlow);
+  whatsappStore2.saveAutomation(newFlow);
   return res.json({ success: true, data: newFlow });
 });
 whatsappRouter.put("/api/whatsapp/automations/:id", (req, res) => {
   const { id } = req.params;
-  const existing = whatsappStore.getAutomation(id);
+  const existing = whatsappStore2.getAutomation(id);
   if (!existing) return res.status(404).json({ error: "Flow not found" });
   const updated = {
     ...existing,
@@ -1671,24 +1744,24 @@ whatsappRouter.put("/api/whatsapp/automations/:id", (req, res) => {
     id,
     updated_at: (/* @__PURE__ */ new Date()).toISOString()
   };
-  whatsappStore.saveAutomation(updated);
+  whatsappStore2.saveAutomation(updated);
   return res.json({ success: true, data: updated });
 });
 whatsappRouter.delete("/api/whatsapp/automations/:id", (req, res) => {
   const { id } = req.params;
-  whatsappStore.deleteAutomation(id);
+  whatsappStore2.deleteAutomation(id);
   return res.json({ success: true });
 });
 whatsappRouter.post("/api/whatsapp/automations/:id/test", async (req, res) => {
   const { id } = req.params;
-  const flow = whatsappStore.getAutomation(id);
+  const flow = whatsappStore2.getAutomation(id);
   if (!flow) return res.status(404).json({ error: "Flow not found" });
-  const sampleConv = whatsappStore.getConversations()[0];
+  const sampleConv = whatsappStore2.getConversations()[0];
   const result = await AutomationEngine.executeFlow(flow, sampleConv);
   return res.json({ success: true, result });
 });
 whatsappRouter.get("/api/whatsapp/templates", (req, res) => {
-  const templates = whatsappStore.getTemplates();
+  const templates = whatsappStore2.getTemplates();
   return res.json({ data: templates });
 });
 whatsappRouter.post("/api/whatsapp/templates", (req, res) => {
@@ -1703,21 +1776,21 @@ whatsappRouter.post("/api/whatsapp/templates", (req, res) => {
     components: components || [],
     last_updated: (/* @__PURE__ */ new Date()).toISOString()
   };
-  whatsappStore.saveTemplate(newTemplate);
+  whatsappStore2.saveTemplate(newTemplate);
   return res.json({ success: true, data: newTemplate });
 });
 whatsappRouter.delete("/api/whatsapp/templates/:name", (req, res) => {
   const { name } = req.params;
-  whatsappStore.deleteTemplate(name);
+  whatsappStore2.deleteTemplate(name);
   return res.json({ success: true });
 });
 whatsappRouter.get("/api/whatsapp/broadcasts", (req, res) => {
-  const broadcasts = whatsappStore.getBroadcasts();
+  const broadcasts = whatsappStore2.getBroadcasts();
   return res.json({ data: broadcasts });
 });
 whatsappRouter.post("/api/whatsapp/broadcasts", (req, res) => {
   const { title, template_name, target_tags, scheduled_at } = req.body;
-  const allContacts = whatsappStore.getContacts();
+  const allContacts = whatsappStore2.getContacts();
   const matched = target_tags && target_tags.length > 0 ? allContacts.filter((c) => target_tags.some((t) => c.tags.includes(t))) : allContacts;
   const total = Math.max(matched.length, 120);
   const newBroadcast = {
@@ -1734,11 +1807,11 @@ whatsappRouter.post("/api/whatsapp/broadcasts", (req, res) => {
     scheduled_at,
     created_at: (/* @__PURE__ */ new Date()).toISOString()
   };
-  whatsappStore.saveBroadcast(newBroadcast);
+  whatsappStore2.saveBroadcast(newBroadcast);
   return res.json({ success: true, data: newBroadcast });
 });
 whatsappRouter.get("/api/whatsapp/contacts", (req, res) => {
-  const contacts = whatsappStore.getContacts();
+  const contacts = whatsappStore2.getContacts();
   return res.json({ data: contacts });
 });
 whatsappRouter.post("/api/whatsapp/contacts", (req, res) => {
@@ -1755,8 +1828,31 @@ whatsappRouter.post("/api/whatsapp/contacts", (req, res) => {
     last_activity_at: (/* @__PURE__ */ new Date()).toISOString(),
     notes: req.body.notes
   };
-  whatsappStore.saveContact(newContact);
+  whatsappStore2.saveContact(newContact);
   return res.json({ success: true, data: newContact });
+});
+whatsappRouter.put("/api/whatsapp/contacts/:id", (req, res) => {
+  const { id } = req.params;
+  const existing = whatsappStore2.getContact(id);
+  if (!existing) return res.status(404).json({ error: "Contact not found" });
+  const updated = {
+    ...existing,
+    ...req.body,
+    id,
+    last_activity_at: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  whatsappStore2.saveContact(updated);
+  return res.json({ success: true, data: updated });
+});
+whatsappRouter.delete("/api/whatsapp/contacts/:id", (req, res) => {
+  const { id } = req.params;
+  whatsappStore2.deleteContact(id);
+  return res.json({ success: true });
+});
+whatsappRouter.post("/api/whatsapp/backfill", async (req, res) => {
+  const profileId = req.query.profileId || req.body.profileId;
+  const result = await ZernioWhatsAppService.backfillTenantHistory(profileId);
+  return res.json({ success: true, ...result });
 });
 whatsappRouter.post("/api/mcp", (req, res) => {
   const response = MCPServerHandler.handleJsonRpcRequest(req.body);
@@ -1794,26 +1890,26 @@ whatsappRouter.get("/api/mcp/manifest", (req, res) => {
   });
 });
 whatsappRouter.get("/api/mcp/tokens", (req, res) => {
-  const tokens = whatsappStore.getMCPTokens();
+  const tokens = whatsappStore2.getMCPTokens();
   return res.json({ data: tokens });
 });
 whatsappRouter.post("/api/mcp/tokens", (req, res) => {
   const { name, scopes } = req.body;
-  const result = whatsappStore.createMCPToken(name || "External Agent Token", scopes || ["*"]);
+  const result = whatsappStore2.createMCPToken(name || "External Agent Token", scopes || ["*"]);
   return res.json({ success: true, token: result.token, data: result.record });
 });
 whatsappRouter.delete("/api/mcp/tokens/:id", (req, res) => {
   const { id } = req.params;
-  whatsappStore.deleteMCPToken(id);
+  whatsappStore2.deleteMCPToken(id);
   return res.json({ success: true });
 });
 whatsappRouter.get("/api/whatsapp/account", async (req, res) => {
-  let account = whatsappStore.getAccount();
-  const sandbox = whatsappStore.getSandboxSession();
+  let account = whatsappStore2.getAccount();
+  const sandbox = whatsappStore2.getSandboxSession();
   if (!account && process.env.ZERNIO_API_KEY) {
     const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts();
     if (liveAccounts.length > 0) {
-      account = whatsappStore.setAccount(liveAccounts[0]);
+      account = whatsappStore2.setAccount(liveAccounts[0]);
     }
   }
   return res.json({
@@ -1823,7 +1919,7 @@ whatsappRouter.get("/api/whatsapp/account", async (req, res) => {
   });
 });
 whatsappRouter.post("/api/whatsapp/account/disconnect", (req, res) => {
-  whatsappStore.disconnectAccount();
+  whatsappStore2.disconnectAccount();
   return res.json({ success: true, message: "WhatsApp account disconnected" });
 });
 var handleCreateSandbox = async (req, res) => {
@@ -1835,37 +1931,37 @@ var handleCreateSandbox = async (req, res) => {
   if (!session) {
     return res.status(500).json({ error: "Failed to initialize sandbox session." });
   }
-  whatsappStore.setSandboxSession(session);
+  whatsappStore2.setSandboxSession(session);
   return res.json({
     success: true,
     session,
-    account: whatsappStore.getAccount()
+    account: whatsappStore2.getAccount()
   });
 };
 whatsappRouter.post("/api/whatsapp/sandbox/session", handleCreateSandbox);
 whatsappRouter.post("/api/whatsapp/sandbox/sessions", handleCreateSandbox);
 whatsappRouter.get("/api/whatsapp/sandbox/session", (req, res) => {
-  const session = whatsappStore.getSandboxSession();
+  const session = whatsappStore2.getSandboxSession();
   return res.json({ session: session || null });
 });
 whatsappRouter.get("/api/whatsapp/sandbox/sessions", (req, res) => {
-  const session = whatsappStore.getSandboxSession();
+  const session = whatsappStore2.getSandboxSession();
   return res.json({ sessions: session ? [session] : [] });
 });
 whatsappRouter.delete("/api/whatsapp/sandbox/session", async (req, res) => {
-  const session = whatsappStore.getSandboxSession();
+  const session = whatsappStore2.getSandboxSession();
   if (session) {
     await ZernioWhatsAppService.deleteSandboxSession(session.id);
   }
-  whatsappStore.deleteSandboxSession();
+  whatsappStore2.deleteSandboxSession();
   return res.json({ success: true, message: "Sandbox session revoked." });
 });
 whatsappRouter.post("/api/whatsapp/sandbox/simulate-message", async (req, res) => {
-  const session = whatsappStore.getSandboxSession();
+  const session = whatsappStore2.getSandboxSession();
   const phone = req.body.phone_number || session?.phone_number || "+14155552671";
   const text = req.body.text || "Hi! Testing WhatsApp sandbox automation and CRM response.";
   const name = req.body.name || "Sandbox Tester";
-  let contact = whatsappStore.getContactByPhone(phone);
+  let contact = whatsappStore2.getContactByPhone(phone);
   if (!contact) {
     contact = {
       id: `cnt_${Date.now()}`,
@@ -1878,11 +1974,11 @@ whatsappRouter.post("/api/whatsapp/sandbox/simulate-message", async (req, res) =
       created_at: (/* @__PURE__ */ new Date()).toISOString(),
       last_activity_at: (/* @__PURE__ */ new Date()).toISOString()
     };
-    whatsappStore.saveContact(contact);
+    whatsappStore2.saveContact(contact);
   }
-  const conv = whatsappStore.getOrCreateConversation(
+  const conv = whatsappStore2.getOrCreateConversation(
     contact,
-    whatsappStore.getAccount()?.id || "acc_sandbox",
+    whatsappStore2.getAccount()?.id || "acc_sandbox",
     "prof_default"
   );
   const incomingMsg = {
@@ -1896,7 +1992,7 @@ whatsappRouter.post("/api/whatsapp/sandbox/simulate-message", async (req, res) =
     sender_name: name,
     sender_phone: phone
   };
-  whatsappStore.appendMessage(incomingMsg);
+  whatsappStore2.appendMessage(incomingMsg);
   const triggeredFlows = await AutomationEngine.evaluateTrigger(
     "incoming_message",
     {
@@ -1969,14 +2065,14 @@ whatsappRouter.post("/api/whatsapp/connect/headless", (req, res) => {
     verified_name: name || "Verified WABA",
     connected_at: (/* @__PURE__ */ new Date()).toISOString()
   };
-  whatsappStore.setAccount(account);
+  whatsappStore2.setAccount(account);
   return res.json({
     success: true,
     account
   });
 });
 whatsappRouter.get("/api/whatsapp/phone-numbers", (req, res) => {
-  const account = whatsappStore.getAccount();
+  const account = whatsappStore2.getAccount();
   if (!account) {
     return res.json({ data: [] });
   }
