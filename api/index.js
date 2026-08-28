@@ -4,7 +4,7 @@ import path from "path";
 import fs from "fs";
 import { createClient } from "@supabase/supabase-js";
 import { Zernio as Zernio2 } from "@zernio/node";
-import crypto6 from "crypto";
+import crypto7 from "crypto";
 import cookieParser from "cookie-parser";
 import helmet from "helmet";
 import cors from "cors";
@@ -20,6 +20,8 @@ var WhatsAppStore = class {
   constructor() {
     this.connectedAccount = null;
     this.sandboxSession = null;
+    this.userSandboxSessions = /* @__PURE__ */ new Map();
+    this.userAccounts = /* @__PURE__ */ new Map();
     this.contacts = /* @__PURE__ */ new Map();
     this.conversations = /* @__PURE__ */ new Map();
     this.messages = /* @__PURE__ */ new Map();
@@ -30,23 +32,52 @@ var WhatsAppStore = class {
     this.mcpTokens = /* @__PURE__ */ new Map();
   }
   // --- Account & Connection Management ---
-  getAccount() {
+  getAccount(userId) {
+    if (userId && this.userAccounts.has(userId)) {
+      return this.userAccounts.get(userId);
+    }
     return this.connectedAccount;
   }
-  setAccount(account) {
+  setAccount(account, userId) {
     this.connectedAccount = account;
+    if (userId) {
+      this.userAccounts.set(userId, account);
+    }
     return account;
   }
-  disconnectAccount() {
+  disconnectAccount(userId) {
     this.connectedAccount = null;
     this.sandboxSession = null;
+    if (userId) {
+      this.userAccounts.delete(userId);
+      this.userSandboxSessions.delete(userId);
+    }
   }
-  getSandboxSession() {
+  getSandboxSession(userId) {
+    if (userId && this.userSandboxSessions.has(userId)) {
+      return this.userSandboxSessions.get(userId);
+    }
     return this.sandboxSession;
   }
-  setSandboxSession(session) {
+  getSandboxSessionByPhone(phone) {
+    const clean = phone.replace(/[^0-9]/g, "");
+    for (const [uid, sess] of this.userSandboxSessions.entries()) {
+      if (sess.phone_number.replace(/[^0-9]/g, "") === clean) {
+        return { session: sess, userId: uid };
+      }
+    }
+    if (this.sandboxSession && this.sandboxSession.phone_number.replace(/[^0-9]/g, "") === clean) {
+      return { session: this.sandboxSession, userId: this.sandboxSession.user_id };
+    }
+    return null;
+  }
+  setSandboxSession(session, userId) {
+    const uKey = userId || session.user_id;
     this.sandboxSession = session;
-    this.connectedAccount = {
+    if (uKey) {
+      this.userSandboxSessions.set(uKey, session);
+    }
+    const acc = {
       id: `acc_sandbox_${session.id}`,
       platform: "whatsapp",
       name: `WhatsApp Sandbox (${session.formatted_phone || session.phone_number})`,
@@ -59,16 +90,24 @@ var WhatsAppStore = class {
       verified_name: "Zernio Dev Sandbox",
       connected_at: session.created_at
     };
+    this.setAccount(acc, uKey);
     return session;
   }
-  deleteSandboxSession() {
+  deleteSandboxSession(userId) {
     this.sandboxSession = null;
+    if (userId) {
+      this.userSandboxSessions.delete(userId);
+      if (this.userAccounts.get(userId)?.mode === "sandbox") {
+        this.userAccounts.delete(userId);
+      }
+    }
     if (this.connectedAccount?.mode === "sandbox") {
       this.connectedAccount = null;
     }
   }
-  isConnected() {
-    return this.connectedAccount !== null && this.connectedAccount.status !== "disconnected";
+  isConnected(userId) {
+    const acc = this.getAccount(userId);
+    return acc !== null && acc.status !== "disconnected";
   }
   // --- Contacts ---
   getContacts() {
@@ -305,9 +344,13 @@ var whatsappStore2 = new WhatsAppStore();
 
 // lib/zernioWhatsAppService.ts
 import { Zernio } from "@zernio/node";
+import crypto2 from "crypto";
 var ZernioWhatsAppService = class {
   static {
     this.zernioClient = null;
+  }
+  static {
+    this.userProfileCache = /* @__PURE__ */ new Map();
   }
   static getClient() {
     if (!this.zernioClient) {
@@ -317,9 +360,13 @@ var ZernioWhatsAppService = class {
     return this.zernioClient;
   }
   /**
-   * Get or create a valid 24-character hexadecimal profile ID from Zernio
+   * Get or create a valid 24-character hexadecimal profile ID from Zernio per user
    */
-  static async getOrCreateProfileId() {
+  static async getOrCreateProfileId(userId) {
+    const key = userId || "default";
+    if (this.userProfileCache.has(key)) {
+      return this.userProfileCache.get(key);
+    }
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if (apiKey && apiKey !== "dummy_dev_key") {
       try {
@@ -332,9 +379,15 @@ var ZernioWhatsAppService = class {
         if (res.ok) {
           const data = await res.json();
           const profiles = data.profiles || data.data || [];
-          if (profiles.length > 0 && (profiles[0]._id || profiles[0].id)) {
-            const id = String(profiles[0]._id || profiles[0].id);
-            if (/^[0-9a-fA-F]{24}$/.test(id)) return id;
+          if (userId) {
+            const match = profiles.find((p) => p.name?.includes(userId) || p.description?.includes(userId));
+            if (match && (match._id || match.id)) {
+              const id = String(match._id || match.id);
+              if (/^[0-9a-fA-F]{24}$/.test(id)) {
+                this.userProfileCache.set(key, id);
+                return id;
+              }
+            }
           }
           const createRes = await fetch("https://zernio.com/api/v1/profiles", {
             method: "POST",
@@ -342,22 +395,34 @@ var ZernioWhatsAppService = class {
               Authorization: `Bearer ${apiKey}`,
               "Content-Type": "application/json"
             },
-            body: JSON.stringify({ name: "Rockyt WhatsApp Workspace" })
+            body: JSON.stringify({
+              name: `Rockyt Workspace - ${userId || "Primary"}`,
+              description: `Tenant Profile for user ${userId || "default"}`
+            })
           });
           if (createRes.ok) {
             const createdData = await createRes.json();
             const id = String(createdData.profile?._id || createdData.profile?.id || createdData._id || createdData.id || "");
-            if (/^[0-9a-fA-F]{24}$/.test(id)) return id;
+            if (/^[0-9a-fA-F]{24}$/.test(id)) {
+              this.userProfileCache.set(key, id);
+              return id;
+            }
+          }
+          if (profiles.length > 0 && (profiles[0]._id || profiles[0].id)) {
+            const id = String(profiles[0]._id || profiles[0].id);
+            if (/^[0-9a-fA-F]{24}$/.test(id)) {
+              this.userProfileCache.set(key, id);
+              return id;
+            }
           }
         }
       } catch (err) {
         console.warn("[Zernio getOrCreateProfileId Notice]:", err.message);
       }
     }
-    const timestamp = Math.floor(Date.now() / 1e3).toString(16).padStart(8, "0");
-    const machineId = "f4a28c9b1d";
-    const counter = Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0");
-    return `${timestamp}${machineId}${counter}`.substring(0, 24);
+    const hash = crypto2.createHash("md5").update(`user_prof_${key}`).digest("hex").substring(0, 24);
+    this.userProfileCache.set(key, hash);
+    return hash;
   }
   /**
    * List connected WhatsApp accounts from Zernio
@@ -454,11 +519,12 @@ var ZernioWhatsAppService = class {
     return [];
   }
   /**
-   * Create a WhatsApp Sandbox session on Zernio for testing
+   * Create a WhatsApp Sandbox session on Zernio for testing, scoped per user
    */
-  static async createSandboxSession(phoneNumber) {
+  static async createSandboxSession(phoneNumber, userId) {
     const cleanPhone = phoneNumber.replace(/[^0-9+]/g, "");
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    const profileId = await this.getOrCreateProfileId(userId);
     const sandboxDiscovery = await this.getSandboxDiscovery();
     const sandboxNumber = sandboxDiscovery.phoneNumber || "+1 202 908 7457";
     if (apiKey && apiKey !== "dummy_dev_key") {
@@ -469,7 +535,7 @@ var ZernioWhatsAppService = class {
             Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json"
           },
-          body: JSON.stringify({ phone: cleanPhone, phone_number: cleanPhone })
+          body: JSON.stringify({ phone: cleanPhone, phone_number: cleanPhone, profileId })
         });
         if (res.status === 400) {
           const errData = await res.json().catch(() => ({}));
@@ -487,7 +553,7 @@ var ZernioWhatsAppService = class {
                 Authorization: `Bearer ${apiKey}`,
                 "Content-Type": "application/json"
               },
-              body: JSON.stringify({ phone: cleanPhone, phone_number: cleanPhone })
+              body: JSON.stringify({ phone: cleanPhone, phone_number: cleanPhone, profileId })
             });
           }
         }
@@ -503,7 +569,9 @@ var ZernioWhatsAppService = class {
             instructions: `We sent a verification template from ${sandboxNumber} to ${cleanPhone}. Open WhatsApp and reply to activate the session.`,
             status: session.status || "pending",
             expires_at: session.expires_at || session.expiresAt || new Date(Date.now() + 7 * 864e5).toISOString(),
-            created_at: session.created_at || session.createdAt || (/* @__PURE__ */ new Date()).toISOString()
+            created_at: session.created_at || session.createdAt || (/* @__PURE__ */ new Date()).toISOString(),
+            user_id: userId,
+            profile_id: profileId
           };
         }
       } catch (err) {
@@ -519,7 +587,9 @@ var ZernioWhatsAppService = class {
       instructions: `Check WhatsApp on ${cleanPhone} and reply to the activation message from ${sandboxNumber} to verify your test phone.`,
       status: "active",
       expires_at: new Date(Date.now() + 7 * 864e5).toISOString(),
-      created_at: (/* @__PURE__ */ new Date()).toISOString()
+      created_at: (/* @__PURE__ */ new Date()).toISOString(),
+      user_id: userId,
+      profile_id: profileId
     };
   }
   /**
@@ -734,13 +804,13 @@ var ZernioWhatsAppService = class {
 };
 
 // lib/metaCapiService.ts
-import crypto2 from "crypto";
+import crypto3 from "crypto";
 var MetaCAPIService = class {
   static hashValue(val) {
     if (!val) return void 0;
     const clean = val.trim().toLowerCase();
     if (!clean) return void 0;
-    return crypto2.createHash("sha256").update(clean).digest("hex");
+    return crypto3.createHash("sha256").update(clean).digest("hex");
   }
   static normalizePhone(phone) {
     if (!phone) return void 0;
@@ -751,7 +821,7 @@ var MetaCAPIService = class {
    * Dispatches a conversion event to Meta Conversions API (or simulates in dev mode)
    */
   static async dispatchEvent(params) {
-    const eventId = `wa_capi_${Date.now()}_${crypto2.randomBytes(4).toString("hex")}`;
+    const eventId = `wa_capi_${Date.now()}_${crypto3.randomBytes(4).toString("hex")}`;
     const eventTime = Math.floor(Date.now() / 1e3);
     const hashedEmail = this.hashValue(params.userData.email);
     const hashedPhone = this.normalizePhone(params.userData.phone);
@@ -832,7 +902,7 @@ var MetaCAPIService = class {
       eventId,
       metaResponse: {
         events_received: 1,
-        fbtrace_id: `sim_${crypto2.randomBytes(8).toString("hex")}`,
+        fbtrace_id: `sim_${crypto3.randomBytes(8).toString("hex")}`,
         messages: ["Simulated Meta CAPI delivery: Payload format and hashes verified (v19.0)"]
       }
     };
@@ -840,7 +910,7 @@ var MetaCAPIService = class {
 };
 
 // lib/mcpServer.ts
-import crypto3 from "crypto";
+import crypto4 from "crypto";
 var MCP_TOOLS_MANIFEST = [
   {
     name: "whatsapp_list_conversations",
@@ -1094,7 +1164,7 @@ var MCPServerHandler = class {
           );
         }
         const msg = {
-          id: `msg_mcp_${Date.now()}_${crypto3.randomBytes(3).toString("hex")}`,
+          id: `msg_mcp_${Date.now()}_${crypto4.randomBytes(3).toString("hex")}`,
           conversation_id: args.conversation_id,
           direction: "outgoing",
           type: args.media_url ? "image" : "text",
@@ -1120,7 +1190,7 @@ var MCPServerHandler = class {
         const tmpl = whatsappStore2.getTemplate(args.template_name);
         if (!tmpl) throw new Error(`Template '${args.template_name}' not found`);
         const msg = {
-          id: `msg_mcp_tmpl_${Date.now()}_${crypto3.randomBytes(3).toString("hex")}`,
+          id: `msg_mcp_tmpl_${Date.now()}_${crypto4.randomBytes(3).toString("hex")}`,
           conversation_id: args.conversation_id,
           direction: "outgoing",
           type: "template",
@@ -1146,7 +1216,7 @@ var MCPServerHandler = class {
         const eventName = args.event_name || "Lead";
         const contact = conv.contact;
         const ctwaClid = conv.ctwa_referral?.ctwa_clid || contact.ctwa_source?.ctwa_clid;
-        const eventId = `wa_capi_${Date.now()}_${crypto3.randomBytes(4).toString("hex")}`;
+        const eventId = `wa_capi_${Date.now()}_${crypto4.randomBytes(4).toString("hex")}`;
         const capiEvent = {
           id: `capi_${Date.now()}`,
           event_id: eventId,
@@ -1165,7 +1235,7 @@ var MCPServerHandler = class {
           status: "delivered",
           meta_response: {
             events_received: 1,
-            fbtrace_id: `mcp_fb_${crypto3.randomBytes(6).toString("hex")}`,
+            fbtrace_id: `mcp_fb_${crypto4.randomBytes(6).toString("hex")}`,
             messages: ["Attributed to CTWA click and dispatched to Meta Conversions API via MCP Agent"]
           },
           created_at: (/* @__PURE__ */ new Date()).toISOString()
@@ -1211,7 +1281,7 @@ var MCPServerHandler = class {
 };
 
 // lib/automationEngine.ts
-import crypto4 from "crypto";
+import crypto5 from "crypto";
 var AutomationEngine = class {
   /**
    * Evaluate active flows when an incoming message or trigger occurs
@@ -1300,7 +1370,7 @@ var AutomationEngine = class {
         } else {
           const text = currentNode.config.text || "Thank you for connecting with us!";
           const msg = {
-            id: `msg_auto_${Date.now()}_${crypto4.randomBytes(3).toString("hex")}`,
+            id: `msg_auto_${Date.now()}_${crypto5.randomBytes(3).toString("hex")}`,
             conversation_id: conv.id,
             direction: "outgoing",
             type: "text",
@@ -1317,7 +1387,7 @@ var AutomationEngine = class {
         const templateName = currentNode.config.template_name || "lead_welcome_v1";
         const tmpl = whatsappStore2.getTemplate(templateName);
         const msg = {
-          id: `msg_auto_tmpl_${Date.now()}_${crypto4.randomBytes(3).toString("hex")}`,
+          id: `msg_auto_tmpl_${Date.now()}_${crypto5.randomBytes(3).toString("hex")}`,
           conversation_id: conv.id,
           direction: "outgoing",
           type: "template",
@@ -1384,7 +1454,7 @@ var AutomationEngine = class {
 };
 
 // lib/whatsappRoutes.ts
-import crypto5 from "crypto";
+import crypto6 from "crypto";
 var whatsappRouter = Router();
 var processedEventIds = /* @__PURE__ */ new Set();
 whatsappRouter.post("/api/webhooks/zernio", async (req, res) => {
@@ -1396,8 +1466,8 @@ whatsappRouter.post("/api/webhooks/zernio", async (req, res) => {
       if (!signature) {
         return res.status(401).json({ error: "Missing webhook signature" });
       }
-      const computed = crypto5.createHmac("sha256", secret).update(rawBody).digest("hex");
-      if (!crypto5.timingSafeEqual(Buffer.from(computed), Buffer.from(signature))) {
+      const computed = crypto6.createHmac("sha256", secret).update(rawBody).digest("hex");
+      if (!crypto6.timingSafeEqual(Buffer.from(computed), Buffer.from(signature))) {
         return res.status(401).json({ error: "Invalid webhook signature" });
       }
     }
@@ -1633,7 +1703,7 @@ whatsappRouter.post("/api/whatsapp/conversations/:id/messages", async (req, res)
     });
   }
   const msg = {
-    id: `msg_out_${Date.now()}_${crypto5.randomBytes(3).toString("hex")}`,
+    id: `msg_out_${Date.now()}_${crypto6.randomBytes(3).toString("hex")}`,
     conversation_id: id,
     direction: "outgoing",
     type: template_name ? "template" : media_url ? "image" : "text",
@@ -1903,13 +1973,18 @@ whatsappRouter.delete("/api/mcp/tokens/:id", (req, res) => {
   whatsappStore2.deleteMCPToken(id);
   return res.json({ success: true });
 });
+function getUserIdFromReq(req) {
+  return req.headers["x-user-id"] || req.headers["x-rockyt-user-id"] || req.query.userId || req.body?.userId || void 0;
+}
 whatsappRouter.get("/api/whatsapp/account", async (req, res) => {
-  let account = whatsappStore2.getAccount();
-  const sandbox = whatsappStore2.getSandboxSession();
+  const userId = getUserIdFromReq(req);
+  let account = whatsappStore2.getAccount(userId);
+  const sandbox = whatsappStore2.getSandboxSession(userId);
   if (!account && process.env.ZERNIO_API_KEY) {
-    const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts();
+    const profileId = await ZernioWhatsAppService.getOrCreateProfileId(userId);
+    const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId);
     if (liveAccounts.length > 0) {
-      account = whatsappStore2.setAccount(liveAccounts[0]);
+      account = whatsappStore2.setAccount(liveAccounts[0], userId);
     }
   }
   return res.json({
@@ -1919,41 +1994,46 @@ whatsappRouter.get("/api/whatsapp/account", async (req, res) => {
   });
 });
 whatsappRouter.post("/api/whatsapp/account/disconnect", (req, res) => {
-  whatsappStore2.disconnectAccount();
+  const userId = getUserIdFromReq(req);
+  whatsappStore2.disconnectAccount(userId);
   return res.json({ success: true, message: "WhatsApp account disconnected" });
 });
 var handleCreateSandbox = async (req, res) => {
   const phone = req.body.phone || req.body.phone_number;
+  const userId = getUserIdFromReq(req);
   if (!phone) {
     return res.status(400).json({ error: "Phone number is required to start a sandbox activation." });
   }
-  const session = await ZernioWhatsAppService.createSandboxSession(phone);
+  const session = await ZernioWhatsAppService.createSandboxSession(phone, userId);
   if (!session) {
     return res.status(500).json({ error: "Failed to initialize sandbox session." });
   }
-  whatsappStore2.setSandboxSession(session);
+  whatsappStore2.setSandboxSession(session, userId);
   return res.json({
     success: true,
     session,
-    account: whatsappStore2.getAccount()
+    account: whatsappStore2.getAccount(userId)
   });
 };
 whatsappRouter.post("/api/whatsapp/sandbox/session", handleCreateSandbox);
 whatsappRouter.post("/api/whatsapp/sandbox/sessions", handleCreateSandbox);
 whatsappRouter.get("/api/whatsapp/sandbox/session", (req, res) => {
-  const session = whatsappStore2.getSandboxSession();
+  const userId = getUserIdFromReq(req);
+  const session = whatsappStore2.getSandboxSession(userId);
   return res.json({ session: session || null });
 });
 whatsappRouter.get("/api/whatsapp/sandbox/sessions", (req, res) => {
-  const session = whatsappStore2.getSandboxSession();
+  const userId = getUserIdFromReq(req);
+  const session = whatsappStore2.getSandboxSession(userId);
   return res.json({ sessions: session ? [session] : [] });
 });
 whatsappRouter.delete("/api/whatsapp/sandbox/session", async (req, res) => {
-  const session = whatsappStore2.getSandboxSession();
+  const userId = getUserIdFromReq(req);
+  const session = whatsappStore2.getSandboxSession(userId);
   if (session) {
     await ZernioWhatsAppService.deleteSandboxSession(session.id);
   }
-  whatsappStore2.deleteSandboxSession();
+  whatsappStore2.deleteSandboxSession(userId);
   return res.json({ success: true, message: "Sandbox session revoked." });
 });
 whatsappRouter.post("/api/whatsapp/sandbox/simulate-message", async (req, res) => {
@@ -2360,8 +2440,8 @@ function startServer() {
         if (keys && keys.length > 0) {
           apiKey = keys[0].key_prefix + "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
         } else {
-          const rawKey = "rkt_live_" + crypto6.randomBytes(32).toString("hex");
-          const hash = crypto6.createHash("sha256").update(rawKey).digest("hex");
+          const rawKey = "rkt_live_" + crypto7.randomBytes(32).toString("hex");
+          const hash = crypto7.createHash("sha256").update(rawKey).digest("hex");
           const prefix = rawKey.substring(0, 12);
           await supabase.from("user_api_keys").insert({
             user_id: userId,
@@ -2532,7 +2612,7 @@ function startServer() {
   }
   function toUUID(str) {
     if (isValidUUID(str)) return str.trim();
-    const hash = crypto6.createHash("md5").update(str || "default_rockyt_user").digest("hex");
+    const hash = crypto7.createHash("md5").update(str || "default_rockyt_user").digest("hex");
     return `${hash.substring(0, 8)}-${hash.substring(8, 12)}-4${hash.substring(13, 16)}-a${hash.substring(17, 20)}-${hash.substring(20, 32)}`;
   }
   async function ensureUserProfile(reqUser) {
@@ -2694,7 +2774,7 @@ function startServer() {
         }
       }
       if (token && (token.startsWith("rkt_") || token.length >= 32)) {
-        const hash = crypto6.createHash("sha256").update(token).digest("hex");
+        const hash = crypto7.createHash("sha256").update(token).digest("hex");
         const { data: keyData } = await supabase.from("user_api_keys").select("user_id, revoked").eq("key_hash", hash).maybeSingle();
         if (keyData && !keyData.revoked) {
           const { data: userProfile } = await supabase.from("profiles").select("*").eq("id", keyData.user_id).maybeSingle();
@@ -2738,7 +2818,7 @@ function startServer() {
       }
       if (userEmailHeader && String(userEmailHeader).includes("@")) {
         const dummyUser = {
-          id: userIdHeader || `usr_${crypto6.createHash("md5").update(String(userEmailHeader)).digest("hex").substring(0, 16)}`,
+          id: userIdHeader || `usr_${crypto7.createHash("md5").update(String(userEmailHeader)).digest("hex").substring(0, 16)}`,
           email: String(userEmailHeader).trim()
         };
         const fullProfile = await ensureUserProfile(dummyUser);
@@ -2763,7 +2843,7 @@ function startServer() {
   const userCodeToDeviceCode = /* @__PURE__ */ new Map();
   app2.post("/api/auth/cli/initiate", asyncHandler(async (req, res) => {
     const deviceName = req.body?.deviceName || "Agent Setup";
-    const deviceCode = `rkt_dc_${crypto6.randomBytes(16).toString("hex")}`;
+    const deviceCode = `rkt_dc_${crypto7.randomBytes(16).toString("hex")}`;
     const randPart = Math.random().toString(36).substring(2, 6).toUpperCase();
     const userCode = `RKT-${randPart}`;
     const expiresAt = Date.now() + 15 * 60 * 1e3;
@@ -2848,8 +2928,8 @@ function startServer() {
       session.status = "denied";
       return res.json({ success: true, status: "denied" });
     }
-    const rawApiKey = `rkt_live_${crypto6.randomBytes(24).toString("hex")}`;
-    const hash = crypto6.createHash("sha256").update(rawApiKey).digest("hex");
+    const rawApiKey = `rkt_live_${crypto7.randomBytes(24).toString("hex")}`;
+    const hash = crypto7.createHash("sha256").update(rawApiKey).digest("hex");
     const userEmail = email || `agent_user_${code.substring(4)}@rockyt.io`;
     if (supabase) {
       try {
@@ -2862,7 +2942,7 @@ function startServer() {
             max_accounts: 1,
             connected_accounts_count: 0
           }).select("id").maybeSingle();
-          userId = newProfile?.id || `user_${crypto6.randomUUID()}`;
+          userId = newProfile?.id || `user_${crypto7.randomUUID()}`;
         }
         await supabase.from("user_api_keys").insert({
           user_id: userId,
@@ -2892,8 +2972,8 @@ function startServer() {
     const profile = await ensureUserProfile(req.user);
     const identifier = req.zernioProfileId || profile?.zernio_profile_id || req.user?.email || profile?.email || req.user?.id || req.headers["x-profile-id"] || req.headers["x-user-email"];
     const userId = profile?.id || (isValidUUID(req.user?.id) ? req.user.id : toUUID(req.user?.email || req.user?.id || "rockyt_user"));
-    const rawKey = "rkt_live_" + crypto6.randomBytes(32).toString("hex");
-    const hash = crypto6.createHash("sha256").update(rawKey).digest("hex");
+    const rawKey = "rkt_live_" + crypto7.randomBytes(32).toString("hex");
+    const hash = crypto7.createHash("sha256").update(rawKey).digest("hex");
     const prefix = rawKey.substring(0, 12);
     if (supabase) {
       try {
@@ -2924,7 +3004,7 @@ function startServer() {
       }
     } else {
       mockKeys.push({
-        id: crypto6.randomUUID(),
+        id: crypto7.randomUUID(),
         user_id: userId,
         key_hash: hash,
         key_prefix: prefix,
@@ -4639,7 +4719,7 @@ function startServer() {
     let targetAccountId = null;
     if (keyToken && supabase) {
       try {
-        const { data: keyRow } = await supabase.from("api_keys").select("user_id").eq("key_hash", crypto6.createHash("sha256").update(String(keyToken)).digest("hex")).eq("revoked", false).maybeSingle();
+        const { data: keyRow } = await supabase.from("api_keys").select("user_id").eq("key_hash", crypto7.createHash("sha256").update(String(keyToken)).digest("hex")).eq("revoked", false).maybeSingle();
         if (keyRow?.user_id) {
           userId = keyRow.user_id;
         }
@@ -5504,8 +5584,8 @@ function startServer() {
       } else {
         secretKey = Buffer.from(dodoWebhookSecret, "utf8");
       }
-      const computedBase64 = crypto6.createHmac("sha256", secretKey).update(signedPayload).digest("base64");
-      const computedHex = crypto6.createHmac("sha256", secretKey).update(signedPayload).digest("hex");
+      const computedBase64 = crypto7.createHmac("sha256", secretKey).update(signedPayload).digest("base64");
+      const computedHex = crypto7.createHmac("sha256", secretKey).update(signedPayload).digest("hex");
       const sigHeader = String(webhookSignature || "");
       const candidateSigs = sigHeader.split(/\s+/).flatMap((s) => s.split(","));
       let isValid = false;
@@ -5520,7 +5600,7 @@ function startServer() {
       if (!isValid) {
         const sigA = Buffer.from(computedHex, "utf8");
         const sigB = Buffer.from(sigHeader, "utf8");
-        if (sigA.length === sigB.length && crypto6.timingSafeEqual(sigA, sigB)) {
+        if (sigA.length === sigB.length && crypto7.timingSafeEqual(sigA, sigB)) {
           isValid = true;
         }
       }

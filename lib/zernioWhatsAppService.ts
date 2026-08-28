@@ -1,8 +1,10 @@
 import { Zernio } from '@zernio/node';
 import { WhatsAppSandboxSession, WhatsAppAccount } from './whatsappTypes';
+import crypto from 'crypto';
 
 export class ZernioWhatsAppService {
   private static zernioClient: Zernio | null = null;
+  private static userProfileCache = new Map<string, string>();
 
   private static getClient(): Zernio {
     if (!this.zernioClient) {
@@ -13,9 +15,14 @@ export class ZernioWhatsAppService {
   }
 
   /**
-   * Get or create a valid 24-character hexadecimal profile ID from Zernio
+   * Get or create a valid 24-character hexadecimal profile ID from Zernio per user
    */
-  public static async getOrCreateProfileId(): Promise<string> {
+  public static async getOrCreateProfileId(userId?: string): Promise<string> {
+    const key = userId || 'default';
+    if (this.userProfileCache.has(key)) {
+      return this.userProfileCache.get(key)!;
+    }
+
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if (apiKey && apiKey !== 'dummy_dev_key') {
       try {
@@ -28,24 +35,45 @@ export class ZernioWhatsAppService {
         if (res.ok) {
           const data = await res.json();
           const profiles = data.profiles || data.data || [];
-          if (profiles.length > 0 && (profiles[0]._id || profiles[0].id)) {
-            const id = String(profiles[0]._id || profiles[0].id);
-            if (/^[0-9a-fA-F]{24}$/.test(id)) return id;
+          
+          if (userId) {
+            const match = profiles.find((p: any) => p.name?.includes(userId) || p.description?.includes(userId));
+            if (match && (match._id || match.id)) {
+              const id = String(match._id || match.id);
+              if (/^[0-9a-fA-F]{24}$/.test(id)) {
+                this.userProfileCache.set(key, id);
+                return id;
+              }
+            }
           }
 
-          // Create a new profile if none exist
+          // Create a new isolated profile if none matching exist
           const createRes = await fetch('https://zernio.com/api/v1/profiles', {
             method: 'POST',
             headers: {
               Authorization: `Bearer ${apiKey}`,
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ name: 'Rockyt WhatsApp Workspace' }),
+            body: JSON.stringify({ 
+              name: `Rockyt Workspace - ${userId || 'Primary'}`,
+              description: `Tenant Profile for user ${userId || 'default'}`,
+            }),
           });
           if (createRes.ok) {
             const createdData = await createRes.json();
             const id = String(createdData.profile?._id || createdData.profile?.id || createdData._id || createdData.id || '');
-            if (/^[0-9a-fA-F]{24}$/.test(id)) return id;
+            if (/^[0-9a-fA-F]{24}$/.test(id)) {
+              this.userProfileCache.set(key, id);
+              return id;
+            }
+          }
+
+          if (profiles.length > 0 && (profiles[0]._id || profiles[0].id)) {
+            const id = String(profiles[0]._id || profiles[0].id);
+            if (/^[0-9a-fA-F]{24}$/.test(id)) {
+              this.userProfileCache.set(key, id);
+              return id;
+            }
           }
         }
       } catch (err: any) {
@@ -53,11 +81,10 @@ export class ZernioWhatsAppService {
       }
     }
 
-    // Fallback: Generate a standard 24-character hex MongoDB ObjectId format
-    const timestamp = Math.floor(Date.now() / 1000).toString(16).padStart(8, '0');
-    const machineId = 'f4a28c9b1d';
-    const counter = Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0');
-    return `${timestamp}${machineId}${counter}`.substring(0, 24);
+    // Fallback: Generate a deterministic 24-character hex MongoDB ObjectId format per user
+    const hash = crypto.createHash('md5').update(`user_prof_${key}`).digest('hex').substring(0, 24);
+    this.userProfileCache.set(key, hash);
+    return hash;
   }
 
   /**
@@ -161,28 +188,29 @@ export class ZernioWhatsAppService {
   }
 
   /**
-   * Create a WhatsApp Sandbox session on Zernio for testing
+   * Create a WhatsApp Sandbox session on Zernio for testing, scoped per user
    */
-  public static async createSandboxSession(phoneNumber: string): Promise<WhatsAppSandboxSession | null> {
+  public static async createSandboxSession(phoneNumber: string, userId?: string): Promise<WhatsAppSandboxSession | null> {
     const cleanPhone = phoneNumber.replace(/[^0-9+]/g, '');
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    const profileId = await this.getOrCreateProfileId(userId);
     const sandboxDiscovery = await this.getSandboxDiscovery();
     const sandboxNumber = sandboxDiscovery.phoneNumber || '+1 202 908 7457';
 
     // Try calling Zernio API if key is present
     if (apiKey && apiKey !== 'dummy_dev_key') {
       try {
-        // Send with field name 'phone' as required by Zernio Sandbox API
+        // Send with field name 'phone' and profileId
         let res = await fetch('https://zernio.com/api/v1/whatsapp/sandbox/sessions', {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ phone: cleanPhone, phone_number: cleanPhone }),
+          body: JSON.stringify({ phone: cleanPhone, phone_number: cleanPhone, profileId }),
         });
 
-        // If a session already exists for another phone, delete previous sessions and retry
+        // If a session already exists for another phone in this profile, delete previous sessions and retry
         if (res.status === 400) {
           const errData = await res.json().catch(() => ({}));
           if (errData.error?.includes('Revoke') || errData.message?.includes('Revoke') || errData.error_code === 'invalid_field_value') {
@@ -200,7 +228,7 @@ export class ZernioWhatsAppService {
                 Authorization: `Bearer ${apiKey}`,
                 'Content-Type': 'application/json',
               },
-              body: JSON.stringify({ phone: cleanPhone, phone_number: cleanPhone }),
+              body: JSON.stringify({ phone: cleanPhone, phone_number: cleanPhone, profileId }),
             });
           }
         }
@@ -218,6 +246,8 @@ export class ZernioWhatsAppService {
             status: session.status || 'pending',
             expires_at: session.expires_at || session.expiresAt || new Date(Date.now() + 7 * 86400000).toISOString(),
             created_at: session.created_at || session.createdAt || new Date().toISOString(),
+            user_id: userId,
+            profile_id: profileId,
           };
         }
       } catch (err: any) {
@@ -236,6 +266,8 @@ export class ZernioWhatsAppService {
       status: 'active',
       expires_at: new Date(Date.now() + 7 * 86400000).toISOString(),
       created_at: new Date().toISOString(),
+      user_id: userId,
+      profile_id: profileId,
     };
   }
 

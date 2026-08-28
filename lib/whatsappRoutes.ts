@@ -617,16 +617,28 @@ whatsappRouter.delete('/api/mcp/tokens/:id', (req: Request<IdParams>, res: Respo
   return res.json({ success: true });
 });
 
+function getUserIdFromReq(req: Request): string | undefined {
+  return (
+    (req.headers['x-user-id'] as string) ||
+    (req.headers['x-rockyt-user-id'] as string) ||
+    (req.query.userId as string) ||
+    (req.body?.userId as string) ||
+    undefined
+  );
+}
+
 // ─── 9. WABA Connection, Phone Numbers & Sandbox ───
 whatsappRouter.get('/api/whatsapp/account', async (req: Request, res: Response) => {
-  let account = whatsappStore.getAccount();
-  const sandbox = whatsappStore.getSandboxSession();
+  const userId = getUserIdFromReq(req);
+  let account = whatsappStore.getAccount(userId);
+  const sandbox = whatsappStore.getSandboxSession(userId);
 
   // If no account stored yet, attempt to discover live accounts from Zernio if API key exists
   if (!account && process.env.ZERNIO_API_KEY) {
-    const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts();
+    const profileId = await ZernioWhatsAppService.getOrCreateProfileId(userId);
+    const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId);
     if (liveAccounts.length > 0) {
-      account = whatsappStore.setAccount(liveAccounts[0]);
+      account = whatsappStore.setAccount(liveAccounts[0], userId);
     }
   }
 
@@ -638,27 +650,29 @@ whatsappRouter.get('/api/whatsapp/account', async (req: Request, res: Response) 
 });
 
 whatsappRouter.post('/api/whatsapp/account/disconnect', (req: Request, res: Response) => {
-  whatsappStore.disconnectAccount();
+  const userId = getUserIdFromReq(req);
+  whatsappStore.disconnectAccount(userId);
   return res.json({ success: true, message: 'WhatsApp account disconnected' });
 });
 
 // WhatsApp Sandbox Endpoints (as per Zernio platform docs)
 const handleCreateSandbox = async (req: Request, res: Response) => {
   const phone = req.body.phone || req.body.phone_number;
+  const userId = getUserIdFromReq(req);
   if (!phone) {
     return res.status(400).json({ error: 'Phone number is required to start a sandbox activation.' });
   }
 
-  const session = await ZernioWhatsAppService.createSandboxSession(phone);
+  const session = await ZernioWhatsAppService.createSandboxSession(phone, userId);
   if (!session) {
     return res.status(500).json({ error: 'Failed to initialize sandbox session.' });
   }
 
-  whatsappStore.setSandboxSession(session);
+  whatsappStore.setSandboxSession(session, userId);
   return res.json({
     success: true,
     session,
-    account: whatsappStore.getAccount(),
+    account: whatsappStore.getAccount(userId),
   });
 };
 
@@ -666,21 +680,24 @@ whatsappRouter.post('/api/whatsapp/sandbox/session', handleCreateSandbox);
 whatsappRouter.post('/api/whatsapp/sandbox/sessions', handleCreateSandbox);
 
 whatsappRouter.get('/api/whatsapp/sandbox/session', (req: Request, res: Response) => {
-  const session = whatsappStore.getSandboxSession();
+  const userId = getUserIdFromReq(req);
+  const session = whatsappStore.getSandboxSession(userId);
   return res.json({ session: session || null });
 });
 
 whatsappRouter.get('/api/whatsapp/sandbox/sessions', (req: Request, res: Response) => {
-  const session = whatsappStore.getSandboxSession();
+  const userId = getUserIdFromReq(req);
+  const session = whatsappStore.getSandboxSession(userId);
   return res.json({ sessions: session ? [session] : [] });
 });
 
 whatsappRouter.delete('/api/whatsapp/sandbox/session', async (req: Request, res: Response) => {
-  const session = whatsappStore.getSandboxSession();
+  const userId = getUserIdFromReq(req);
+  const session = whatsappStore.getSandboxSession(userId);
   if (session) {
     await ZernioWhatsAppService.deleteSandboxSession(session.id);
   }
-  whatsappStore.deleteSandboxSession();
+  whatsappStore.deleteSandboxSession(userId);
   return res.json({ success: true, message: 'Sandbox session revoked.' });
 });
 

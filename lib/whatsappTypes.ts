@@ -205,4 +205,6 @@ export interface WhatsAppSandboxSession {
   status: 'active' | 'expired' | 'pending';
   expires_at: string;
   created_at: string;
+  user_id?: string;
+  profile_id?: string;
 }

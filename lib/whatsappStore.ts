@@ -15,6 +15,8 @@ import crypto from 'crypto';
 class WhatsAppStore {
   private connectedAccount: WhatsAppAccount | null = null;
   private sandboxSession: WhatsAppSandboxSession | null = null;
+  private userSandboxSessions: Map<string, WhatsAppSandboxSession> = new Map();
+  private userAccounts: Map<string, WhatsAppAccount> = new Map();
   private contacts: Map<string, WhatsAppContact> = new Map();
   private conversations: Map<string, WhatsAppConversation> = new Map();
   private messages: Map<string, WhatsAppMessage[]> = new Map();
@@ -30,28 +32,59 @@ class WhatsAppStore {
   }
 
   // --- Account & Connection Management ---
-  public getAccount(): WhatsAppAccount | null {
+  public getAccount(userId?: string): WhatsAppAccount | null {
+    if (userId && this.userAccounts.has(userId)) {
+      return this.userAccounts.get(userId)!;
+    }
     return this.connectedAccount;
   }
 
-  public setAccount(account: WhatsAppAccount): WhatsAppAccount {
+  public setAccount(account: WhatsAppAccount, userId?: string): WhatsAppAccount {
     this.connectedAccount = account;
+    if (userId) {
+      this.userAccounts.set(userId, account);
+    }
     return account;
   }
 
-  public disconnectAccount(): void {
+  public disconnectAccount(userId?: string): void {
     this.connectedAccount = null;
     this.sandboxSession = null;
+    if (userId) {
+      this.userAccounts.delete(userId);
+      this.userSandboxSessions.delete(userId);
+    }
   }
 
-  public getSandboxSession(): WhatsAppSandboxSession | null {
+  public getSandboxSession(userId?: string): WhatsAppSandboxSession | null {
+    if (userId && this.userSandboxSessions.has(userId)) {
+      return this.userSandboxSessions.get(userId)!;
+    }
     return this.sandboxSession;
   }
 
-  public setSandboxSession(session: WhatsAppSandboxSession): WhatsAppSandboxSession {
+  public getSandboxSessionByPhone(phone: string): { session: WhatsAppSandboxSession; userId?: string } | null {
+    const clean = phone.replace(/[^0-9]/g, '');
+    for (const [uid, sess] of this.userSandboxSessions.entries()) {
+      if (sess.phone_number.replace(/[^0-9]/g, '') === clean) {
+        return { session: sess, userId: uid };
+      }
+    }
+    if (this.sandboxSession && this.sandboxSession.phone_number.replace(/[^0-9]/g, '') === clean) {
+      return { session: this.sandboxSession, userId: this.sandboxSession.user_id };
+    }
+    return null;
+  }
+
+  public setSandboxSession(session: WhatsAppSandboxSession, userId?: string): WhatsAppSandboxSession {
+    const uKey = userId || session.user_id;
     this.sandboxSession = session;
+    if (uKey) {
+      this.userSandboxSessions.set(uKey, session);
+    }
+
     // When sandbox session is activated, set account mode to sandbox
-    this.connectedAccount = {
+    const acc: WhatsAppAccount = {
       id: `acc_sandbox_${session.id}`,
       platform: 'whatsapp',
       name: `WhatsApp Sandbox (${session.formatted_phone || session.phone_number})`,
@@ -64,18 +97,26 @@ class WhatsAppStore {
       verified_name: 'Zernio Dev Sandbox',
       connected_at: session.created_at,
     };
+    this.setAccount(acc, uKey);
     return session;
   }
 
-  public deleteSandboxSession(): void {
+  public deleteSandboxSession(userId?: string): void {
     this.sandboxSession = null;
+    if (userId) {
+      this.userSandboxSessions.delete(userId);
+      if (this.userAccounts.get(userId)?.mode === 'sandbox') {
+        this.userAccounts.delete(userId);
+      }
+    }
     if (this.connectedAccount?.mode === 'sandbox') {
       this.connectedAccount = null;
     }
   }
 
-  public isConnected(): boolean {
-    return this.connectedAccount !== null && this.connectedAccount.status !== 'disconnected';
+  public isConnected(userId?: string): boolean {
+    const acc = this.getAccount(userId);
+    return acc !== null && acc.status !== 'disconnected';
   }
 
   // --- Contacts ---
