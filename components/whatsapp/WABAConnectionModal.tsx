@@ -3,6 +3,7 @@ import {
   X, CheckCircle2, Sparkles, ExternalLink, Key, 
   Phone, AlertCircle, Loader2, PlayCircle, Info
 } from 'lucide-react';
+import { getAuthHeaders } from '../../lib/frontendAuth';
 
 interface WABAConnectionModalProps {
   isOpen: boolean;
@@ -29,12 +30,7 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
   if (!isOpen) return null;
 
   const getHeaders = () => {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (typeof window !== 'undefined') {
-      const uid = localStorage.getItem('rockyt_user_id');
-      if (uid) headers['x-user-id'] = uid;
-    }
-    return headers;
+    return getAuthHeaders();
   };
 
   const handleCreateSandbox = async (e: React.FormEvent) => {

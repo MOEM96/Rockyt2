@@ -6,6 +6,7 @@ import {
   ShieldCheck, LayoutTemplate, ArrowUpRight, CheckCircle2, Loader2, Bot
 } from 'lucide-react';
 import { PlayCircle, Plus } from 'lucide-react';
+import { getAuthHeaders } from '../../lib/frontendAuth';
 
 interface WhatsAppInboxProps {
   onTriggerCapi?: (convId: string, eventName: string, value?: number) => void;
@@ -73,12 +74,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
   };
 
   const getHeaders = () => {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (typeof window !== 'undefined') {
-      const uid = localStorage.getItem('rockyt_user_id');
-      if (uid) headers['x-user-id'] = uid;
-    }
-    return headers;
+    return getAuthHeaders();
   };
 
   useEffect(() => {
@@ -197,7 +193,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
         const cachedMsgs = getStoredMessages(convId);
         if (cachedMsgs.length > 0) setMessages(cachedMsgs);
       }
-      const res = await fetch(`/api/whatsapp/conversations/${convId}/messages`);
+      const res = await fetch(`/api/whatsapp/conversations/${convId}/messages`, { headers: getHeaders() });
       if (res.ok) {
         const data = await res.json();
         if (data.data && Array.isArray(data.data)) {
@@ -219,7 +215,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
   const handleBackfill = async () => {
     setIsBackfilling(true);
     try {
-      const res = await fetch('/api/whatsapp/backfill', { method: 'POST' });
+      const res = await fetch('/api/whatsapp/backfill', { method: 'POST', headers: getHeaders() });
       if (res.ok) {
         await loadConversations(false);
       }
@@ -256,7 +252,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
             name: initialName || 'WhatsApp Contact',
             phone_number: initialPhone,
             formatted_phone: initialPhone,
-            tags: ['CRM_Direct'],
+            tags: ['Live_Chat'],
             custom_fields: {},
             lifecycle_stage: 'lead',
             created_at: new Date().toISOString(),
@@ -265,7 +261,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
           unread_count: 0,
           status: 'active',
           last_customer_message_at: new Date().toISOString(),
-          window_expires_at: new Date(Date.now() + 86400000).toISOString(),
+          window_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
           is_window_open: true,
           ai_agent_enabled: true,
           created_at: new Date().toISOString(),
@@ -285,7 +281,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
     if (activeConvId) {
       loadMessages(activeConvId, true);
       // Mark as read
-      fetch(`/api/whatsapp/conversations/${activeConvId}/read`, { method: 'POST' }).catch(() => {});
+      fetch(`/api/whatsapp/conversations/${activeConvId}/read`, { method: 'POST', headers: getHeaders() }).catch(() => {});
 
       const msgInterval = setInterval(() => {
         loadMessages(activeConvId, false);
@@ -343,7 +339,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
 
       const res = await fetch(`/api/whatsapp/conversations/${activeConvId}/messages`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getHeaders(),
         body: JSON.stringify(body),
       });
 
@@ -368,7 +364,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
     try {
       const res = await fetch('/api/whatsapp/capi/trigger', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getHeaders(),
         body: JSON.stringify({
           conversation_id: activeConvId,
           event_name: eventName,

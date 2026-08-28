@@ -15,6 +15,7 @@ import { MCPGateway } from './MCPGateway';
 import { ContactsCRM } from './ContactsCRM';
 import { SandboxOnboardingCard } from './SandboxOnboardingCard';
 import WABAConnectionModal from './WABAConnectionModal';
+import { getAuthHeaders } from '../../lib/frontendAuth';
 
 interface WhatsAppDashboardProps {
   userSession?: any;
@@ -55,9 +56,9 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
   });
 
   const getHeaders = () => {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    const uid = userSession?.id || (typeof window !== 'undefined' ? localStorage.getItem('rockyt_user_id') : undefined);
-    if (uid) headers['x-user-id'] = uid;
+    const headers = getAuthHeaders();
+    if (userSession?.id && !headers['x-user-id']) headers['x-user-id'] = userSession.id;
+    if (userSession?.email && !headers['x-user-email']) headers['x-user-email'] = userSession.email;
     return headers;
   };
 
