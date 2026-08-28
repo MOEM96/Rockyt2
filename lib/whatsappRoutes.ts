@@ -169,7 +169,13 @@ whatsappRouter.get('/api/whatsapp/conversations', async (req: Request, res: Resp
         const liveConversations = await ZernioWhatsAppService.listConversations(profileId);
         if (Array.isArray(liveConversations) && liveConversations.length > 0) {
           for (const item of liveConversations) {
+            if ((item.profileId && item.profileId !== profileId) || (item.profile_id && item.profile_id !== profileId)) {
+              continue;
+            }
             const phone = item.participantId || item.accountUsername || item.id;
+            if (phone === '201018252128' || item.id === '6a909f88a41a576343bece53') {
+              continue;
+            }
             const name = item.participantName || item.accountUsername || 'WhatsApp User';
             
             let contact = whatsappStore.getContactByPhone(phone);

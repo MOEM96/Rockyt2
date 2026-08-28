@@ -389,7 +389,12 @@ export class ZernioWhatsAppService {
         });
         if (res.ok) {
           const json = await res.json();
-          return json.data || json.conversations || [];
+          const list = json.data || json.conversations || [];
+          if (profileId && Array.isArray(list)) {
+            // Enforce strict tenant isolation: only return conversations matching this profileId
+            return list.filter((c: any) => (c.profileId === profileId || c.profile_id === profileId));
+          }
+          return list;
         }
       } catch (err: any) {
         console.warn('[Zernio SDK listConversations Notice]:', err.message);
