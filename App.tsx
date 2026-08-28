@@ -260,13 +260,10 @@ const App: React.FC = () => {
             <Hero onStart={startOnboarding} />
             <PartnerLogos />
             <WhyRockyt />
-            <TrustedBy />
-            <PortfolioGallery onNavigateToPath={navigateTo} />
-            <Marquee />
             <Services />
             <Showcase onStartOnboarding={startOnboarding} />
-            <Reviews />
             <Pricing onStartOnboarding={startOnboarding} />
+            <Reviews />
             <Footer onStartOnboarding={startOnboarding} onNavigateToPath={navigateTo} />
           </main>
         )}

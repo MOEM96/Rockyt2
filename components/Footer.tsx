@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowUpRight, Bot, Terminal } from 'lucide-react';
+import { ArrowRight, Bot, ShieldCheck } from 'lucide-react';
 
 interface FooterProps {
   onStartOnboarding?: () => void;
@@ -7,23 +7,6 @@ interface FooterProps {
 }
 
 const Footer: React.FC<FooterProps> = ({ onStartOnboarding, onNavigateToPath }) => {
-  const channelLinks = [
-    { label: "Twitter / X API", path: "/x" },
-    { label: "Instagram API", path: "/instagram" },
-    { label: "WhatsApp Business API", path: "/whatsapp" },
-    { label: "TikTok API", path: "/tiktok" },
-    { label: "LinkedIn API", path: "/linkedin" },
-    { label: "Telegram API", path: "/telegram" },
-    { label: "Discord API", path: "/discord" },
-    { label: "Slack API", path: "/slack" },
-    { label: "Meta Ads API", path: "/meta-ads" },
-    { label: "Threads API", path: "/threads" },
-    { label: "Reddit API", path: "/reddit" },
-    { label: "Bluesky API", path: "/bluesky" },
-    { label: "Snapchat API", path: "/snapchat" },
-    { label: "Google Business API", path: "/googlebusiness" },
-  ];
-
   const handleLinkClick = (e: React.MouseEvent, path: string) => {
     e.preventDefault();
     if (onNavigateToPath) {
@@ -35,84 +18,127 @@ const Footer: React.FC<FooterProps> = ({ onStartOnboarding, onNavigateToPath }) 
   };
 
   return (
-    <footer className="bg-ink text-paper py-20 px-4 sm:px-6 relative z-10 border-t-8 border-brand">
-       <div className="max-w-4xl mx-auto flex flex-col items-center justify-center text-center">
-          {/* Badge */}
-          <div className="flex items-center justify-center gap-2 mb-6">
-             <span className="bg-brand text-white font-mono text-[10px] px-3 py-1 font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-sm">
-                <Bot size={14} /> ROCKYT API FOR AI AGENTS
-             </span>
-             <span className="font-mono text-xs text-white/50">// UNIFIED PLATFORM PATHS</span>
+    <footer className="bg-zinc-950 text-zinc-300 relative z-10 border-t border-zinc-800">
+      
+      {/* ─── BOTTOM CTA SECTION ─── */}
+      <div className="py-20 border-b border-zinc-800 relative overflow-hidden">
+        <div className="mx-auto w-full max-w-[1080px] px-6 lg:px-8 text-center flex flex-col items-center">
+          
+          <div className="w-16 h-16 rounded-2xl bg-brand/15 border border-brand/40 flex items-center justify-center text-brand font-black text-2xl mb-6 shadow-glow">
+            R
           </div>
 
-          {/* SHIP NOW Headline */}
-          <h2 
-            onClick={onStartOnboarding}
-            className="font-display font-bold text-7xl sm:text-9xl lg:text-[10rem] tracking-tighter text-brand mb-6 leading-[0.8] cursor-pointer hover:opacity-90 transition-opacity uppercase text-center"
-          >
-             SHIP <span className="text-white">NOW</span>
+          <h2 className="text-3xl sm:text-5xl font-bold tracking-tight text-white mb-4">
+            Ship WhatsApp today
           </h2>
 
-          {/* Sub-headline */}
-          <div className="font-mono text-xs sm:text-sm space-y-2 text-white/80 max-w-2xl mx-auto text-center leading-relaxed mb-8">
-             <p>One unified API for Social Media, WhatsApp Messaging, and Meta Ads.</p>
-             <p>Built for developers, LLM frameworks, and autonomous AI agents.</p>
-             <p className="text-brand font-bold pt-1">/// MCP SERVER: @rockyt/mcp-server READY</p>
+          <p className="text-base sm:text-lg text-zinc-400 max-w-xl mx-auto mb-8 font-medium">
+            No credit card, no sales call. Test in the sandbox before you connect a number.
+          </p>
+
+          <div className="flex flex-wrap items-center justify-center gap-4 mb-8">
+            <button
+              onClick={onStartOnboarding}
+              className="inline-flex items-center gap-2 rounded-xl bg-brand hover:bg-brand-hover text-white font-bold text-base px-8 py-4 transition-all shadow-xl shadow-brand/25"
+            >
+              Start for free <ArrowRight className="w-4 h-4" />
+            </button>
           </div>
 
-          {/* CTA Button & Attached Subheadline */}
-          <div className="flex flex-col items-center gap-3">
-             <button 
-               onClick={onStartOnboarding}
-               className="inline-flex items-center gap-2.5 border-2 border-brand bg-brand text-white font-mono text-sm font-bold px-8 py-4 hover:bg-white hover:text-ink hover:border-white transition-all tracking-widest uppercase shadow-[0_0_30px_rgba(211,93,136,0.5)]"
-             >
-                <Terminal size={16} /> GET API KEY &amp; MCP CONFIG
-             </button>
-             
-             <p className="font-mono text-xs text-white/60 max-w-md mx-auto leading-relaxed mt-2">
-                Free 2 accounts included. Grab your API key and connect your AI agents in under 30 seconds.
-             </p>
+          {/* BADGES */}
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {['SOC 2', 'GDPR compliant', '99.97% uptime', 'Under 50ms response'].map((badge, idx) => (
+              <span 
+                key={idx} 
+                className="whitespace-nowrap rounded-full bg-zinc-900 border border-zinc-800 px-3 py-1 font-mono text-xs font-semibold text-brand"
+              >
+                {badge}
+              </span>
+            ))}
           </div>
-       </div>
 
-       {/* Platform Paths & Local Page Links */}
-       <div className="max-w-7xl mx-auto mt-16 pt-10 border-t border-white/10">
-          <span className="font-mono text-xs text-brand font-bold uppercase tracking-wider block mb-6">
-             LOCAL PLATFORM API PAGES &amp; DOCUMENTATION
-          </span>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 font-mono text-xs text-white/60">
-             {channelLinks.map((ch) => (
-                <a 
-                  key={ch.path}
-                  href={ch.path}
-                  onClick={(e) => handleLinkClick(e, ch.path)}
-                  className="hover:text-brand hover:border-brand transition-colors flex items-center justify-between p-2.5 border border-white/10 bg-zinc-900/60 rounded-sm font-semibold"
-                >
-                   <span>{ch.label}</span>
-                   <ArrowUpRight size={12} className="text-brand opacity-80" />
-                </a>
-             ))}
-             <a 
-               href="/agent-quickstart"
-               onClick={(e) => handleLinkClick(e, '/agent-quickstart')}
-               className="hover:text-white transition-colors flex items-center justify-between p-2.5 border border-brand bg-brand/15 text-brand font-bold rounded-sm col-span-2 sm:col-span-1"
-             >
-                <span>/agent-quickstart</span>
-                <Bot size={12} />
-             </a>
-          </div>
-       </div>
+        </div>
+      </div>
 
-       {/* Footer Copyright Bar */}
-       <div className="max-w-7xl mx-auto mt-16 border-t border-white/10 pt-8 flex flex-col sm:flex-row justify-between items-center gap-4 font-mono text-[11px] uppercase text-white/40">
-          <div>© 2026 ROCKYT INC. ALL RIGHTS RESERVED.</div>
-          <div className="flex gap-6">
-             <a href="#hero" onClick={(e) => handleLinkClick(e, '/')} className="hover:text-brand transition-colors flex items-center gap-1">OVERVIEW <ArrowUpRight size={10} /></a>
-             <a href="#channels" onClick={(e) => handleLinkClick(e, '/')} className="hover:text-brand transition-colors flex items-center gap-1">CHANNELS <ArrowUpRight size={10} /></a>
-             <a href="#sandbox" onClick={(e) => handleLinkClick(e, '/')} className="hover:text-brand transition-colors flex items-center gap-1">SANDBOX <ArrowUpRight size={10} /></a>
-             <a href="#pricing" onClick={(e) => handleLinkClick(e, '/')} className="hover:text-brand transition-colors flex items-center gap-1">PRICING <ArrowUpRight size={10} /></a>
+      {/* ─── 5-COLUMN LINK DIRECTORY ─── */}
+      <div className="mx-auto w-full max-w-[1080px] px-6 lg:px-8 py-16">
+        <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 lg:grid-cols-5 text-xs">
+          
+          {/* PRODUCT */}
+          <div className="flex flex-col gap-4">
+            <p className="font-mono text-xs font-bold text-white uppercase tracking-wider">Product</p>
+            <div className="flex flex-col space-y-2.5 text-zinc-400 font-medium">
+              <a href="/docs" onClick={(e) => handleLinkClick(e, '/docs')} className="hover:text-white transition-colors">Documentation</a>
+              <a href="/docs" onClick={(e) => handleLinkClick(e, '/docs')} className="hover:text-white transition-colors">MCP Server</a>
+              <a href="/dashboard" onClick={(e) => handleLinkClick(e, '/dashboard')} className="hover:text-white transition-colors">Dashboard</a>
+              <a href="#pricing" className="hover:text-white transition-colors">Pricing</a>
+              <a href="#features" className="hover:text-white transition-colors">Features</a>
+              <a href="/dashboard" onClick={(e) => handleLinkClick(e, '/dashboard')} className="hover:text-white transition-colors">Chat SDK Adapter</a>
+            </div>
           </div>
-       </div>
+
+          {/* INTEGRATIONS */}
+          <div className="flex flex-col gap-4">
+            <p className="font-mono text-xs font-bold text-white uppercase tracking-wider">Integrations</p>
+            <div className="flex flex-col space-y-2.5 text-zinc-400 font-medium">
+              <a href="/whatsapp" onClick={(e) => handleLinkClick(e, '/whatsapp')} className="hover:text-white transition-colors">WhatsApp</a>
+              <a href="/instagram" onClick={(e) => handleLinkClick(e, '/instagram')} className="hover:text-white transition-colors">Instagram</a>
+              <a href="/facebook" onClick={(e) => handleLinkClick(e, '/facebook')} className="hover:text-white transition-colors">Facebook</a>
+              <a href="/tiktok" onClick={(e) => handleLinkClick(e, '/tiktok')} className="hover:text-white transition-colors">TikTok</a>
+              <a href="/x" onClick={(e) => handleLinkClick(e, '/x')} className="hover:text-white transition-colors">Twitter / X</a>
+              <a href="/linkedin" onClick={(e) => handleLinkClick(e, '/linkedin')} className="hover:text-white transition-colors">LinkedIn</a>
+              <a href="/meta-ads" onClick={(e) => handleLinkClick(e, '/meta-ads')} className="hover:text-white transition-colors">Meta Ads</a>
+            </div>
+          </div>
+
+          {/* FOR AGENTS */}
+          <div className="flex flex-col gap-4">
+            <p className="font-mono text-xs font-bold text-white uppercase tracking-wider">For Agents</p>
+            <div className="flex flex-col space-y-2.5 text-zinc-400 font-medium">
+              <a href="#ai-agents" className="hover:text-white transition-colors">AI Agents</a>
+              <a href="#ai-agents" className="hover:text-white transition-colors">Claude Code</a>
+              <a href="#ai-agents" className="hover:text-white transition-colors">Cursor MCP</a>
+              <a href="#ai-agents" className="hover:text-white transition-colors">Codex</a>
+              <a href="#ai-agents" className="hover:text-white transition-colors">OpenClaw</a>
+            </div>
+          </div>
+
+          {/* COMPANY */}
+          <div className="flex flex-col gap-4">
+            <p className="font-mono text-xs font-bold text-white uppercase tracking-wider">Company</p>
+            <div className="flex flex-col space-y-2.5 text-zinc-400 font-medium">
+              <a href="/docs" onClick={(e) => handleLinkClick(e, '/docs')} className="hover:text-white transition-colors">Terms of Service</a>
+              <a href="/docs" onClick={(e) => handleLinkClick(e, '/docs')} className="hover:text-white transition-colors">Privacy Policy</a>
+              <a href="/docs" onClick={(e) => handleLinkClick(e, '/docs')} className="hover:text-white transition-colors">Security &amp; Trust</a>
+              <a href="/docs" onClick={(e) => handleLinkClick(e, '/docs')} className="hover:text-white transition-colors">Status</a>
+            </div>
+          </div>
+
+          {/* COMMUNITY */}
+          <div className="flex flex-col gap-4">
+            <p className="font-mono text-xs font-bold text-white uppercase tracking-wider">Community</p>
+            <div className="flex flex-col space-y-2.5 text-zinc-400 font-medium">
+              <a href="https://github.com/MOEM96/Rockyt2" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">GitHub</a>
+              <a href="https://x.com" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Twitter / X</a>
+              <a href="https://t.me" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Telegram</a>
+              <a href="https://linkedin.com" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">LinkedIn</a>
+            </div>
+          </div>
+
+        </div>
+
+        {/* BOTTOM COPYRIGHT */}
+        <div className="mt-12 pt-8 border-t border-zinc-800/80 flex flex-col sm:flex-row items-center justify-between text-xs text-zinc-500 font-mono">
+          <p>© {new Date().getFullYear()} Rockyt. Official Meta Business Partner.</p>
+          <div className="flex items-center gap-4 mt-4 sm:mt-0">
+            <span>SOC 2 Type II Certified</span>
+            <span>·</span>
+            <span>GDPR Compliant</span>
+          </div>
+        </div>
+
+      </div>
+
     </footer>
   );
 };
