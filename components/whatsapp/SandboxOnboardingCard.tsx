@@ -7,12 +7,14 @@ import { WhatsAppSandboxSession } from '../../lib/whatsappTypes';
 
 interface SandboxOnboardingCardProps {
   session: WhatsAppSandboxSession | null;
+  userSession?: any;
   onActivated: (session: WhatsAppSandboxSession) => void;
   onOpenInbox: () => void;
 }
 
 export const SandboxOnboardingCard: React.FC<SandboxOnboardingCardProps> = ({
   session,
+  userSession,
   onActivated,
   onOpenInbox,
 }) => {
@@ -23,6 +25,13 @@ export const SandboxOnboardingCard: React.FC<SandboxOnboardingCardProps> = ({
   const [step, setStep] = useState<1 | 2 | 3>(session?.status === 'active' ? 3 : session ? 2 : 1);
   const [currentSession, setCurrentSession] = useState<WhatsAppSandboxSession | null>(session);
   const [isSimulating, setIsSimulating] = useState(false);
+
+  const getHeaders = () => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const uid = userSession?.id || (typeof window !== 'undefined' ? localStorage.getItem('rockyt_user_id') : undefined);
+    if (uid) headers['x-user-id'] = uid;
+    return headers;
+  };
 
   useEffect(() => {
     if (session) {
@@ -40,7 +49,7 @@ export const SandboxOnboardingCard: React.FC<SandboxOnboardingCardProps> = ({
     if (step === 2 && currentSession && currentSession.status !== 'active') {
       const pollInterval = setInterval(async () => {
         try {
-          const res = await fetch('/api/whatsapp/sandbox/session');
+          const res = await fetch('/api/whatsapp/sandbox/session', { headers: getHeaders() });
           if (res.ok) {
             const data = await res.json();
             if (data.session && data.session.status === 'active') {
@@ -55,7 +64,7 @@ export const SandboxOnboardingCard: React.FC<SandboxOnboardingCardProps> = ({
 
       return () => clearInterval(pollInterval);
     }
-  }, [step, currentSession, onActivated]);
+  }, [step, currentSession, onActivated, userSession?.id]);
 
   const handleStartSandbox = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,7 +76,7 @@ export const SandboxOnboardingCard: React.FC<SandboxOnboardingCardProps> = ({
     try {
       const res = await fetch('/api/whatsapp/sandbox/session', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getHeaders(),
         body: JSON.stringify({ phone: fullPhone, phone_number: fullPhone }),
       });
 
@@ -92,7 +101,7 @@ export const SandboxOnboardingCard: React.FC<SandboxOnboardingCardProps> = ({
       const phone = currentSession?.phone_number || `${countryCode}${phoneNumber || '4155552671'}`;
       const res = await fetch('/api/whatsapp/sandbox/simulate-message', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getHeaders(),
         body: JSON.stringify({
           phone_number: phone,
           text: 'Hi! Ready to test WhatsApp CRM automations!',

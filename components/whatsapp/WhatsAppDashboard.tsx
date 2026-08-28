@@ -54,9 +54,16 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
     windowOpenCount: 0,
   });
 
+  const getHeaders = () => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const uid = userSession?.id || (typeof window !== 'undefined' ? localStorage.getItem('rockyt_user_id') : undefined);
+    if (uid) headers['x-user-id'] = uid;
+    return headers;
+  };
+
   const fetchAccountStatus = async () => {
     try {
-      const res = await fetch('/api/whatsapp/account');
+      const res = await fetch('/api/whatsapp/account', { headers: getHeaders() });
       if (res.ok) {
         const data = await res.json();
         setAccount(data.account || null);
@@ -71,10 +78,11 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
 
   const fetchStats = async () => {
     try {
+      const hdrs = getHeaders();
       const [convsRes, capiRes, autoRes] = await Promise.all([
-        fetch('/api/whatsapp/conversations').catch(() => null),
-        fetch('/api/whatsapp/capi/events').catch(() => null),
-        fetch('/api/whatsapp/automations').catch(() => null),
+        fetch('/api/whatsapp/conversations', { headers: hdrs }).catch(() => null),
+        fetch('/api/whatsapp/capi/events', { headers: hdrs }).catch(() => null),
+        fetch('/api/whatsapp/automations', { headers: hdrs }).catch(() => null),
       ]);
 
       let convsCount = 0;
@@ -115,12 +123,12 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
     fetchStats();
     const interval = setInterval(fetchStats, 10000);
     return () => clearInterval(interval);
-  }, []);
+  }, [userSession?.id]);
 
   const handleDisconnect = async () => {
     if (!confirm('Are you sure you want to disconnect this WhatsApp account?')) return;
     try {
-      await fetch('/api/whatsapp/account/disconnect', { method: 'POST' });
+      await fetch('/api/whatsapp/account/disconnect', { method: 'POST', headers: getHeaders() });
       setAccount(null);
       setSandboxSession(null);
     } catch (e) {
@@ -384,6 +392,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
         {showSandboxBanner && (!sandboxSession || sandboxSession.status !== 'active') && (
           <SandboxOnboardingCard
             session={sandboxSession}
+            userSession={userSession}
             onActivated={(sess) => {
               setSandboxSession(sess);
               fetchAccountStatus();
