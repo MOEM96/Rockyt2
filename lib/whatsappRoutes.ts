@@ -618,157 +618,228 @@ whatsappRouter.delete('/api/mcp/tokens/:id', (req: Request<IdParams>, res: Respo
 });
 
 function getUserIdFromReq(req: Request): string | undefined {
-  return (
-    (req.headers['x-user-id'] as string) ||
-    (req.headers['x-rockyt-user-id'] as string) ||
-    (req.query.userId as string) ||
-    (req.body?.userId as string) ||
-    undefined
-  );
+  const customHeader = (req.headers['x-user-id'] as string) || (req.headers['x-rockyt-user-id'] as string);
+  if (customHeader && customHeader !== 'undefined' && customHeader !== 'null') {
+    return customHeader.trim();
+  }
+
+  const queryId = (req.query.userId as string);
+  if (queryId && queryId !== 'undefined' && queryId !== 'null') {
+    return queryId.trim();
+  }
+
+  const bodyId = (req.body?.userId as string);
+  if (bodyId && bodyId !== 'undefined' && bodyId !== 'null') {
+    return bodyId.trim();
+  }
+
+  // Extract from Bearer token or cookies if available
+  const authHeader = req.headers.authorization?.replace(/^Bearer\s+/i, '').trim();
+  if (authHeader && authHeader.length > 20 && !authHeader.startsWith('rockyt_') && !authHeader.startsWith('rkt_')) {
+    try {
+      const parts = authHeader.split('.');
+      if (parts.length === 3) {
+        const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+        if (payload.sub || payload.id) return payload.sub || payload.id;
+      }
+    } catch {}
+  }
+
+  return undefined;
+}
+
+async function resolveUserProfileId(req: Request): Promise<{ userId: string; profileId: string }> {
+  const userId = getUserIdFromReq(req);
+  if (!userId) {
+    throw new Error('UNAUTHORIZED: Missing user identity header (x-user-id). Please sign in to access your isolated workspace.');
+  }
+
+  const userEmail = (req.headers['x-user-email'] as string) || (userId.includes('@') ? userId : undefined);
+  const profileId = await ZernioWhatsAppService.getOrCreateProfileId(userId, userEmail);
+  return { userId, profileId };
 }
 
 // ─── 9. WABA Connection, Phone Numbers & Sandbox ───
 whatsappRouter.get('/api/whatsapp/account', async (req: Request, res: Response) => {
-  const userId = getUserIdFromReq(req);
-  let account = whatsappStore.getAccount(userId);
-  const sandbox = whatsappStore.getSandboxSession(userId);
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    let account = whatsappStore.getAccount(userId);
+    const sandbox = whatsappStore.getSandboxSession(userId);
 
-  // If no account stored yet, attempt to discover live accounts from Zernio if API key exists
-  if (!account && process.env.ZERNIO_API_KEY) {
-    const profileId = await ZernioWhatsAppService.getOrCreateProfileId(userId);
-    const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId);
-    if (liveAccounts.length > 0) {
-      account = whatsappStore.setAccount(liveAccounts[0], userId);
+    // If no account stored yet, attempt to discover live accounts from Zernio if API key exists
+    if (!account && process.env.ZERNIO_API_KEY) {
+      const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId);
+      if (liveAccounts.length > 0) {
+        account = whatsappStore.setAccount(liveAccounts[0], userId);
+      }
     }
-  }
 
-  return res.json({
-    connected: Boolean(account && account.status !== 'disconnected'),
-    account: account || null,
-    sandbox: sandbox || null,
-  });
+    return res.json({
+      connected: Boolean(account && account.status !== 'disconnected'),
+      account: account || null,
+      sandbox: sandbox || null,
+      profileId,
+    });
+  } catch (err: any) {
+    return res.status(401).json({
+      error: 'unauthorized',
+      message: err.message || 'Unable to resolve tenant profile. Please sign in again.',
+    });
+  }
 });
 
-whatsappRouter.post('/api/whatsapp/account/disconnect', (req: Request, res: Response) => {
-  const userId = getUserIdFromReq(req);
-  whatsappStore.disconnectAccount(userId);
-  return res.json({ success: true, message: 'WhatsApp account disconnected' });
+whatsappRouter.post('/api/whatsapp/account/disconnect', async (req: Request, res: Response) => {
+  try {
+    const { userId } = await resolveUserProfileId(req);
+    whatsappStore.disconnectAccount(userId);
+    return res.json({ success: true, message: 'WhatsApp account disconnected' });
+  } catch (err: any) {
+    return res.status(401).json({ error: 'unauthorized', message: err.message });
+  }
 });
 
 // WhatsApp Sandbox Endpoints (as per Zernio platform docs)
 const handleCreateSandbox = async (req: Request, res: Response) => {
   const phone = req.body.phone || req.body.phone_number;
-  const userId = getUserIdFromReq(req);
   if (!phone) {
     return res.status(400).json({ error: 'Phone number is required to start a sandbox activation.' });
   }
 
-  const session = await ZernioWhatsAppService.createSandboxSession(phone, userId);
-  if (!session) {
-    return res.status(500).json({ error: 'Failed to initialize sandbox session.' });
-  }
+  try {
+    const { userId } = await resolveUserProfileId(req);
+    const session = await ZernioWhatsAppService.createSandboxSession(phone, userId);
+    if (!session) {
+      return res.status(500).json({ error: 'Failed to initialize sandbox session.' });
+    }
 
-  whatsappStore.setSandboxSession(session, userId);
-  return res.json({
-    success: true,
-    session,
-    account: whatsappStore.getAccount(userId),
-  });
+    whatsappStore.setSandboxSession(session, userId);
+    return res.json({
+      success: true,
+      session,
+      account: whatsappStore.getAccount(userId),
+    });
+  } catch (err: any) {
+    return res.status(401).json({ error: 'unauthorized', message: err.message });
+  }
 };
 
 whatsappRouter.post('/api/whatsapp/sandbox/session', handleCreateSandbox);
 whatsappRouter.post('/api/whatsapp/sandbox/sessions', handleCreateSandbox);
 
-whatsappRouter.get('/api/whatsapp/sandbox/session', (req: Request, res: Response) => {
-  const userId = getUserIdFromReq(req);
-  const session = whatsappStore.getSandboxSession(userId);
-  return res.json({ session: session || null });
+whatsappRouter.get('/api/whatsapp/sandbox/session', async (req: Request, res: Response) => {
+  try {
+    const { userId } = await resolveUserProfileId(req);
+    const session = whatsappStore.getSandboxSession(userId);
+    return res.json({ session: session || null });
+  } catch (err: any) {
+    return res.status(401).json({ error: 'unauthorized', message: err.message });
+  }
 });
 
-whatsappRouter.get('/api/whatsapp/sandbox/sessions', (req: Request, res: Response) => {
-  const userId = getUserIdFromReq(req);
-  const session = whatsappStore.getSandboxSession(userId);
-  return res.json({ sessions: session ? [session] : [] });
+whatsappRouter.get('/api/whatsapp/sandbox/sessions', async (req: Request, res: Response) => {
+  try {
+    const { userId } = await resolveUserProfileId(req);
+    const session = whatsappStore.getSandboxSession(userId);
+    return res.json({ sessions: session ? [session] : [] });
+  } catch (err: any) {
+    return res.status(401).json({ error: 'unauthorized', message: err.message });
+  }
 });
 
 whatsappRouter.delete('/api/whatsapp/sandbox/session', async (req: Request, res: Response) => {
-  const userId = getUserIdFromReq(req);
-  const session = whatsappStore.getSandboxSession(userId);
-  if (session) {
-    await ZernioWhatsAppService.deleteSandboxSession(session.id);
+  try {
+    const { userId } = await resolveUserProfileId(req);
+    const session = whatsappStore.getSandboxSession(userId);
+    if (session) {
+      await ZernioWhatsAppService.deleteSandboxSession(session.id);
+    }
+    whatsappStore.deleteSandboxSession(userId);
+    return res.json({ success: true, message: 'Sandbox session revoked.' });
+  } catch (err: any) {
+    return res.status(401).json({ error: 'unauthorized', message: err.message });
   }
-  whatsappStore.deleteSandboxSession(userId);
-  return res.json({ success: true, message: 'Sandbox session revoked.' });
 });
 
 // Simulate Sandbox Inbound Message for interactive testing
 whatsappRouter.post('/api/whatsapp/sandbox/simulate-message', async (req: Request, res: Response) => {
-  const session = whatsappStore.getSandboxSession();
-  const phone = req.body.phone_number || session?.phone_number || '+14155552671';
-  const text = req.body.text || 'Hi! Testing WhatsApp sandbox automation and CRM response.';
-  const name = req.body.name || 'Sandbox Tester';
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const session = whatsappStore.getSandboxSession(userId);
+    const phone = req.body.phone_number || session?.phone_number || '+14155552671';
+    const text = req.body.text || 'Hi! Testing WhatsApp sandbox automation and CRM response.';
+    const name = req.body.name || 'Sandbox Tester';
 
-  let contact = whatsappStore.getContactByPhone(phone);
-  if (!contact) {
-    contact = {
-      id: `cnt_${Date.now()}`,
-      phone_number: phone,
-      formatted_phone: phone,
-      name,
-      tags: ['Sandbox_User', 'Live_Test'],
-      custom_fields: { source: 'WhatsApp Sandbox' },
-      lifecycle_stage: 'lead',
-      created_at: new Date().toISOString(),
-      last_activity_at: new Date().toISOString(),
-    };
-    whatsappStore.saveContact(contact);
-  }
-
-  const conv = whatsappStore.getOrCreateConversation(
-    contact,
-    whatsappStore.getAccount()?.id || 'acc_sandbox',
-    'prof_default'
-  );
-
-  const incomingMsg: WhatsAppMessage = {
-    id: `msg_sbx_${Date.now()}`,
-    conversation_id: conv.id,
-    direction: 'incoming',
-    type: 'text',
-    text,
-    status: 'delivered',
-    timestamp: new Date().toISOString(),
-    sender_name: name,
-    sender_phone: phone,
-  };
-
-  whatsappStore.appendMessage(incomingMsg);
-
-  // Trigger automation engine
-  const triggeredFlows = await AutomationEngine.evaluateTrigger(
-    'incoming_message',
-    {
-      conversation: conv,
-      message: incomingMsg,
-      contact,
+    // Activate session if pending
+    if (session && session.status === 'pending') {
+      const activeSession: WhatsAppSandboxSession = {
+        ...session,
+        status: 'active',
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      };
+      whatsappStore.setSandboxSession(activeSession, userId);
     }
-  );
 
-  return res.json({
-    success: true,
-    conversation_id: conv.id,
-    message: incomingMsg,
-    triggered_flows: triggeredFlows,
-  });
+    // Append contact and inbound message into real-time CRM
+    let contact = whatsappStore.getContactByPhone(phone);
+    if (!contact) {
+      contact = {
+        id: `cnt_${Date.now()}`,
+        phone_number: phone,
+        formatted_phone: phone,
+        name,
+        tags: ['Sandbox_User', 'Live_Test'],
+        custom_fields: { source: 'WhatsApp Sandbox' },
+        lifecycle_stage: 'lead',
+        created_at: new Date().toISOString(),
+        last_activity_at: new Date().toISOString(),
+      };
+      whatsappStore.saveContact(contact);
+    }
+
+    const conv = whatsappStore.getOrCreateConversation(
+      contact,
+      whatsappStore.getAccount(userId)?.id || 'acc_sandbox',
+      profileId
+    );
+
+    const incomingMsg: WhatsAppMessage = {
+      id: `msg_sbx_${Date.now()}`,
+      conversation_id: conv.id,
+      direction: 'incoming',
+      type: 'text',
+      text,
+      status: 'delivered',
+      timestamp: new Date().toISOString(),
+      sender_name: name,
+      sender_phone: phone,
+    };
+
+    whatsappStore.appendMessage(incomingMsg);
+
+    // Trigger automation engine
+    const triggeredFlows = await AutomationEngine.evaluateTrigger(
+      'incoming_message',
+      {
+        conversation: conv,
+        message: incomingMsg,
+        contact,
+      }
+    );
+
+    return res.json({
+      success: true,
+      conversation_id: conv.id,
+      message: incomingMsg,
+      triggered_flows: triggeredFlows,
+    });
+  } catch (err: any) {
+    return res.status(401).json({ error: 'unauthorized', message: err.message });
+  }
 });
 
 whatsappRouter.post('/api/whatsapp/connect/oauth', async (req: Request, res: Response) => {
   try {
-    let profileId = (req.query.profileId as string) || (req.body?.profileId as string);
-    
-    if (!profileId || !/^[0-9a-fA-F]{24}$/.test(profileId)) {
-      profileId = await ZernioWhatsAppService.getOrCreateProfileId();
-    }
+    const { userId, profileId } = await resolveUserProfileId(req);
 
     const host = req.get('host') || 'rockyt.io';
     const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'https';
@@ -804,8 +875,7 @@ whatsappRouter.post('/api/whatsapp/connect/oauth', async (req: Request, res: Res
 
     return res.json({ url: metaDialogUrl, authUrl: metaDialogUrl, profileId });
   } catch (err: any) {
-    console.error('[WhatsApp Connect OAuth Error]:', err.message);
-    return res.status(500).json({ error: 'Failed to generate Meta Embedded Signup authorization URL' });
+    return res.status(401).json({ error: 'unauthorized', message: err.message });
   }
 });
 

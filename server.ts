@@ -588,79 +588,25 @@ function startServer() {
         profile = newProfile || { id: safeUserId, email: cleanEmail, plan: 'Growth', max_accounts: 1, connected_accounts_count: 0, wallet_balance: 0.00 };
       }
 
-      // Explicit profile ID binding for moamenemam966@gmail.com
-      if (cleanEmail === 'moamenemam966@gmail.com') {
-        const targetZernioId = '6a5fb8eafdd23f2f624ba21a';
-        if (profile && profile.zernio_profile_id !== targetZernioId) {
-          profile.zernio_profile_id = targetZernioId;
-          try {
-            const targetId = profile.id || safeUserId;
-            await supabase
-              .from('profiles')
-              .update({ zernio_profile_id: targetZernioId })
-              .eq('id', targetId);
-          } catch (_updErr) {}
-        }
-        return profile;
-      }
-
-      // 3. Guarantee a REAL 24-character Zernio profile ObjectID (never fake prof_ strings)
+      // 3. Guarantee a REAL unique 24-character Zernio profile ObjectID (1-to-1 immutable tenant binding)
       const isInvalidZernioId = !profile.zernio_profile_id || String(profile.zernio_profile_id).startsWith('prof_') || String(profile.zernio_profile_id).length < 15;
 
       if (isInvalidZernioId) {
-        let realZernioId: string | null = null;
         try {
-          // List existing profiles on Zernio API
-          const listRes = await zernio.profiles.listProfiles();
-          const profilesList = (listRes.data as any)?.profiles || (listRes.data as any) || [];
-          
-          if (Array.isArray(profilesList) && profilesList.length > 0) {
-            // 1st priority: Match exact email or existing zernio_profile_id
-            const match = profilesList.find((p: any) => 
-              (p.name && p.name.trim().toLowerCase() === cleanEmail) || 
-              (p._id && p._id === profile.zernio_profile_id)
-            );
-            if (match?._id) {
-              realZernioId = match._id;
-            } else if (profilesList.length === 1 && profilesList[0]?._id) {
-              // 2nd priority: If team has 1 profile, reuse it directly to prevent duplicates
-              realZernioId = profilesList[0]._id;
-            }
-          }
-
-          // If no match found, create a single permanent Zernio profile for this user
-          if (!realZernioId) {
-            try {
-              const createRes = await zernio.profiles.createProfile({
-                body: { name: cleanEmail }
-              });
-              realZernioId = (createRes.data as any)?.profile?._id || (createRes.data as any)?._id || null;
-            } catch (createErr: any) {
-              console.warn('[ensureUserProfile] Zernio createProfile notice:', createErr?.message || createErr);
-              const reList = await zernio.profiles.listProfiles();
-              const reListArray = (reList.data as any)?.profiles || (reList.data as any) || [];
-              if (Array.isArray(reListArray) && reListArray.length > 0) {
-                const match = reListArray.find((p: any) => p.name && p.name.trim().toLowerCase() === cleanEmail) || reListArray[0];
-                if (match?._id) realZernioId = match._id;
-              }
-            }
-          }
-        } catch (zernioErr: any) {
-          console.error('[ensureUserProfile] Error listing/creating Zernio profile:', zernioErr?.message || zernioErr);
-        }
-
-        if (realZernioId) {
-          profile.zernio_profile_id = realZernioId;
-          try {
+          const zernioProfileId = await ZernioWhatsAppService.getOrCreateProfileId(safeUserId, cleanEmail);
+          if (zernioProfileId) {
+            profile.zernio_profile_id = zernioProfileId;
             const targetId = profile.id || safeUserId;
             const { data: updated } = await supabase
               .from('profiles')
-              .update({ zernio_profile_id: realZernioId })
+              .update({ zernio_profile_id: zernioProfileId })
               .eq('id', targetId)
               .select()
               .maybeSingle();
             if (updated) profile = updated;
-          } catch (_updErr) {}
+          }
+        } catch (zernioErr: any) {
+          console.error('[ensureUserProfile] Error resolving unique Zernio profile:', zernioErr?.message || zernioErr);
         }
       }
 
