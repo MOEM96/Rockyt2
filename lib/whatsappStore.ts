@@ -13,8 +13,6 @@ import {
 import crypto from 'crypto';
 
 class WhatsAppStore {
-  private connectedAccount: WhatsAppAccount | null = null;
-  private sandboxSession: WhatsAppSandboxSession | null = null;
   private userSandboxSessions: Map<string, WhatsAppSandboxSession> = new Map();
   private userAccounts: Map<string, WhatsAppAccount> = new Map();
   private contacts: Map<string, WhatsAppContact> = new Map();
@@ -27,20 +25,16 @@ class WhatsAppStore {
   private mcpTokens: Map<string, MCPToken> = new Map();
 
   constructor() {
-    // Initialized completely empty — no fake mock data.
-    // Data is populated in real-time when user connects their WABA or activates Sandbox.
+    // Initialized completely empty per-tenant — no mock or leaked data.
   }
 
   // --- Account & Connection Management ---
   public getAccount(userId?: string): WhatsAppAccount | null {
-    if (userId && this.userAccounts.has(userId)) {
-      return this.userAccounts.get(userId)!;
-    }
-    return this.connectedAccount;
+    if (!userId) return null;
+    return this.userAccounts.get(userId) || null;
   }
 
   public setAccount(account: WhatsAppAccount, userId?: string): WhatsAppAccount {
-    this.connectedAccount = account;
     if (userId) {
       this.userAccounts.set(userId, account);
     }
@@ -48,19 +42,18 @@ class WhatsAppStore {
   }
 
   public disconnectAccount(userId?: string): void {
-    this.connectedAccount = null;
-    this.sandboxSession = null;
     if (userId) {
       this.userAccounts.delete(userId);
       this.userSandboxSessions.delete(userId);
+    } else {
+      this.userAccounts.clear();
+      this.userSandboxSessions.clear();
     }
   }
 
   public getSandboxSession(userId?: string): WhatsAppSandboxSession | null {
-    if (userId && this.userSandboxSessions.has(userId)) {
-      return this.userSandboxSessions.get(userId)!;
-    }
-    return this.sandboxSession;
+    if (!userId) return null;
+    return this.userSandboxSessions.get(userId) || null;
   }
 
   public getSandboxSessionByPhone(phone: string): { session: WhatsAppSandboxSession; userId?: string } | null {
@@ -70,47 +63,40 @@ class WhatsAppStore {
         return { session: sess, userId: uid };
       }
     }
-    if (this.sandboxSession && this.sandboxSession.phone_number.replace(/[^0-9]/g, '') === clean) {
-      return { session: this.sandboxSession, userId: this.sandboxSession.user_id };
-    }
     return null;
   }
 
   public setSandboxSession(session: WhatsAppSandboxSession, userId?: string): WhatsAppSandboxSession {
     const uKey = userId || session.user_id;
-    this.sandboxSession = session;
     if (uKey) {
       this.userSandboxSessions.set(uKey, session);
+      // When sandbox session is activated, set account mode to sandbox for this user
+      const acc: WhatsAppAccount = {
+        id: `acc_sandbox_${session.id}`,
+        platform: 'whatsapp',
+        name: `WhatsApp Sandbox (${session.formatted_phone || session.phone_number})`,
+        phone_number: session.phone_number,
+        phone_number_id: `pn_sandbox_${session.id}`,
+        status: 'sandbox',
+        mode: 'sandbox',
+        quality_rating: 'GREEN',
+        messaging_limit_tier: 'SANDBOX_DEV',
+        verified_name: 'Zernio Dev Sandbox',
+        connected_at: session.created_at,
+      };
+      this.setAccount(acc, uKey);
     }
-
-    // When sandbox session is activated, set account mode to sandbox
-    const acc: WhatsAppAccount = {
-      id: `acc_sandbox_${session.id}`,
-      platform: 'whatsapp',
-      name: `WhatsApp Sandbox (${session.formatted_phone || session.phone_number})`,
-      phone_number: session.phone_number,
-      phone_number_id: `pn_sandbox_${session.id}`,
-      status: 'sandbox',
-      mode: 'sandbox',
-      quality_rating: 'GREEN',
-      messaging_limit_tier: 'SANDBOX_DEV',
-      verified_name: 'Zernio Dev Sandbox',
-      connected_at: session.created_at,
-    };
-    this.setAccount(acc, uKey);
     return session;
   }
 
   public deleteSandboxSession(userId?: string): void {
-    this.sandboxSession = null;
     if (userId) {
       this.userSandboxSessions.delete(userId);
       if (this.userAccounts.get(userId)?.mode === 'sandbox') {
         this.userAccounts.delete(userId);
       }
-    }
-    if (this.connectedAccount?.mode === 'sandbox') {
-      this.connectedAccount = null;
+    } else {
+      this.userSandboxSessions.clear();
     }
   }
 

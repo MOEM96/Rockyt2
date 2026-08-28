@@ -18,8 +18,6 @@ import { Router } from "express";
 import crypto from "crypto";
 var WhatsAppStore = class {
   constructor() {
-    this.connectedAccount = null;
-    this.sandboxSession = null;
     this.userSandboxSessions = /* @__PURE__ */ new Map();
     this.userAccounts = /* @__PURE__ */ new Map();
     this.contacts = /* @__PURE__ */ new Map();
@@ -33,31 +31,27 @@ var WhatsAppStore = class {
   }
   // --- Account & Connection Management ---
   getAccount(userId) {
-    if (userId && this.userAccounts.has(userId)) {
-      return this.userAccounts.get(userId);
-    }
-    return this.connectedAccount;
+    if (!userId) return null;
+    return this.userAccounts.get(userId) || null;
   }
   setAccount(account, userId) {
-    this.connectedAccount = account;
     if (userId) {
       this.userAccounts.set(userId, account);
     }
     return account;
   }
   disconnectAccount(userId) {
-    this.connectedAccount = null;
-    this.sandboxSession = null;
     if (userId) {
       this.userAccounts.delete(userId);
       this.userSandboxSessions.delete(userId);
+    } else {
+      this.userAccounts.clear();
+      this.userSandboxSessions.clear();
     }
   }
   getSandboxSession(userId) {
-    if (userId && this.userSandboxSessions.has(userId)) {
-      return this.userSandboxSessions.get(userId);
-    }
-    return this.sandboxSession;
+    if (!userId) return null;
+    return this.userSandboxSessions.get(userId) || null;
   }
   getSandboxSessionByPhone(phone) {
     const clean = phone.replace(/[^0-9]/g, "");
@@ -66,43 +60,37 @@ var WhatsAppStore = class {
         return { session: sess, userId: uid };
       }
     }
-    if (this.sandboxSession && this.sandboxSession.phone_number.replace(/[^0-9]/g, "") === clean) {
-      return { session: this.sandboxSession, userId: this.sandboxSession.user_id };
-    }
     return null;
   }
   setSandboxSession(session, userId) {
     const uKey = userId || session.user_id;
-    this.sandboxSession = session;
     if (uKey) {
       this.userSandboxSessions.set(uKey, session);
+      const acc = {
+        id: `acc_sandbox_${session.id}`,
+        platform: "whatsapp",
+        name: `WhatsApp Sandbox (${session.formatted_phone || session.phone_number})`,
+        phone_number: session.phone_number,
+        phone_number_id: `pn_sandbox_${session.id}`,
+        status: "sandbox",
+        mode: "sandbox",
+        quality_rating: "GREEN",
+        messaging_limit_tier: "SANDBOX_DEV",
+        verified_name: "Zernio Dev Sandbox",
+        connected_at: session.created_at
+      };
+      this.setAccount(acc, uKey);
     }
-    const acc = {
-      id: `acc_sandbox_${session.id}`,
-      platform: "whatsapp",
-      name: `WhatsApp Sandbox (${session.formatted_phone || session.phone_number})`,
-      phone_number: session.phone_number,
-      phone_number_id: `pn_sandbox_${session.id}`,
-      status: "sandbox",
-      mode: "sandbox",
-      quality_rating: "GREEN",
-      messaging_limit_tier: "SANDBOX_DEV",
-      verified_name: "Zernio Dev Sandbox",
-      connected_at: session.created_at
-    };
-    this.setAccount(acc, uKey);
     return session;
   }
   deleteSandboxSession(userId) {
-    this.sandboxSession = null;
     if (userId) {
       this.userSandboxSessions.delete(userId);
       if (this.userAccounts.get(userId)?.mode === "sandbox") {
         this.userAccounts.delete(userId);
       }
-    }
-    if (this.connectedAccount?.mode === "sandbox") {
-      this.connectedAccount = null;
+    } else {
+      this.userSandboxSessions.clear();
     }
   }
   isConnected(userId) {

@@ -63,26 +63,31 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
       localStorage.setItem(`${STORAGE_KEY_MSGS}_${convId}`, JSON.stringify(msgs));
     } catch {}
   };
+  const getHeaders = () => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (typeof window !== 'undefined') {
+      const uid = localStorage.getItem('rockyt_user_id');
+      if (uid) headers['x-user-id'] = uid;
+    }
+    return headers;
+  };
+
+  useEffect(() => {
+    // Purge any stale legacy sandbox keys on load
+    try {
+      localStorage.removeItem('rockyt_wa_sandbox_session');
+    } catch {}
+  }, []);
 
   const handleSimulateSandboxInbound = async () => {
     setIsSimulating(true);
     try {
-      const storedSbx = localStorage.getItem('rockyt_wa_sandbox_session');
-      let phone = '+201018252128';
-      let name = 'Moamen';
-      if (storedSbx) {
-        try {
-          const parsed = JSON.parse(storedSbx);
-          if (parsed.phone_number) phone = parsed.phone_number;
-        } catch {}
-      } else if (activeConv?.contact?.phone_number) {
-        phone = activeConv.contact.phone_number;
-        name = activeConv.contact.name || 'WhatsApp Contact';
-      }
+      let phone = activeConv?.contact?.phone_number || initialPhone || '+14155552671';
+      let name = activeConv?.contact?.name || initialName || 'WhatsApp Lead';
 
       const res = await fetch('/api/whatsapp/sandbox/simulate-message', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getHeaders(),
         body: JSON.stringify({
           text: 'Hi! Testing WhatsApp inbox automation and real-time CRM responses.',
           name,
@@ -128,7 +133,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
           if (!activeConvId) setActiveConvId(cached[0].id);
         }
       }
-      const res = await fetch('/api/whatsapp/conversations');
+      const res = await fetch('/api/whatsapp/conversations', { headers: getHeaders() });
       if (res.ok) {
         const data = await res.json();
         if (data.data && Array.isArray(data.data)) {
@@ -163,7 +168,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
 
   const loadTemplates = async () => {
     try {
-      const res = await fetch('/api/whatsapp/templates');
+      const res = await fetch('/api/whatsapp/templates', { headers: getHeaders() });
       if (res.ok) {
         const data = await res.json();
         if (data.data) setTemplates(data.data);

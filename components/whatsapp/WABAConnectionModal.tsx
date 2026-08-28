@@ -28,6 +28,15 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
 
   if (!isOpen) return null;
 
+  const getHeaders = () => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (typeof window !== 'undefined') {
+      const uid = localStorage.getItem('rockyt_user_id');
+      if (uid) headers['x-user-id'] = uid;
+    }
+    return headers;
+  };
+
   const handleCreateSandbox = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!sandboxPhone) {
@@ -40,7 +49,7 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
     try {
       const res = await fetch('/api/whatsapp/sandbox/session', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getHeaders(),
         body: JSON.stringify({ phone_number: sandboxPhone }),
       });
       if (res.ok) {
@@ -74,7 +83,7 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
     try {
       const res = await fetch('/api/whatsapp/sandbox/simulate-message', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getHeaders(),
         body: JSON.stringify({
           phone_number: sandboxPhone,
           text: 'Hello Rockyt team! Testing WhatsApp CRM sandbox and AI automation.',
@@ -100,7 +109,10 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
     setIsLoading(true);
     setErrorMsg('');
     try {
-      const res = await fetch('/api/whatsapp/connect/oauth', { method: 'POST' });
+      const res = await fetch('/api/whatsapp/connect/oauth', {
+        method: 'POST',
+        headers: getHeaders(),
+      });
       if (res.ok) {
         const data = await res.json();
         if (data.url) {
@@ -133,7 +145,7 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
     try {
       const res = await fetch('/api/whatsapp/connect/headless', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getHeaders(),
         body: JSON.stringify({
           waba_id: wabaId,
           phone_number_id: phoneNumberId,
