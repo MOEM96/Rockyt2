@@ -160,10 +160,19 @@ whatsappRouter.post('/api/webhooks/zernio', async (req: Request, res: Response) 
 whatsappRouter.get('/api/whatsapp/conversations', async (req: Request, res: Response) => {
   try {
     const { userId, profileId } = await resolveUserProfileId(req);
-    let localConversations = whatsappStore.getConversations(profileId);
+    const localConversations = whatsappStore.getConversations(profileId);
+    return res.json({ data: localConversations });
+  } catch (err: any) {
+    return res.status(401).json({ error: 'unauthorized', message: err.message });
+  }
+});
 
-    // Sync live conversations strictly for this user's profile from Zernio
+// Explicit on-demand Backfill endpoint for syncing historic Zernio conversations
+whatsappRouter.post('/api/whatsapp/backfill', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    
     if (apiKey && apiKey !== 'dummy_dev_key') {
       try {
         const liveConversations = await ZernioWhatsAppService.listConversations(profileId);
@@ -227,14 +236,14 @@ whatsappRouter.get('/api/whatsapp/conversations', async (req: Request, res: Resp
 
             whatsappStore.saveConversation(conv);
           }
-          localConversations = whatsappStore.getConversations(profileId);
         }
       } catch (syncErr: any) {
-        console.warn('[Zernio live sync notice]:', syncErr.message);
+        console.warn('[Zernio backfill notice]:', syncErr.message);
       }
     }
 
-    return res.json({ data: localConversations });
+    const updated = whatsappStore.getConversations(profileId);
+    return res.json({ success: true, count: updated.length, data: updated });
   } catch (err: any) {
     return res.status(401).json({ error: 'unauthorized', message: err.message });
   }

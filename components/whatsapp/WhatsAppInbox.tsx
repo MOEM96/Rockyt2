@@ -229,7 +229,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
   useEffect(() => {
     loadConversations(true);
     loadTemplates();
-    const interval = setInterval(() => loadConversations(false), 5000);
+    const interval = setInterval(() => loadConversations(false), 15000);
     return () => clearInterval(interval);
   }, []);
 
