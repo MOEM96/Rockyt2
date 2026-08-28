@@ -31,12 +31,17 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
   const [isCapiSending, setIsCapiSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const STORAGE_KEY_CONVS = 'rockyt_wa_conversations';
-  const STORAGE_KEY_MSGS = 'rockyt_wa_messages';
+  const getStorageUserId = () => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('rockyt_user_id') || 'default_user';
+    }
+    return 'default_user';
+  };
 
   const getStoredConversations = (): WhatsAppConversation[] => {
     try {
-      const item = localStorage.getItem(STORAGE_KEY_CONVS);
+      const uid = getStorageUserId();
+      const item = localStorage.getItem(`rockyt_wa_convs_${uid}`);
       return item ? JSON.parse(item) : [];
     } catch {
       return [];
@@ -45,13 +50,15 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
 
   const setStoredConversations = (convs: WhatsAppConversation[]) => {
     try {
-      localStorage.setItem(STORAGE_KEY_CONVS, JSON.stringify(convs));
+      const uid = getStorageUserId();
+      localStorage.setItem(`rockyt_wa_convs_${uid}`, JSON.stringify(convs));
     } catch {}
   };
 
   const getStoredMessages = (convId: string): WhatsAppMessage[] => {
     try {
-      const item = localStorage.getItem(`${STORAGE_KEY_MSGS}_${convId}`);
+      const uid = getStorageUserId();
+      const item = localStorage.getItem(`rockyt_wa_msgs_${uid}_${convId}`);
       return item ? JSON.parse(item) : [];
     } catch {
       return [];
@@ -60,9 +67,11 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
 
   const setStoredMessages = (convId: string, msgs: WhatsAppMessage[]) => {
     try {
-      localStorage.setItem(`${STORAGE_KEY_MSGS}_${convId}`, JSON.stringify(msgs));
+      const uid = getStorageUserId();
+      localStorage.setItem(`rockyt_wa_msgs_${uid}_${convId}`, JSON.stringify(msgs));
     } catch {}
   };
+
   const getHeaders = () => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (typeof window !== 'undefined') {
@@ -73,10 +82,23 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
   };
 
   useEffect(() => {
-    // Purge any stale legacy sandbox keys on load
+    // Thoroughly purge any legacy unisolated conversation/sandbox cache
     try {
+      localStorage.removeItem('rockyt_wa_conversations');
+      localStorage.removeItem('rockyt_wa_messages');
       localStorage.removeItem('rockyt_wa_sandbox_session');
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (key && (key.startsWith('rockyt_wa_messages_') || key.includes('201018252128') || key.includes('conv_'))) {
+          localStorage.removeItem(key);
+        }
+      }
     } catch {}
+    
+    // Clear initial state
+    setConversations([]);
+    setActiveConvId('');
+    setMessages([]);
   }, []);
 
   const handleSimulateSandboxInbound = async () => {
@@ -126,7 +148,6 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
     try {
       if (isInitial) {
         setIsLoading(true);
-        // Instant load from localStorage cache
         const cached = getStoredConversations();
         if (cached.length > 0) {
           setConversations(cached);
@@ -137,24 +158,17 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
       if (res.ok) {
         const data = await res.json();
         if (data.data && Array.isArray(data.data)) {
-          setConversations((prev) => {
-            // Merge server and client cached conversations
-            const map = new Map<string, WhatsAppConversation>();
-            prev.forEach((c) => map.set(c.id, c));
-            data.data.forEach((c: WhatsAppConversation) => map.set(c.id, c));
-            const merged = Array.from(map.values()).sort((a, b) => {
-              const timeA = new Date(a.last_message?.timestamp || a.updated_at || a.created_at).getTime();
-              const timeB = new Date(b.last_message?.timestamp || b.updated_at || b.created_at).getTime();
-              return timeB - timeA;
-            });
-            setStoredConversations(merged);
-            return merged;
-          });
-
-          if (data.data.length > 0) {
+          if (data.data.length === 0) {
+            // Clean state when no conversations exist for this user
+            setConversations([]);
+            setActiveConvId('');
+            setStoredConversations([]);
+          } else {
+            setConversations(data.data);
+            setStoredConversations(data.data);
             setActiveConvId((prev) => {
               const exists = data.data.some((c: any) => c.id === prev);
-              return exists ? prev : (prev || data.data[0].id);
+              return exists ? prev : data.data[0].id;
             });
           }
         }

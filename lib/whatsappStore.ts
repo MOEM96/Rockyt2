@@ -133,8 +133,9 @@ class WhatsAppStore {
   }
 
   // --- Conversations ---
-  public getConversations(): WhatsAppConversation[] {
-    const list = Array.from(this.conversations.values());
+  public getConversations(profileId?: string): WhatsAppConversation[] {
+    if (!profileId) return [];
+    const list = Array.from(this.conversations.values()).filter(c => c.profile_id === profileId);
     const now = Date.now();
     // Dynamically recompute 24-hour customer service window status
     return list
@@ -166,12 +167,12 @@ class WhatsAppStore {
 
   public getOrCreateConversation(
     contact: WhatsAppContact,
-    accountId: string = this.connectedAccount?.id || 'acc_primary',
+    accountId: string = 'acc_primary',
     profileId: string = 'prof_default',
     initialReferral?: any
   ): WhatsAppConversation {
     let existing = Array.from(this.conversations.values()).find(
-      (c) => c.contact.phone_number === contact.phone_number || c.contact.id === contact.id
+      (c) => (c.contact.phone_number === contact.phone_number || c.contact.id === contact.id) && c.profile_id === profileId
     );
 
     if (existing) {
@@ -209,6 +210,21 @@ class WhatsAppStore {
   public saveConversation(conv: WhatsAppConversation): WhatsAppConversation {
     this.conversations.set(conv.id, conv);
     return conv;
+  }
+
+  public clearAllConversations(profileId?: string): void {
+    if (profileId) {
+      for (const [id, conv] of this.conversations.entries()) {
+        if (conv.profile_id === profileId) {
+          this.conversations.delete(id);
+          this.messages.delete(id);
+        }
+      }
+    } else {
+      this.conversations.clear();
+      this.messages.clear();
+      this.contacts.clear();
+    }
   }
 
   public markConversationRead(id: string): void {

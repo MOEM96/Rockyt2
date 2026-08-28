@@ -120,8 +120,9 @@ var WhatsAppStore = class {
     return this.contacts.delete(id);
   }
   // --- Conversations ---
-  getConversations() {
-    const list = Array.from(this.conversations.values());
+  getConversations(profileId) {
+    if (!profileId) return [];
+    const list = Array.from(this.conversations.values()).filter((c) => c.profile_id === profileId);
     const now = Date.now();
     return list.map((conv) => {
       const expiresAt = new Date(conv.window_expires_at).getTime();
@@ -146,9 +147,9 @@ var WhatsAppStore = class {
     conv.last_message = this.getLatestMessage(id) || conv.last_message;
     return conv;
   }
-  getOrCreateConversation(contact, accountId = this.connectedAccount?.id || "acc_primary", profileId = "prof_default", initialReferral) {
+  getOrCreateConversation(contact, accountId = "acc_primary", profileId = "prof_default", initialReferral) {
     let existing = Array.from(this.conversations.values()).find(
-      (c) => c.contact.phone_number === contact.phone_number || c.contact.id === contact.id
+      (c) => (c.contact.phone_number === contact.phone_number || c.contact.id === contact.id) && c.profile_id === profileId
     );
     if (existing) {
       existing.contact = contact;
@@ -181,6 +182,20 @@ var WhatsAppStore = class {
   saveConversation(conv) {
     this.conversations.set(conv.id, conv);
     return conv;
+  }
+  clearAllConversations(profileId) {
+    if (profileId) {
+      for (const [id, conv] of this.conversations.entries()) {
+        if (conv.profile_id === profileId) {
+          this.conversations.delete(id);
+          this.messages.delete(id);
+        }
+      }
+    } else {
+      this.conversations.clear();
+      this.messages.clear();
+      this.contacts.clear();
+    }
   }
   markConversationRead(id) {
     const conv = this.conversations.get(id);
@@ -1639,68 +1654,82 @@ whatsappRouter.post("/api/webhooks/zernio", async (req, res) => {
   }
 });
 whatsappRouter.get("/api/whatsapp/conversations", async (req, res) => {
-  let localConversations = whatsappStore2.getConversations();
-  const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
-  if (apiKey && apiKey !== "dummy_dev_key") {
-    try {
-      const liveConversations = await ZernioWhatsAppService2.listConversations();
-      if (Array.isArray(liveConversations) && liveConversations.length > 0) {
-        for (const item of liveConversations) {
-          const phone = item.participantId || item.accountUsername || item.id;
-          const name = item.participantName || item.accountUsername || "WhatsApp User";
-          let contact = whatsappStore2.getContactByPhone(phone);
-          if (!contact) {
-            contact = {
-              id: `cnt_${item.participantId || item.id}`,
-              phone_number: phone,
-              formatted_phone: phone,
-              name,
-              avatar_url: item.participantPicture || void 0,
-              tags: ["WhatsApp_User", "Sandbox_User"],
-              custom_fields: {},
-              lifecycle_stage: "lead",
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    let localConversations = whatsappStore2.getConversations(profileId);
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey && apiKey !== "dummy_dev_key") {
+      try {
+        const liveConversations = await ZernioWhatsAppService2.listConversations(profileId);
+        if (Array.isArray(liveConversations) && liveConversations.length > 0) {
+          for (const item of liveConversations) {
+            const phone = item.participantId || item.accountUsername || item.id;
+            const name = item.participantName || item.accountUsername || "WhatsApp User";
+            let contact = whatsappStore2.getContactByPhone(phone);
+            if (!contact) {
+              contact = {
+                id: `cnt_${item.participantId || item.id}`,
+                phone_number: phone,
+                formatted_phone: phone,
+                name,
+                avatar_url: item.participantPicture || void 0,
+                tags: ["WhatsApp_User", "Sandbox_User"],
+                custom_fields: {},
+                lifecycle_stage: "lead",
+                created_at: item.updatedTime || (/* @__PURE__ */ new Date()).toISOString(),
+                last_activity_at: item.updatedTime || (/* @__PURE__ */ new Date()).toISOString()
+              };
+              whatsappStore2.saveContact(contact);
+            }
+            const lastMsgTime = item.updatedTime || (/* @__PURE__ */ new Date()).toISOString();
+            const winExpiry = new Date(new Date(lastMsgTime).getTime() + 24 * 60 * 60 * 1e3).toISOString();
+            const isWindowOpen = /* @__PURE__ */ new Date() < new Date(winExpiry);
+            const conv = {
+              id: item.id,
+              account_id: item.accountId || "acc_sandbox",
+              profile_id: profileId,
+              contact,
+              unread_count: item.unreadCount || 0,
+              status: item.status || "active",
+              last_customer_message_at: lastMsgTime,
+              window_expires_at: winExpiry,
+              is_window_open: isWindowOpen,
+              ai_agent_enabled: true,
               created_at: item.updatedTime || (/* @__PURE__ */ new Date()).toISOString(),
-              last_activity_at: item.updatedTime || (/* @__PURE__ */ new Date()).toISOString()
+              updated_at: item.updatedTime || (/* @__PURE__ */ new Date()).toISOString(),
+              last_message: item.lastMessage ? {
+                id: `msg_sync_${Date.now()}`,
+                conversation_id: item.id,
+                direction: "incoming",
+                type: "text",
+                text: item.lastMessage,
+                status: "delivered",
+                timestamp: lastMsgTime,
+                sender_name: name,
+                sender_phone: phone
+              } : void 0
             };
-            whatsappStore2.saveContact(contact);
+            whatsappStore2.saveConversation(conv);
           }
-          const lastMsgTime = item.updatedTime || (/* @__PURE__ */ new Date()).toISOString();
-          const winExpiry = new Date(new Date(lastMsgTime).getTime() + 24 * 60 * 60 * 1e3).toISOString();
-          const isWindowOpen = /* @__PURE__ */ new Date() < new Date(winExpiry);
-          const conv = {
-            id: item.id,
-            account_id: item.accountId || "acc_sandbox",
-            profile_id: item.profileId || "prof_default",
-            contact,
-            unread_count: item.unreadCount || 0,
-            status: item.status || "active",
-            last_customer_message_at: lastMsgTime,
-            window_expires_at: winExpiry,
-            is_window_open: isWindowOpen,
-            ai_agent_enabled: true,
-            created_at: item.updatedTime || (/* @__PURE__ */ new Date()).toISOString(),
-            updated_at: item.updatedTime || (/* @__PURE__ */ new Date()).toISOString(),
-            last_message: item.lastMessage ? {
-              id: `msg_sync_${Date.now()}`,
-              conversation_id: item.id,
-              direction: "incoming",
-              type: "text",
-              text: item.lastMessage,
-              status: "delivered",
-              timestamp: lastMsgTime,
-              sender_name: name,
-              sender_phone: phone
-            } : void 0
-          };
-          whatsappStore2.saveConversation(conv);
+          localConversations = whatsappStore2.getConversations(profileId);
         }
-        localConversations = whatsappStore2.getConversations();
+      } catch (syncErr) {
+        console.warn("[Zernio live sync notice]:", syncErr.message);
       }
-    } catch (syncErr) {
-      console.warn("[Zernio live sync notice]:", syncErr.message);
     }
+    return res.json({ data: localConversations });
+  } catch (err) {
+    return res.status(401).json({ error: "unauthorized", message: err.message });
   }
-  return res.json({ data: localConversations });
+});
+whatsappRouter.delete("/api/whatsapp/conversations", async (req, res) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    whatsappStore2.clearAllConversations(profileId);
+    return res.json({ success: true, message: "All conversations cleared for this workspace" });
+  } catch (err) {
+    return res.status(401).json({ error: "unauthorized", message: err.message });
+  }
 });
 whatsappRouter.get("/api/whatsapp/conversations/:id/messages", async (req, res) => {
   const { id } = req.params;
