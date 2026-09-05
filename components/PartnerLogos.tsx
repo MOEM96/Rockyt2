@@ -1,32 +1,36 @@
 import React from 'react';
 
 const PartnerLogos: React.FC = () => {
-  const partners = [
-    { name: "Warner Music Group", domain: "warnermusic.com" },
-    { name: "ClickUp", domain: "clickup.com" },
-    { name: "Vibiz", domain: "vibiz.com" },
-    { name: "RE/MAX", domain: "remax.com" },
-    { name: "Heymark", domain: "heymark.com" },
-    { name: "Holo", domain: "holo.host" }
+  const brands = [
+    { name: "TikTok", category: "Social Tech" },
+    { name: "L'Oréal", category: "Beauty Global" },
+    { name: "Oppo", category: "Smartphones" },
+    { name: "Gojek", category: "SuperApp" },
+    { name: "Dukaan", category: "E-Commerce" },
+    { name: "Delivery Hero", category: "Logistics" },
+    { name: "Xiaomi", category: "Electronics" },
+    { name: "Sephora", category: "Retail" }
   ];
 
   return (
-    <section className="py-10 border-y border-zinc-800/80 bg-zinc-950/60 backdrop-blur-md relative z-20">
-      <div className="mx-auto w-full max-w-[1080px] px-6 lg:px-8">
-        <div className="flex flex-col items-center gap-6 lg:flex-row lg:gap-8">
-          <p className="shrink-0 text-center text-sm font-medium tracking-[-0.03em] text-zinc-400 lg:text-left">
-            Trusted by developers at
-          </p>
-          <div className="grid w-full grid-cols-2 items-center justify-items-center gap-x-6 gap-y-4 sm:grid-cols-3 lg:flex lg:flex-1 lg:justify-between">
-            {partners.map((p, idx) => (
-              <span 
-                key={idx} 
-                className="font-display font-black text-sm sm:text-base tracking-wider text-zinc-500 hover:text-white transition-colors uppercase"
-              >
-                {p.name}
+    <section id="partners" className="py-12 border-y border-gray-100 bg-white relative z-20">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6">
+        <p className="text-center text-xs font-bold uppercase tracking-widest text-gray-400 mb-8">
+          Trusted by 16,000+ high-growth brands in 190+ countries
+        </p>
+
+        <div className="flex flex-wrap items-center justify-center gap-8 sm:gap-12 opacity-75 hover:opacity-100 transition-opacity">
+          {brands.map((b, idx) => (
+            <div 
+              key={idx}
+              className="flex items-center gap-2 text-gray-700 hover:text-[#00D084] transition-colors cursor-pointer"
+            >
+              <div className="w-2 h-2 rounded-full bg-emerald-400"></div>
+              <span className="font-display font-extrabold text-lg sm:text-xl tracking-tight">
+                {b.name}
               </span>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
       </div>
     </section>

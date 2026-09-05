@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
-import { Menu, X, Bot, Terminal, ChevronDown, Share2, MessageSquare, Megaphone, ShieldCheck, FileText, Zap, Cpu, Sparkles, Lock } from 'lucide-react';
+import { 
+  MessageSquare, ChevronDown, Sparkles, Send, Users, 
+  Bot, ShoppingBag, Target, ArrowRight, ExternalLink, Globe, User, LogOut, Check
+} from 'lucide-react';
 
 interface NavbarProps {
   onNavigateHome?: () => void;
@@ -8,13 +11,19 @@ interface NavbarProps {
   userSession?: any;
 }
 
-const Navbar: React.FC<NavbarProps> = ({ onNavigateHome, onOpenAgentSetup, onNavigateToPath, userSession }) => {
+const Navbar: React.FC<NavbarProps> = ({ 
+  onNavigateHome, 
+  onOpenAgentSetup, 
+  onNavigateToPath, 
+  userSession 
+}) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [mobileSubmenu, setMobileSubmenu] = useState<string | null>(null);
+  const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
 
-  const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>, targetId: string) => {
+  const handleNavClick = (e: React.MouseEvent, targetId: string) => {
     e.preventDefault();
     setMobileMenuOpen(false);
+    setActiveDropdown(null);
 
     if (onNavigateHome) {
       onNavigateHome();
@@ -31,6 +40,7 @@ const Navbar: React.FC<NavbarProps> = ({ onNavigateHome, onOpenAgentSetup, onNav
   const handleRouteClick = (e: React.MouseEvent, path: string) => {
     e.preventDefault();
     setMobileMenuOpen(false);
+    setActiveDropdown(null);
     if (onNavigateToPath) {
       onNavigateToPath(path);
     } else {
@@ -40,340 +50,305 @@ const Navbar: React.FC<NavbarProps> = ({ onNavigateHome, onOpenAgentSetup, onNav
   };
 
   return (
-    <nav className="fixed top-0 left-0 w-full z-50 bg-black/85 backdrop-blur-md border-b border-white/10 text-white">
-      <div className="max-w-[1400px] mx-auto px-4 py-3 flex items-center justify-between">
+    <header className="fixed top-0 left-0 w-full z-50 bg-white/95 backdrop-blur-md border-b border-gray-100 shadow-sm transition-all">
+      {/* ─── TOPBAR (Help Center, Partners, Log in, Lang) ─── */}
+      <div className="bg-[#0f172a] text-gray-300 text-xs py-1.5 px-4 sm:px-8 border-b border-gray-800">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-6">
+            <a 
+              href="https://support.wati.io" 
+              target="_blank" 
+              rel="noreferrer" 
+              className="hover:text-white transition-colors flex items-center gap-1"
+            >
+              Help Center
+            </a>
+            <div className="relative group">
+              <button 
+                type="button" 
+                className="hover:text-white transition-colors flex items-center gap-1 cursor-pointer"
+              >
+                Partners <ChevronDown size={12} className="opacity-70" />
+              </button>
+              <div className="absolute top-full left-0 mt-1 w-52 bg-white text-gray-800 rounded-lg shadow-xl border border-gray-100 p-2 hidden group-hover:block z-50">
+                <a href="#partners" onClick={(e) => handleNavClick(e, 'partners')} className="block px-3 py-1.5 text-xs rounded hover:bg-emerald-50 hover:text-emerald-700">Partner with Us</a>
+                <a href="#partners" onClick={(e) => handleNavClick(e, 'partners')} className="block px-3 py-1.5 text-xs rounded hover:bg-emerald-50 hover:text-emerald-700">Value Added Reseller</a>
+                <a href="#partners" onClick={(e) => handleNavClick(e, 'partners')} className="block px-3 py-1.5 text-xs rounded hover:bg-emerald-50 hover:text-emerald-700">Tech Partner</a>
+                <a href="#partners" onClick={(e) => handleNavClick(e, 'partners')} className="block px-3 py-1.5 text-xs rounded hover:bg-emerald-50 hover:text-emerald-700">Become an Affiliate</a>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-5">
+            {userSession ? (
+              <button
+                onClick={() => onNavigateToPath?.('/dashboard')}
+                className="text-emerald-400 font-semibold hover:text-emerald-300 flex items-center gap-1.5"
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>My Dashboard ({userSession.name || 'Active'})</span>
+              </button>
+            ) : (
+              <button 
+                onClick={onOpenAgentSetup}
+                className="hover:text-white transition-colors font-medium"
+              >
+                Log in
+              </button>
+            )}
+            <div className="flex items-center gap-1 text-gray-400 hover:text-white cursor-pointer pl-3 border-l border-gray-700">
+              <Globe size={13} />
+              <span>EN</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ─── MAIN NAVIGATION BAR ─── */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-8 h-18 flex items-center justify-between">
         
-        {/* LEFT: LOGO & BRANDING */}
+        {/* LOGO */}
         <div 
           onClick={() => {
             if (onNavigateHome) onNavigateHome();
             window.scrollTo({ top: 0, behavior: 'smooth' });
           }}
-          className="flex flex-col cursor-pointer group shrink-0 min-w-[220px]"
+          className="flex items-center gap-2.5 cursor-pointer select-none"
         >
-          <div className="flex items-center gap-2">
-            <div className="bg-white text-ink px-2.5 py-1 font-display font-bold text-xl tracking-tighter shadow-hard group-hover:bg-brand group-hover:text-white transition-all">
-              ROCKYT
-            </div>
-            <span className="font-mono text-[9px] text-brand border border-brand/50 bg-brand/10 px-1.5 py-0.5 rounded-sm animate-pulse hidden sm:flex items-center gap-1 font-bold">
-              <Bot size={10} /> MCP // AGENT READY
+          {/* Wati Chat Bubble Icon */}
+          <div className="w-9 h-9 rounded-2xl bg-[#00D084] flex items-center justify-center text-white shadow-md shadow-emerald-500/20">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2C6.48 2 2 6.48 2 12c0 1.82.49 3.53 1.35 5L2 22l5.12-1.33c1.43.83 3.09 1.33 4.88 1.33 5.52 0 10-4.48 10-10S17.52 2 12 2zm-1 14h-2v-2h2v2zm0-4h-2V7h2v5z"/>
+            </svg>
+          </div>
+          <div className="flex items-baseline">
+            <span className="font-sans font-black text-2xl tracking-tight text-gray-900">
+              wati
             </span>
+            <span className="w-1.5 h-1.5 rounded-full bg-[#00D084] ml-0.5"></span>
           </div>
-          <span className="font-mono text-[9px] tracking-widest mt-0.5 opacity-60 text-white/70">
-            ROCKYT.IO // UNIFIED ADS API · POSTHOG ATTRIBUTION
-          </span>
         </div>
-        
-        {/* CENTER: DESKTOP NAV TABS [01] to [04] (+ [05] DASHBOARD IF SIGNED IN) */}
-        <div className="hidden md:flex items-center justify-center gap-2.5 flex-1 mx-4">
+
+        {/* DESKTOP NAV ITEMS */}
+        <nav className="hidden lg:flex items-center gap-1 font-medium text-sm text-gray-700">
           
-          {/* TAB 01: ADS & CONVERSION API (WITH SEGMENTED DROPDOWN) */}
-          <div className="relative group">
-            <a 
-              href="#ads-api" 
-              onClick={(e) => handleNavClick(e, 'channels')}
-              className="border border-white/20 bg-black/60 backdrop-blur-sm px-3.5 py-1.5 font-mono text-[11px] hover:bg-brand hover:text-white hover:border-brand transition-colors rounded-sm flex items-center gap-1.5 font-semibold"
+          {/* PRODUCT DROPDOWN */}
+          <div 
+            className="relative"
+            onMouseEnter={() => setActiveDropdown('product')}
+            onMouseLeave={() => setActiveDropdown(null)}
+          >
+            <button 
+              className="px-3 py-2 rounded-lg hover:text-[#00D084] hover:bg-gray-50 flex items-center gap-1 transition-colors"
             >
-              [01] ADS API &amp; CAPI <ChevronDown size={12} className="opacity-70 group-hover:rotate-180 transition-transform" />
-            </a>
+              Product <ChevronDown size={14} className={`transition-transform duration-200 ${activeDropdown === 'product' ? 'rotate-180 text-[#00D084]' : 'opacity-60'}`} />
+            </button>
 
-            {/* ADS API HOVER DROPDOWN MENU */}
-            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 w-[680px] bg-zinc-950/95 border-2 border-white/20 p-6 backdrop-blur-xl shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-all duration-200 z-50 rounded-sm">
-              <div className="grid grid-cols-3 gap-6">
-                
-                {/* AD NETWORKS SEGMENT */}
-                <div>
-                  <div className="flex items-center gap-1.5 font-mono text-[10px] text-brand font-bold uppercase tracking-wider mb-3 pb-1 border-b border-white/10">
-                    <Megaphone size={12} /> AD NETWORKS
+            {activeDropdown === 'product' && (
+              <div className="absolute top-full left-0 w-[580px] bg-white rounded-2xl shadow-2xl border border-gray-100 p-6 z-50 grid grid-cols-2 gap-4">
+                <a 
+                  href="#broadcast" 
+                  onClick={(e) => handleNavClick(e, 'features')}
+                  className="flex items-start gap-3 p-3 rounded-xl hover:bg-emerald-50/60 transition-colors group"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                    <Send size={18} />
                   </div>
-                  <div className="space-y-1 font-mono text-xs text-left">
-                    <a href="/meta-ads" onClick={(e) => handleRouteClick(e, '/meta-ads')} className="block p-1.5 rounded hover:bg-white/10 hover:text-brand transition-colors text-white/80">Meta Ads API</a>
-                    <a href="/google-ads" onClick={(e) => handleRouteClick(e, '/google-ads')} className="block p-1.5 rounded hover:bg-white/10 hover:text-brand transition-colors text-white/80">Google Ads API</a>
-                    <a href="/tiktok-ads" onClick={(e) => handleRouteClick(e, '/tiktok-ads')} className="block p-1.5 rounded hover:bg-white/10 hover:text-brand transition-colors text-white/80">TikTok Ads API</a>
-                    <a href="/linkedin-ads" onClick={(e) => handleRouteClick(e, '/linkedin-ads')} className="block p-1.5 rounded hover:bg-white/10 hover:text-brand transition-colors text-white/80">LinkedIn Ads API</a>
-                    <a href="/pinterest-ads" onClick={(e) => handleRouteClick(e, '/pinterest-ads')} className="block p-1.5 rounded hover:bg-white/10 hover:text-brand transition-colors text-white/80">Pinterest Ads API</a>
-                    <a href="/x-ads" onClick={(e) => handleRouteClick(e, '/x-ads')} className="block p-1.5 rounded hover:bg-white/10 hover:text-brand transition-colors text-white/80">X Ads API</a>
+                  <div>
+                    <div className="font-semibold text-gray-900 group-hover:text-emerald-700 text-sm">Broadcast &amp; Bulk Messaging</div>
+                    <div className="text-xs text-gray-500 mt-0.5">Send targeted marketing campaigns with 98% open rates</div>
                   </div>
-                </div>
+                </a>
 
-                {/* CONVERSION TRACKING SEGMENT */}
-                <div>
-                  <div className="flex items-center gap-1.5 font-mono text-[10px] text-cyan-400 font-bold uppercase tracking-wider mb-3 pb-1 border-b border-white/10">
-                    <Zap size={12} /> POSTHOG SDK &amp; CAPI
+                <a 
+                  href="#inbox" 
+                  onClick={(e) => handleNavClick(e, 'features')}
+                  className="flex items-start gap-3 p-3 rounded-xl hover:bg-emerald-50/60 transition-colors group"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                    <MessageSquare size={18} />
                   </div>
-                  <div className="space-y-1 font-mono text-xs text-left">
-                    <a href="/docs" onClick={(e) => handleRouteClick(e, '/docs')} className="block p-1.5 rounded hover:bg-white/10 hover:text-cyan-300 transition-colors text-white/80">PostHog Event Script</a>
-                    <a href="/docs" onClick={(e) => handleRouteClick(e, '/docs')} className="block p-1.5 rounded hover:bg-white/10 hover:text-cyan-300 transition-colors text-white/80">Conversion API (CAPI)</a>
-                    <a href="/docs" onClick={(e) => handleRouteClick(e, '/docs')} className="block p-1.5 rounded hover:bg-white/10 hover:text-cyan-300 transition-colors text-white/80">Dual-Dispatch Relay</a>
-                    <a href="/docs" onClick={(e) => handleRouteClick(e, '/docs')} className="block p-1.5 rounded hover:bg-white/10 hover:text-cyan-300 transition-colors text-white/80">Data Warehouse Sync</a>
+                  <div>
+                    <div className="font-semibold text-gray-900 group-hover:text-emerald-700 text-sm">Shared Team Inbox</div>
+                    <div className="text-xs text-gray-500 mt-0.5">Collaborative multi-agent support &amp; ticketing</div>
                   </div>
-                </div>
+                </a>
 
-                {/* REVENUE ATTRIBUTION SEGMENT */}
-                <div>
-                  <div className="flex items-center gap-1.5 font-mono text-[10px] text-emerald-400 font-bold uppercase tracking-wider mb-3 pb-1 border-b border-white/10">
-                    <ShieldCheck size={12} /> REVENUE ATTRIBUTION
+                <a 
+                  href="#astra" 
+                  onClick={(e) => handleNavClick(e, 'performance__with_ai')}
+                  className="flex items-start gap-3 p-3 rounded-xl hover:bg-emerald-50/60 transition-colors group"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                    <Sparkles size={18} />
                   </div>
-                  <div className="space-y-1 font-mono text-xs text-left">
-                    <a href="/dashboard" onClick={(e) => handleRouteClick(e, '/dashboard')} className="block p-1.5 rounded hover:bg-white/10 hover:text-emerald-300 transition-colors text-white/80">Stripe Webhooks API</a>
-                    <a href="/dashboard" onClick={(e) => handleRouteClick(e, '/dashboard')} className="block p-1.5 rounded hover:bg-white/10 hover:text-emerald-300 transition-colors text-white/80">Dodo Payments CAPI</a>
-                    <a href="/dashboard" onClick={(e) => handleRouteClick(e, '/dashboard')} className="block p-1.5 rounded hover:bg-white/10 hover:text-emerald-300 transition-colors text-white/80">Closed-Loop ROAS</a>
-                    <a href="/dashboard" onClick={(e) => handleRouteClick(e, '/dashboard')} className="block p-1.5 rounded hover:bg-white/10 hover:text-emerald-300 transition-colors text-white/80">Ad Spend vs. Revenue</a>
+                  <div>
+                    <div className="font-semibold text-gray-900 group-hover:text-emerald-700 text-sm">Astra AI Agent</div>
+                    <div className="text-xs text-gray-500 mt-0.5">Autonomous 24/7 sales, qualification &amp; FAQ resolution</div>
                   </div>
-                </div>
+                </a>
 
+                <a 
+                  href="#ads" 
+                  onClick={(e) => handleNavClick(e, 'features')}
+                  className="flex items-start gap-3 p-3 rounded-xl hover:bg-emerald-50/60 transition-colors group"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                    <Target size={18} />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-gray-900 group-hover:text-emerald-700 text-sm">Click-to-WhatsApp Ads</div>
+                    <div className="text-xs text-gray-500 mt-0.5">Scale Meta ads directly into WhatsApp conversations</div>
+                  </div>
+                </a>
               </div>
-            </div>
+            )}
           </div>
 
-          {/* TAB 02: SOLUTIONS */}
-          <div className="relative group">
-            <a 
-              href="#why-rockyt" 
-              onClick={(e) => handleNavClick(e, 'why-rockyt')}
-              className="border border-white/20 bg-black/60 backdrop-blur-sm px-3.5 py-1.5 font-mono text-[11px] hover:bg-brand hover:text-white hover:border-brand transition-colors rounded-sm flex items-center gap-1.5 font-semibold"
+          {/* SOLUTIONS DROPDOWN */}
+          <div 
+            className="relative"
+            onMouseEnter={() => setActiveDropdown('solutions')}
+            onMouseLeave={() => setActiveDropdown(null)}
+          >
+            <button 
+              className="px-3 py-2 rounded-lg hover:text-[#00D084] hover:bg-gray-50 flex items-center gap-1 transition-colors"
             >
-              [02] SOLUTIONS <ChevronDown size={12} className="opacity-70 group-hover:rotate-180 transition-transform" />
-            </a>
+              Solutions <ChevronDown size={14} className={`transition-transform duration-200 ${activeDropdown === 'solutions' ? 'rotate-180 text-[#00D084]' : 'opacity-60'}`} />
+            </button>
 
-            {/* SOLUTIONS HOVER DROPDOWN MENU */}
-            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 w-[520px] bg-zinc-950/95 border-2 border-white/20 p-5 backdrop-blur-xl shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-all duration-200 z-50 rounded-sm">
-              <div className="grid grid-cols-2 gap-4">
-                
-                {/* FOR AI AGENTS */}
-                <div>
-                  <div className="flex items-center gap-1.5 font-mono text-[10px] text-brand font-bold uppercase tracking-wider mb-2 pb-1 border-b border-white/10">
-                    <Cpu size={12} /> FOR AI AGENTS
-                  </div>
-                  <div className="space-y-1.5 font-mono text-xs text-left">
-                    <a href="#mcp-skills" onClick={(e) => handleNavClick(e, 'mcp-skills')} className="block p-2 rounded bg-white/5 hover:bg-brand hover:text-white transition-colors">
-                      <div className="font-bold">Claude &amp; Cursor MCP</div>
-                      <div className="text-[10px] opacity-70">Native Model Context Protocol Server</div>
-                    </a>
-                    <a href="#mcp-skills" onClick={(e) => handleNavClick(e, 'mcp-skills')} className="block p-2 rounded bg-white/5 hover:bg-brand hover:text-white transition-colors">
-                      <div className="font-bold font-mono">Autonomous Posting</div>
-                      <div className="text-[10px] opacity-70">Schedule &amp; publish without human intervention</div>
-                    </a>
-                    <a href="#mcp-skills" onClick={(e) => handleNavClick(e, 'mcp-skills')} className="block p-2 rounded bg-white/5 hover:bg-brand hover:text-white transition-colors">
-                      <div className="font-bold">Comment-to-DM Funnel</div>
-                      <div className="text-[10px] opacity-70">Auto-reply &amp; DM users on Instagram &amp; X</div>
-                    </a>
-                  </div>
-                </div>
-
-                {/* FOR DEVELOPERS & AGENCIES */}
-                <div>
-                  <div className="flex items-center gap-1.5 font-mono text-[10px] text-cyan-400 font-bold uppercase tracking-wider mb-2 pb-1 border-b border-white/10">
-                    <Zap size={12} /> FOR AGENCIES &amp; DEVS
-                  </div>
-                  <div className="space-y-1.5 font-mono text-xs text-left">
-                    <a href="#why-rockyt" onClick={(e) => handleNavClick(e, 'why-rockyt')} className="block p-2 rounded bg-white/5 hover:bg-cyan-600 hover:text-white transition-colors">
-                      <div className="font-bold">n8n, Make &amp; Zapier</div>
-                      <div className="text-[10px] opacity-70">No-code workflow automation nodes</div>
-                    </a>
-                    <a href="#why-rockyt" onClick={(e) => handleNavClick(e, 'why-rockyt')} className="block p-2 rounded bg-white/5 hover:bg-cyan-600 hover:text-white transition-colors">
-                      <div className="font-bold">Agency Multi-Client Vault</div>
-                      <div className="text-[10px] opacity-70">Single key for 100+ social client accounts</div>
-                    </a>
-                  </div>
-                </div>
-
+            {activeDropdown === 'solutions' && (
+              <div className="absolute top-full left-0 w-80 bg-white rounded-2xl shadow-2xl border border-gray-100 p-4 z-50 space-y-1">
+                <a href="#solutions-marketing" onClick={(e) => handleNavClick(e, 'video-tabbed-section')} className="block p-3 rounded-xl hover:bg-emerald-50/60 transition-colors">
+                  <div className="font-semibold text-gray-900 text-sm">For Marketing Teams</div>
+                  <div className="text-xs text-gray-500">Run hyper-targeted campaigns that convert</div>
+                </a>
+                <a href="#solutions-sales" onClick={(e) => handleNavClick(e, 'video-tabbed-section')} className="block p-3 rounded-xl hover:bg-emerald-50/60 transition-colors">
+                  <div className="font-semibold text-gray-900 text-sm">For Sales Teams</div>
+                  <div className="text-xs text-gray-500">Shorten sales cycle and capture qualified leads</div>
+                </a>
+                <a href="#solutions-support" onClick={(e) => handleNavClick(e, 'video-tabbed-section')} className="block p-3 rounded-xl hover:bg-emerald-50/60 transition-colors">
+                  <div className="font-semibold text-gray-900 text-sm">For Customer Support</div>
+                  <div className="text-xs text-gray-500">Instant AI answers with effortless human escalations</div>
+                </a>
               </div>
-            </div>
+            )}
           </div>
 
-          {/* TAB 03: DOCS */}
-          <div className="relative group">
-            <a 
-              href="#sandbox" 
-              onClick={(e) => handleNavClick(e, 'sandbox')}
-              className="border border-white/20 bg-black/60 backdrop-blur-sm px-3.5 py-1.5 font-mono text-[11px] hover:bg-brand hover:text-white hover:border-brand transition-colors rounded-sm flex items-center gap-1.5 font-semibold"
-            >
-              [03] DOCS <ChevronDown size={12} className="opacity-70 group-hover:rotate-180 transition-transform" />
-            </a>
-
-            {/* DOCS HOVER DROPDOWN MENU */}
-            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 w-[420px] bg-zinc-950/95 border-2 border-white/20 p-5 backdrop-blur-xl shadow-2xl opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-all duration-200 z-50 rounded-sm">
-              <div className="grid grid-cols-2 gap-4">
-                
-                {/* API DOCS */}
-                <div>
-                  <div className="flex items-center gap-1.5 font-mono text-[10px] text-brand font-bold uppercase tracking-wider mb-3 pb-1 border-b border-white/10">
-                    <FileText size={12} /> API DOCS
-                  </div>
-                  <div className="space-y-1 font-mono text-xs text-left">
-                    <a href="/docs" onClick={(e) => handleRouteClick(e, '/docs')} className="block p-1.5 rounded hover:bg-white/10 hover:text-brand transition-colors text-white/80">REST API Reference</a>
-                    <a href="/mcp" onClick={(e) => handleRouteClick(e, '/mcp')} className="block p-1.5 rounded hover:bg-white/10 hover:text-brand transition-colors text-white/80">MCP Protocol Spec</a>
-                    <a href="/agent-quickstart" onClick={(e) => handleRouteClick(e, '/agent-quickstart')} className="block p-1.5 rounded hover:bg-white/10 hover:text-brand transition-colors text-white/80">Agent Quickstart</a>
-                  </div>
-                </div>
-
-                {/* SECURITY */}
-                <div>
-                  <div className="flex items-center gap-1.5 font-mono text-[10px] text-emerald-400 font-bold uppercase tracking-wider mb-3 pb-1 border-b border-white/10">
-                    <ShieldCheck size={12} /> SECURITY
-                  </div>
-                  <div className="space-y-1 font-mono text-xs text-left">
-                    <a href="#sandbox" onClick={(e) => handleNavClick(e, 'sandbox')} className="block p-1.5 rounded hover:bg-white/10 hover:text-emerald-300 transition-colors text-white/80">Hosted OAuth Vault</a>
-                    <a href="#sandbox" onClick={(e) => handleNavClick(e, 'sandbox')} className="block p-1.5 rounded hover:bg-white/10 hover:text-emerald-300 transition-colors text-white/80">Data Encryption</a>
-                    <a href="#sandbox" onClick={(e) => handleNavClick(e, 'sandbox')} className="block p-1.5 rounded hover:bg-white/10 hover:text-emerald-300 transition-colors text-white/80">Rate Limits &amp; SLA</a>
-                  </div>
-                </div>
-
-              </div>
-            </div>
-          </div>
-
-          {/* TAB 04: PRICING */}
+          {/* PRICING LINK */}
           <a 
             href="#pricing" 
             onClick={(e) => handleNavClick(e, 'pricing')}
-            className="border border-white/20 bg-black/60 backdrop-blur-sm px-3.5 py-1.5 font-mono text-[11px] hover:bg-brand hover:text-white hover:border-brand transition-colors rounded-sm font-semibold"
+            className="px-3 py-2 rounded-lg hover:text-[#00D084] hover:bg-gray-50 transition-colors"
           >
-            [04] PRICING
+            Pricing
           </a>
 
-          {/* TAB 05: DASHBOARD (Only visible for signed-in users) */}
-          {!!userSession && (
-            <a 
-              href="/dashboard" 
-              onClick={(e) => handleRouteClick(e, '/dashboard')}
-              className="border border-brand/50 bg-brand/10 text-brand px-3.5 py-1.5 font-mono text-[11px] hover:bg-brand hover:text-white transition-colors rounded-sm font-bold flex items-center gap-1 shadow-glow"
+          {/* RESOURCES / DOCS */}
+          <a 
+            href="#reviews" 
+            onClick={(e) => handleNavClick(e, 'reviews')}
+            className="px-3 py-2 rounded-lg hover:text-[#00D084] hover:bg-gray-50 transition-colors"
+          >
+            Customers
+          </a>
+        </nav>
+
+        {/* RIGHT ACTION BUTTONS */}
+        <div className="flex items-center gap-3">
+          {userSession ? (
+            <button
+              onClick={() => onNavigateToPath?.('/dashboard')}
+              className="px-5 py-2.5 rounded-full bg-[#00D084] text-[#07301f] hover:bg-[#00be77] font-bold text-sm shadow-md shadow-emerald-500/20 flex items-center gap-2 transition-all"
             >
-              [05] DASHBOARD
-            </a>
+              <span>Go to Dashboard</span>
+              <ArrowRight size={16} />
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={onOpenAgentSetup}
+                className="hidden sm:inline-flex items-center justify-center font-semibold text-sm px-5 py-2 rounded-full border border-gray-300 text-gray-800 hover:border-gray-400 hover:bg-gray-50 transition-colors"
+              >
+                Book a Demo
+              </button>
+
+              <button
+                onClick={onOpenAgentSetup}
+                className="inline-flex items-center justify-center font-bold text-sm px-6 py-2.5 rounded-full bg-[#00D084] text-[#08301f] hover:bg-[#00be77] transition-all shadow-md shadow-emerald-500/20 hover:shadow-lg hover:shadow-emerald-500/30 active:scale-[0.98]"
+              >
+                Try for Free
+              </button>
+            </>
           )}
-        </div>
 
-        {/* RIGHT: CTA BUTTON & MOBILE TOGGLE */}
-        <div className="flex items-center justify-end gap-2 shrink-0 min-w-[220px]">
+          {/* MOBILE HAMBURGER BUTTON */}
           <button
-            onClick={() => {
-              if (onOpenAgentSetup) onOpenAgentSetup();
-            }}
-            className="hidden md:flex border border-brand text-brand bg-brand/10 backdrop-blur-sm px-4 py-1.5 font-mono text-[11px] hover:bg-brand hover:text-white transition-colors rounded-sm font-bold items-center gap-1.5 shadow-glow"
-          >
-            <Terminal size={12} /> GET API KEY
-          </button>
-
-          {/* MOBILE MENU TOGGLE */}
-          <button 
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden p-2 text-white/80 hover:text-white border border-white/20 bg-black/50"
-            aria-label="Toggle Navigation"
+            className="lg:hidden p-2 rounded-lg text-gray-600 hover:text-gray-900 hover:bg-gray-100"
           >
-            {mobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              {mobileMenuOpen ? (
+                <path d="M18 6L6 18M6 6l12 12" />
+              ) : (
+                <path d="M4 6h16M4 12h16M4 18h16" />
+              )}
+            </svg>
           </button>
         </div>
       </div>
 
-      {/* MOBILE DROPDOWN */}
+      {/* MOBILE EXPANDED MENU */}
       {mobileMenuOpen && (
-        <div className="md:hidden bg-zinc-900/95 border-b border-white/20 p-4 flex flex-col gap-3 font-mono text-xs animate-in slide-in-from-top-2 duration-200">
-          
-          {/* MOBILE CHANNELS */}
-          <div>
-            <button 
-              onClick={() => setMobileSubmenu(mobileSubmenu === 'channels' ? null : 'channels')}
-              className="w-full p-2 border border-white/10 hover:bg-brand hover:text-white transition-colors flex justify-between items-center font-bold"
-            >
-              <span>[01] CHANNELS // 16 PLATFORMS</span>
-              <ChevronDown size={14} className={mobileSubmenu === 'channels' ? 'rotate-180' : ''} />
-            </button>
-            {mobileSubmenu === 'channels' && (
-              <div className="pl-4 pt-2 space-y-1 text-white/80 border-l border-brand/50 mt-1">
-                <div className="text-[10px] text-brand font-bold uppercase mt-1">Social</div>
-                <a href="/x" onClick={(e) => handleRouteClick(e, '/x')} className="block py-1 hover:text-brand">X / Twitter API</a>
-                <a href="/instagram" onClick={(e) => handleRouteClick(e, '/instagram')} className="block py-1 hover:text-brand">Instagram API</a>
-                <a href="/tiktok" onClick={(e) => handleRouteClick(e, '/tiktok')} className="block py-1 hover:text-brand">TikTok API</a>
-                
-                <div className="text-[10px] text-cyan-400 font-bold uppercase mt-2">Messaging</div>
-                <a href="/whatsapp" onClick={(e) => handleRouteClick(e, '/whatsapp')} className="block py-1 hover:text-cyan-300">WhatsApp Business API</a>
-                <a href="/telegram" onClick={(e) => handleRouteClick(e, '/telegram')} className="block py-1 hover:text-cyan-300">Telegram API</a>
-                <a href="/discord" onClick={(e) => handleRouteClick(e, '/discord')} className="block py-1 hover:text-cyan-300">Discord API</a>
-
-                <div className="text-[10px] text-emerald-400 font-bold uppercase mt-2">Ads</div>
-                <a href="/meta-ads" onClick={(e) => handleRouteClick(e, '/meta-ads')} className="block py-1 hover:text-emerald-300">Meta Ads API</a>
-                <a href="/google-ads" onClick={(e) => handleRouteClick(e, '/google-ads')} className="block py-1 hover:text-emerald-300">Google Ads API</a>
-              </div>
-            )}
-          </div>
-
-          {/* MOBILE SOLUTIONS */}
-          <div>
-            <button 
-              onClick={() => setMobileSubmenu(mobileSubmenu === 'solutions' ? null : 'solutions')}
-              className="w-full p-2 border border-white/10 hover:bg-brand hover:text-white transition-colors flex justify-between items-center font-bold"
-            >
-              <span>[02] SOLUTIONS // AGENTS &amp; AGENCIES</span>
-              <ChevronDown size={14} className={mobileSubmenu === 'solutions' ? 'rotate-180' : ''} />
-            </button>
-            {mobileSubmenu === 'solutions' && (
-              <div className="pl-4 pt-2 space-y-1 text-white/80 border-l border-brand/50 mt-1">
-                <div className="text-[10px] text-brand font-bold uppercase">For AI Agents</div>
-                <a href="#mcp-skills" onClick={(e) => handleNavClick(e, 'mcp-skills')} className="block py-1 hover:text-brand">Autonomous Dispatcher</a>
-                <a href="#mcp-skills" onClick={(e) => handleNavClick(e, 'mcp-skills')} className="block py-1 hover:text-brand">Comment-to-DM Funnel</a>
-                <a href="#mcp-skills" onClick={(e) => handleNavClick(e, 'mcp-skills')} className="block py-1 hover:text-brand">Native MCP Server</a>
-
-                <div className="text-[10px] text-cyan-400 font-bold uppercase mt-2">For Agencies &amp; Devs</div>
-                <a href="#why-rockyt" onClick={(e) => handleNavClick(e, 'why-rockyt')} className="block py-1 hover:text-cyan-300">n8n, Make &amp; Zapier Connectors</a>
-                <a href="#why-rockyt" onClick={(e) => handleNavClick(e, 'why-rockyt')} className="block py-1 hover:text-cyan-300">Agency Multi-Client Vault</a>
-              </div>
-            )}
-          </div>
-
-          {/* MOBILE DOCS */}
-          <div>
-            <button 
-              onClick={() => setMobileSubmenu(mobileSubmenu === 'docs' ? null : 'docs')}
-              className="w-full p-2 border border-white/10 hover:bg-brand hover:text-white transition-colors flex justify-between items-center font-bold"
-            >
-              <span>[03] DOCS // API &amp; SECURITY</span>
-              <ChevronDown size={14} className={mobileSubmenu === 'docs' ? 'rotate-180' : ''} />
-            </button>
-            {mobileSubmenu === 'docs' && (
-              <div className="pl-4 pt-2 space-y-1 text-white/80 border-l border-brand/50 mt-1">
-                <a href="/docs" onClick={(e) => handleRouteClick(e, '/docs')} className="block py-1 hover:text-brand">REST API Reference</a>
-                <a href="/mcp" onClick={(e) => handleRouteClick(e, '/mcp')} className="block py-1 hover:text-brand">MCP Protocol Spec</a>
-                <a href="/agent-quickstart" onClick={(e) => handleRouteClick(e, '/agent-quickstart')} className="block py-1 hover:text-brand">Agent Quickstart</a>
-                <a href="#sandbox" onClick={(e) => handleNavClick(e, 'sandbox')} className="block py-1 hover:text-emerald-400">Security &amp; OAuth Vault</a>
-              </div>
-            )}
-          </div>
-
-          {/* MOBILE PRICING */}
-          <a 
-            href="#pricing" 
-            onClick={(e) => handleNavClick(e, 'pricing')}
-            className="p-2 border border-white/10 hover:bg-brand hover:text-white transition-colors font-bold"
-          >
-            [04] PRICING // DEVELOPER TIERS
-          </a>
-
-          {/* MOBILE DASHBOARD (Only visible for signed-in users) */}
-          {!!userSession && (
+        <div className="lg:hidden border-t border-gray-100 bg-white p-5 shadow-xl space-y-4">
+          <div className="space-y-2">
             <a 
-              href="/dashboard" 
-              onClick={(e) => handleRouteClick(e, '/dashboard')}
-              className="p-2 border border-brand/50 bg-brand/10 text-brand hover:bg-brand hover:text-white transition-colors font-bold"
+              href="#features" 
+              onClick={(e) => handleNavClick(e, 'features')}
+              className="block font-medium py-2 px-3 text-gray-800 hover:bg-gray-50 rounded-lg"
             >
-              [05] DASHBOARD
+              Features &amp; WhatsApp Core
             </a>
-          )}
+            <a 
+              href="#video-tabbed-section" 
+              onClick={(e) => handleNavClick(e, 'video-tabbed-section')}
+              className="block font-medium py-2 px-3 text-gray-800 hover:bg-gray-50 rounded-lg"
+            >
+              Solutions
+            </a>
+            <a 
+              href="#pricing" 
+              onClick={(e) => handleNavClick(e, 'pricing')}
+              className="block font-medium py-2 px-3 text-gray-800 hover:bg-gray-50 rounded-lg"
+            >
+              Pricing
+            </a>
+            <a 
+              href="#reviews" 
+              onClick={(e) => handleNavClick(e, 'reviews')}
+              className="block font-medium py-2 px-3 text-gray-800 hover:bg-gray-50 rounded-lg"
+            >
+              Reviews &amp; Trust
+            </a>
+          </div>
 
-          {/* MOBILE CTA */}
-          <button
-            onClick={() => {
-              setMobileMenuOpen(false);
-              if (onOpenAgentSetup) onOpenAgentSetup();
-            }}
-            className="p-3 border border-brand bg-brand/20 text-brand font-bold hover:bg-brand hover:text-white transition-colors text-left flex items-center gap-2 mt-1"
-          >
-            <Terminal size={14} /> GET API KEY &amp; MCP CONFIG
-          </button>
+          <div className="pt-4 border-t border-gray-100 flex flex-col gap-2.5">
+            <button
+              onClick={() => { setMobileMenuOpen(false); onOpenAgentSetup?.(); }}
+              className="w-full py-2.5 rounded-full border border-gray-300 text-gray-800 font-semibold text-sm text-center"
+            >
+              Book a Demo
+            </button>
+            <button
+              onClick={() => { setMobileMenuOpen(false); onOpenAgentSetup?.(); }}
+              className="w-full py-2.5 rounded-full bg-[#00D084] text-[#08301f] font-bold text-sm text-center shadow-md shadow-emerald-500/20"
+            >
+              Try for Free
+            </button>
+          </div>
         </div>
       )}
-    </nav>
+    </header>
   );
 };
 

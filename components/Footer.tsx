@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowRight, Bot, ShieldCheck } from 'lucide-react';
+import { ArrowRight, ShieldCheck, Globe, CheckCircle2 } from 'lucide-react';
 
 interface FooterProps {
   onStartOnboarding?: () => void;
@@ -18,125 +18,137 @@ const Footer: React.FC<FooterProps> = ({ onStartOnboarding, onNavigateToPath }) 
   };
 
   return (
-    <footer className="bg-zinc-950 text-zinc-300 relative z-10 border-t border-zinc-800">
+    <footer className="bg-[#0f172a] text-gray-300 relative z-10 border-t border-gray-800">
       
-      {/* ─── BOTTOM CTA SECTION ─── */}
-      <div className="py-20 border-b border-zinc-800 relative overflow-hidden">
-        <div className="mx-auto w-full max-w-[1080px] px-6 lg:px-8 text-center flex flex-col items-center">
+      {/* ─── BOTTOM HERO CTA BANNER ─── */}
+      <div className="py-20 border-b border-gray-800/80 relative overflow-hidden bg-gradient-to-b from-[#0f172a] to-[#0a0f1d]">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 text-center flex flex-col items-center">
           
-          <div className="w-16 h-16 rounded-2xl bg-brand/15 border border-brand/40 flex items-center justify-center text-brand font-black text-2xl mb-6 shadow-glow">
-            R
+          <div className="w-14 h-14 rounded-2xl bg-[#00D084] flex items-center justify-center text-white font-bold mb-6 shadow-xl shadow-emerald-500/20">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2C6.48 2 2 6.48 2 12c0 1.82.49 3.53 1.35 5L2 22l5.12-1.33c1.43.83 3.09 1.33 4.88 1.33 5.52 0 10-4.48 10-10S17.52 2 12 2zm-1 14h-2v-2h2v2zm0-4h-2V7h2v5z"/>
+            </svg>
           </div>
 
-          <h2 className="text-3xl sm:text-5xl font-bold tracking-tight text-white mb-4">
-            Ship WhatsApp today
+          <h2 className="text-3xl sm:text-5xl font-display font-bold tracking-tight text-white mb-4">
+            Accelerate your business on WhatsApp today
           </h2>
 
-          <p className="text-base sm:text-lg text-zinc-400 max-w-xl mx-auto mb-8 font-medium">
-            No credit card, no sales call. Test in the sandbox before you connect a number.
+          <p className="text-base sm:text-lg text-gray-400 max-w-xl mx-auto mb-8">
+            Experience the #1 AI-powered customer engagement platform. No credit card required.
           </p>
 
           <div className="flex flex-wrap items-center justify-center gap-4 mb-8">
             <button
               onClick={onStartOnboarding}
-              className="inline-flex items-center gap-2 rounded-xl bg-brand hover:bg-brand-hover text-white font-bold text-base px-8 py-4 transition-all shadow-xl shadow-brand/25"
+              className="inline-flex items-center gap-2 rounded-full bg-[#00D084] hover:bg-[#00be77] text-[#07301f] font-bold text-base px-9 py-4 transition-all shadow-xl shadow-emerald-500/25 active:scale-[0.98]"
             >
-              Start for free <ArrowRight className="w-4 h-4" />
+              <span>Try for Free</span>
+              <ArrowRight className="w-4 h-4" />
             </button>
           </div>
 
-          {/* BADGES */}
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            {['SOC 2', 'GDPR compliant', '99.97% uptime', 'Under 50ms response'].map((badge, idx) => (
-              <span 
-                key={idx} 
-                className="whitespace-nowrap rounded-full bg-zinc-900 border border-zinc-800 px-3 py-1 font-mono text-xs font-semibold text-brand"
-              >
-                {badge}
-              </span>
-            ))}
+          <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-gray-400 font-medium">
+            <span className="flex items-center gap-1.5">
+              <CheckCircle2 size={14} className="text-[#00D084]" /> Official Meta Business Solution Provider
+            </span>
+            <span>•</span>
+            <span className="flex items-center gap-1.5">
+              <CheckCircle2 size={14} className="text-[#00D084]" /> SOC-2 &amp; GDPR Compliant
+            </span>
+            <span>•</span>
+            <span className="flex items-center gap-1.5">
+              <CheckCircle2 size={14} className="text-[#00D084]" /> 99.99% Uptime SLA
+            </span>
           </div>
 
         </div>
       </div>
 
-      {/* ─── 5-COLUMN LINK DIRECTORY ─── */}
-      <div className="mx-auto w-full max-w-[1080px] px-6 lg:px-8 py-16">
-        <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 lg:grid-cols-5 text-xs">
+      {/* ─── 5-COLUMN FOOTER LINKS ─── */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-8 py-16">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-8 lg:gap-12">
           
-          {/* PRODUCT */}
-          <div className="flex flex-col gap-4">
-            <p className="font-mono text-xs font-bold text-white uppercase tracking-wider">Product</p>
-            <div className="flex flex-col space-y-2.5 text-zinc-400 font-medium">
-              <a href="/docs" onClick={(e) => handleLinkClick(e, '/docs')} className="hover:text-white transition-colors">Documentation</a>
-              <a href="/docs" onClick={(e) => handleLinkClick(e, '/docs')} className="hover:text-white transition-colors">MCP Server</a>
-              <a href="/dashboard" onClick={(e) => handleLinkClick(e, '/dashboard')} className="hover:text-white transition-colors">Dashboard</a>
-              <a href="#pricing" className="hover:text-white transition-colors">Pricing</a>
-              <a href="#features" className="hover:text-white transition-colors">Features</a>
-              <a href="/dashboard" onClick={(e) => handleLinkClick(e, '/dashboard')} className="hover:text-white transition-colors">Chat SDK Adapter</a>
+          {/* COL 1: BRAND */}
+          <div className="col-span-2 md:col-span-1 space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-xl bg-[#00D084] flex items-center justify-center text-white font-black text-sm">
+                W
+              </div>
+              <span className="font-sans font-black text-2xl tracking-tight text-white">
+                wati
+              </span>
             </div>
+            <p className="text-xs text-gray-400 leading-relaxed">
+              AI-powered customer engagement platform turning WhatsApp, Instagram &amp; Messenger into revenue. Trusted by 16,000+ businesses worldwide.
+            </p>
           </div>
 
-          {/* INTEGRATIONS */}
-          <div className="flex flex-col gap-4">
-            <p className="font-mono text-xs font-bold text-white uppercase tracking-wider">Integrations</p>
-            <div className="flex flex-col space-y-2.5 text-zinc-400 font-medium">
-              <a href="/whatsapp" onClick={(e) => handleLinkClick(e, '/whatsapp')} className="hover:text-white transition-colors">WhatsApp</a>
-              <a href="/instagram" onClick={(e) => handleLinkClick(e, '/instagram')} className="hover:text-white transition-colors">Instagram</a>
-              <a href="/facebook" onClick={(e) => handleLinkClick(e, '/facebook')} className="hover:text-white transition-colors">Facebook</a>
-              <a href="/tiktok" onClick={(e) => handleLinkClick(e, '/tiktok')} className="hover:text-white transition-colors">TikTok</a>
-              <a href="/x" onClick={(e) => handleLinkClick(e, '/x')} className="hover:text-white transition-colors">Twitter / X</a>
-              <a href="/linkedin" onClick={(e) => handleLinkClick(e, '/linkedin')} className="hover:text-white transition-colors">LinkedIn</a>
-              <a href="/meta-ads" onClick={(e) => handleLinkClick(e, '/meta-ads')} className="hover:text-white transition-colors">Meta Ads</a>
-            </div>
+          {/* COL 2: PRODUCT */}
+          <div>
+            <p className="text-xs font-bold text-white uppercase tracking-wider mb-4">Product</p>
+            <ul className="space-y-2.5 text-xs text-gray-400">
+              <li><a href="#features" className="hover:text-white transition-colors">Broadcasts &amp; Bulk SMS</a></li>
+              <li><a href="#features" className="hover:text-white transition-colors">Shared Team Inbox</a></li>
+              <li><a href="#features" className="hover:text-white transition-colors">Astra AI Agent</a></li>
+              <li><a href="#features" className="hover:text-white transition-colors">Click-to-WhatsApp Ads</a></li>
+              <li><a href="#features" className="hover:text-white transition-colors">WhatsApp Catalog</a></li>
+              <li><a href="#features" className="hover:text-white transition-colors">WhatsApp Cloud API</a></li>
+            </ul>
           </div>
 
-          {/* FOR AGENTS */}
-          <div className="flex flex-col gap-4">
-            <p className="font-mono text-xs font-bold text-white uppercase tracking-wider">For Agents</p>
-            <div className="flex flex-col space-y-2.5 text-zinc-400 font-medium">
-              <a href="#ai-agents" className="hover:text-white transition-colors">AI Agents</a>
-              <a href="#ai-agents" className="hover:text-white transition-colors">Claude Code</a>
-              <a href="#ai-agents" className="hover:text-white transition-colors">Cursor MCP</a>
-              <a href="#ai-agents" className="hover:text-white transition-colors">Codex</a>
-              <a href="#ai-agents" className="hover:text-white transition-colors">OpenClaw</a>
-            </div>
+          {/* COL 3: SOLUTIONS */}
+          <div>
+            <p className="text-xs font-bold text-white uppercase tracking-wider mb-4">Solutions</p>
+            <ul className="space-y-2.5 text-xs text-gray-400">
+              <li><a href="#video-tabbed-section" className="hover:text-white transition-colors">For Marketing Teams</a></li>
+              <li><a href="#video-tabbed-section" className="hover:text-white transition-colors">For Sales Teams</a></li>
+              <li><a href="#video-tabbed-section" className="hover:text-white transition-colors">For Customer Support</a></li>
+              <li><a href="#video-tabbed-section" className="hover:text-white transition-colors">E-Commerce &amp; Retail</a></li>
+              <li><a href="#video-tabbed-section" className="hover:text-white transition-colors">Financial Services</a></li>
+              <li><a href="#video-tabbed-section" className="hover:text-white transition-colors">Education &amp; EdTech</a></li>
+            </ul>
           </div>
 
-          {/* COMPANY */}
-          <div className="flex flex-col gap-4">
-            <p className="font-mono text-xs font-bold text-white uppercase tracking-wider">Company</p>
-            <div className="flex flex-col space-y-2.5 text-zinc-400 font-medium">
-              <a href="/docs" onClick={(e) => handleLinkClick(e, '/docs')} className="hover:text-white transition-colors">Terms of Service</a>
-              <a href="/docs" onClick={(e) => handleLinkClick(e, '/docs')} className="hover:text-white transition-colors">Privacy Policy</a>
-              <a href="/docs" onClick={(e) => handleLinkClick(e, '/docs')} className="hover:text-white transition-colors">Security &amp; Trust</a>
-              <a href="/docs" onClick={(e) => handleLinkClick(e, '/docs')} className="hover:text-white transition-colors">Status</a>
-            </div>
+          {/* COL 4: RESOURCES */}
+          <div>
+            <p className="text-xs font-bold text-white uppercase tracking-wider mb-4">Resources</p>
+            <ul className="space-y-2.5 text-xs text-gray-400">
+              <li><a href="https://support.wati.io" target="_blank" rel="noreferrer" className="hover:text-white transition-colors">Help Center</a></li>
+              <li><a href="/docs" onClick={(e) => handleLinkClick(e, '/docs')} className="hover:text-white transition-colors">API Documentation</a></li>
+              <li><a href="#reviews" className="hover:text-white transition-colors">Customer Stories</a></li>
+              <li><a href="#faq" className="hover:text-white transition-colors">WhatsApp FAQs</a></li>
+              <li><a href="#partners" className="hover:text-white transition-colors">Partner Directory</a></li>
+              <li><a href="https://status.wati.io" target="_blank" rel="noreferrer" className="hover:text-white transition-colors">System Status</a></li>
+            </ul>
           </div>
 
-          {/* COMMUNITY */}
-          <div className="flex flex-col gap-4">
-            <p className="font-mono text-xs font-bold text-white uppercase tracking-wider">Community</p>
-            <div className="flex flex-col space-y-2.5 text-zinc-400 font-medium">
-              <a href="https://github.com/MOEM96/Rockyt2" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">GitHub</a>
-              <a href="https://x.com" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Twitter / X</a>
-              <a href="https://t.me" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Telegram</a>
-              <a href="https://linkedin.com" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">LinkedIn</a>
-            </div>
+          {/* COL 5: COMPANY */}
+          <div>
+            <p className="text-xs font-bold text-white uppercase tracking-wider mb-4">Company</p>
+            <ul className="space-y-2.5 text-xs text-gray-400">
+              <li><a href="#about" className="hover:text-white transition-colors">About Wati</a></li>
+              <li><a href="#careers" className="hover:text-white transition-colors">Careers</a></li>
+              <li><a href="#partners" className="hover:text-white transition-colors">Partner with Us</a></li>
+              <li><a href="#security" className="hover:text-white transition-colors">Security &amp; Privacy</a></li>
+              <li><a href="#terms" className="hover:text-white transition-colors">Terms of Service</a></li>
+              <li><a href="#contact" className="hover:text-white transition-colors">Contact Sales</a></li>
+            </ul>
           </div>
 
         </div>
 
         {/* BOTTOM COPYRIGHT */}
-        <div className="mt-12 pt-8 border-t border-zinc-800/80 flex flex-col sm:flex-row items-center justify-between text-xs text-zinc-500 font-mono">
-          <p>© {new Date().getFullYear()} Rockyt. Official Meta Business Partner.</p>
-          <div className="flex items-center gap-4 mt-4 sm:mt-0">
-            <span>SOC 2 Type II Certified</span>
-            <span>·</span>
-            <span>GDPR Compliant</span>
+        <div className="mt-12 pt-8 border-t border-gray-800 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-gray-500">
+          <div>
+            © {new Date().getFullYear()} Wati.io. All rights reserved. Meta Official WhatsApp Business Solution Provider.
+          </div>
+          <div className="flex items-center gap-6">
+            <a href="#privacy" className="hover:text-gray-300 transition-colors">Privacy Policy</a>
+            <a href="#terms" className="hover:text-gray-300 transition-colors">Terms &amp; Conditions</a>
+            <a href="#gdpr" className="hover:text-gray-300 transition-colors">GDPR Commitment</a>
           </div>
         </div>
-
       </div>
 
     </footer>

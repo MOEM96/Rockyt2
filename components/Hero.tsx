@@ -1,161 +1,343 @@
-import React from 'react';
-import { ChevronDown, Check, Video, Phone, SignalHigh, Wifi, BatteryFull } from 'lucide-react';
+import React, { useState } from 'react';
+import { 
+  ArrowRight, CheckCircle2, Star, ShieldCheck, Play, 
+  Send, Bot, Users, MessageSquare, Sparkles, CheckCheck, TrendingUp, Zap
+} from 'lucide-react';
 
 interface HeroProps {
-  onStart: () => void;
+  onStart?: () => void;
 }
 
 const Hero: React.FC<HeroProps> = ({ onStart }) => {
+  const [activeTab, setActiveTab] = useState<'marketing' | 'sales' | 'support'>('marketing');
+
   return (
-    <section className="relative overflow-x-clip pt-28 pb-16 px-4 sm:px-6 lg:px-8 flex flex-col items-center z-10">
-      <div className="mx-auto w-full max-w-[1080px] flex flex-col items-center">
+    <section id="wati-hero" className="pt-32 pb-20 md:pt-40 md:pb-28 overflow-hidden bg-gradient-to-b from-[#f4fbf7]/60 via-white to-white">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 text-center">
         
-        {/* HERO INTERACTIVE UI MOCKUP CONTAINER */}
-        <div className="relative w-full flex justify-center mb-8">
-          <div className="relative h-[290px] sm:h-[416px] w-[340px] sm:w-[565px] shrink-0 origin-top">
-            
-            {/* LEFT FLOATING BROADCAST CARD */}
-            <div className="absolute left-2 sm:left-[29px] top-4 sm:top-[40px] h-[260px] sm:h-[350px] w-[180px] sm:w-[241px] z-10 drop-shadow-2xl">
-              <div className="flex h-full w-full flex-col gap-2.5 sm:gap-[14px] rounded-2xl sm:rounded-tl-[25px] border-2 border-white/20 bg-zinc-950/90 backdrop-blur-xl p-3.5 sm:p-[19px]">
-                <p className="text-xs sm:text-[16px] font-bold text-white">New Broadcast</p>
-                
-                <div className="flex w-full flex-col gap-1 sm:gap-[5px]">
-                  <p className="text-[10px] sm:text-[12px] font-semibold text-zinc-400">Channel</p>
-                  <div className="flex w-full items-center justify-between gap-2 rounded-xl border border-zinc-800 bg-zinc-900/80 p-2 sm:p-[10px]">
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-3.5 h-3.5 rounded-full bg-[#25D366] flex items-center justify-center text-black font-black text-[9px]">W</div>
-                      <span className="text-[10px] sm:text-[11px] font-medium text-white">WhatsApp</span>
-                    </div>
-                    <ChevronDown className="h-3 w-3 text-zinc-400" />
-                  </div>
-                </div>
+        {/* TOP PILL BADGE */}
+        <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-50 border border-emerald-200/80 text-emerald-800 text-xs sm:text-sm font-semibold mb-6 shadow-sm">
+          <span className="w-2 h-2 rounded-full bg-[#00D084] animate-pulse"></span>
+          <span>Official Meta WhatsApp Business Solution Provider</span>
+        </div>
 
-                <div className="flex w-full flex-col gap-1 sm:gap-[5px]">
-                  <p className="text-[10px] sm:text-[12px] font-semibold text-zinc-400">Template</p>
-                  <div className="flex w-full items-center justify-between gap-2 rounded-xl border border-zinc-800 bg-zinc-900/80 p-2 sm:p-[10px]">
-                    <span className="text-[10px] sm:text-[11px] font-medium text-zinc-200 truncate">Winter sale · 50% off</span>
-                    <ChevronDown className="h-3 w-3 text-zinc-400 shrink-0" />
-                  </div>
-                </div>
+        {/* HERO TITLE */}
+        <h1 className="text-4xl sm:text-6xl lg:text-7xl font-display font-extrabold text-gray-900 tracking-tight leading-[1.1] max-w-4xl mx-auto">
+          The #1{' '}
+          <span className="relative inline-block text-emerald-600 px-3 py-0.5 rounded-2xl bg-emerald-100/70 border border-emerald-200/60 rotate-[-1deg]">
+            WhatsApp
+          </span>
+          <br className="hidden sm:inline" />{' '}
+          <span className="relative inline-block text-emerald-700 px-3 py-0.5 rounded-2xl bg-emerald-100/70 border border-emerald-200/60 rotate-[1deg] mt-1 sm:mt-0">
+            growth
+          </span>{' '}
+          platform
+        </h1>
 
-                <div className="flex flex-col gap-1 sm:gap-[5px]">
-                  <p className="text-[10px] sm:text-[12px] font-semibold text-zinc-400">Recipients</p>
-                  <div className="flex flex-wrap gap-1">
-                    {['Ryan', 'Laura', 'James', 'Mike', 'Joe'].map((name, i) => (
-                      <span key={i} className="rounded-md bg-zinc-800 px-2 py-0.5 text-[9px] font-medium text-zinc-200">{name}</span>
-                    ))}
-                    <span className="rounded-md border border-zinc-700 px-2 py-0.5 text-[9px] font-medium text-zinc-400">+1.236</span>
-                  </div>
-                </div>
+        {/* SUBTITLE */}
+        <p className="mt-6 text-lg sm:text-xl text-gray-600 max-w-2xl mx-auto leading-relaxed font-normal">
+          From the first marketing touchpoint through the sales cycle to ongoing customer success, 
+          Wati drives faster ROI with an easy-to-use, scalable AI-powered customer engagement platform.
+        </p>
 
-                <button 
-                  onClick={onStart}
-                  className="mt-auto flex w-full items-center justify-center rounded-xl bg-brand hover:bg-brand-hover p-2.5 transition-all shadow-lg shadow-brand/20"
-                >
-                  <span className="text-[11px] sm:text-[12px] font-bold text-white">Send broadcast</span>
-                </button>
-              </div>
+        {/* TRUST BADGES */}
+        <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4 mt-7">
+          <div className="px-4 py-2 rounded-full bg-white border border-gray-200 shadow-sm text-xs sm:text-sm font-medium text-gray-700 flex items-center gap-1.5">
+            <CheckCircle2 size={16} className="text-[#00D084]" />
+            <span>Trusted by 16,000+ businesses worldwide</span>
+          </div>
+
+          <div className="px-4 py-2 rounded-full bg-white border border-gray-200 shadow-sm text-xs sm:text-sm font-medium text-gray-700 flex items-center gap-1.5">
+            <div className="flex items-center text-amber-400">
+              <Star size={14} fill="currentColor" />
+              <Star size={14} fill="currentColor" />
+              <Star size={14} fill="currentColor" />
+              <Star size={14} fill="currentColor" />
+              <Star size={14} fill="currentColor" />
             </div>
-
-            {/* RIGHT IPHONE SCREEN MOCKUP */}
-            <div className="absolute right-2 sm:left-[240px] top-0 w-[200px] sm:w-[280px] h-[280px] sm:h-[390px] rounded-[32px] border-4 border-zinc-800 bg-zinc-950 overflow-hidden shadow-2xl z-0">
-              {/* STATUS BAR */}
-              <div className="flex items-center justify-between px-4 pt-2 pb-1 text-white text-[10px] font-semibold">
-                <span>09:41</span>
-                <div className="flex items-center gap-1.5 text-zinc-400">
-                  <SignalHigh className="w-2.5 h-2.5" />
-                  <Wifi className="w-2.5 h-2.5" />
-                  <BatteryFull className="w-3 h-3" />
-                </div>
-              </div>
-
-              {/* WHATSAPP CHAT HEADER */}
-              <div className="flex items-center justify-between px-3 py-2 bg-zinc-900 border-b border-zinc-800">
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-full bg-brand/20 border border-brand/40 flex items-center justify-center text-brand font-bold text-[10px]">R</div>
-                  <div>
-                    <p className="text-[11px] font-bold text-white leading-tight">Rockyt Brand</p>
-                    <p className="text-[8px] text-emerald-400 font-medium leading-tight">Official Business</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 text-zinc-400">
-                  <Video className="w-3.5 h-3.5" />
-                  <Phone className="w-3 h-3" />
-                </div>
-              </div>
-
-              {/* CHAT MESSAGES BODY */}
-              <div className="p-3 space-y-2.5 text-[10px]">
-                <div className="flex justify-center">
-                  <span className="bg-zinc-900 border border-zinc-800 rounded-full px-2 py-0.5 text-[8px] text-zinc-400">Sending to 2,847 recipients</span>
-                </div>
-
-                <div className="ml-auto max-w-[85%] bg-emerald-950/70 border border-emerald-800/50 rounded-2xl rounded-tr-none p-2.5 text-zinc-100 shadow-md">
-                  <p className="font-bold text-emerald-400 text-[10px] mb-1">Don't miss out!</p>
-                  <p className="text-zinc-300 leading-snug">Hi Marc, for the next 24 hours only, all winter jackets are 50% off.</p>
-                  <p className="text-brand font-medium mt-1">🛒 Shop: rockyt.io/sale</p>
-                  <div className="flex items-center justify-end gap-1 mt-1 text-[8px] text-zinc-400">
-                    <span>08:21</span>
-                    <Check className="w-2.5 h-2.5 text-brand" />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* FLOATING WHATSAPP LOGO BADGE */}
-            <div className="absolute left-[170px] sm:left-[215px] top-[240px] sm:top-[310px] z-20 w-12 h-12 sm:w-16 sm:h-16 rounded-2xl bg-brand p-3 shadow-2xl flex items-center justify-center border border-brand/50">
-              <svg className="h-full w-full text-white fill-current" viewBox="0 0 24 24">
-                <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"></path>
-              </svg>
-            </div>
-
+            <span className="font-bold text-gray-900">4.6/5</span>
+            <span className="text-gray-500">on G2 Leader 2026</span>
           </div>
         </div>
 
-        {/* HERO COPY - EXACT ZERNIO WORDING */}
-        <div className="w-full text-center max-w-3xl">
-          <h1 className="font-semibold text-white text-[clamp(1.85rem,6vw,3.75rem)] leading-[1.08] tracking-[-0.035em] mb-5">
-            Ship WhatsApp integration<br className="hidden sm:block" /> in minutes, not months
-          </h1>
+        {/* CTAS */}
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-3.5 mt-8">
+          <button
+            onClick={onStart}
+            className="w-full sm:w-auto px-8 py-3.5 rounded-full border border-gray-300 text-gray-800 hover:border-gray-400 bg-white hover:bg-gray-50 font-semibold text-base shadow-sm transition-all flex items-center justify-center gap-2"
+          >
+            <span>Book a Demo</span>
+          </button>
 
-          <p className="mx-auto max-w-2xl text-base sm:text-lg leading-relaxed font-medium text-zinc-400 mb-8">
-            One REST API for WhatsApp Business. Messaging, broadcasts, calling, and ads through one bearer token.
-          </p>
+          <button
+            onClick={onStart}
+            className="w-full sm:w-auto px-9 py-3.5 rounded-full bg-[#00D084] text-[#07301f] hover:bg-[#00be77] font-bold text-base shadow-lg shadow-emerald-500/25 hover:shadow-xl hover:shadow-emerald-500/35 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+          >
+            <span>Try for Free</span>
+            <ArrowRight size={18} />
+          </button>
+        </div>
 
-          {/* CTAs */}
-          <div className="flex flex-wrap items-center justify-center gap-3 mb-8">
+        <div className="mt-3 text-xs text-gray-500 font-medium">
+          ✓ 7-day free trial • No credit card required • 2-minute setup
+        </div>
+
+        {/* ─── INTERACTIVE TABBED SHOWCASE (Marketing, Sales, Support) ─── */}
+        <div className="mt-14 sm:mt-18 max-w-5xl mx-auto" id="video-tabbed-section">
+          
+          {/* TABS SWITCHER */}
+          <div className="inline-flex p-1.5 rounded-full bg-gray-100/90 border border-gray-200/80 mb-6 shadow-inner">
             <button
-              onClick={onStart}
-              className="inline-flex items-center justify-center gap-2 rounded-xl font-bold px-6 py-3.5 text-base bg-brand text-white hover:bg-brand-hover transition-all shadow-lg shadow-brand/25"
+              onClick={() => setActiveTab('marketing')}
+              className={`px-6 sm:px-8 py-2.5 rounded-full text-sm font-semibold transition-all cursor-pointer ${
+                activeTab === 'marketing'
+                  ? 'bg-white text-gray-900 shadow-md border border-gray-200/50'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
             >
-              Start for free
+              Marketing
             </button>
-            <a
-              href="/docs"
-              className="inline-flex items-center justify-center gap-2 rounded-xl font-bold px-6 py-3.5 text-base border border-zinc-800 bg-zinc-900/80 text-white hover:bg-zinc-800 transition-colors"
+            <button
+              onClick={() => setActiveTab('sales')}
+              className={`px-6 sm:px-8 py-2.5 rounded-full text-sm font-semibold transition-all cursor-pointer ${
+                activeTab === 'sales'
+                  ? 'bg-white text-gray-900 shadow-md border border-gray-200/50'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
             >
-              Read the docs
-            </a>
+              Sales
+            </button>
+            <button
+              onClick={() => setActiveTab('support')}
+              className={`px-6 sm:px-8 py-2.5 rounded-full text-sm font-semibold transition-all cursor-pointer ${
+                activeTab === 'support'
+                  ? 'bg-white text-gray-900 shadow-md border border-gray-200/50'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              Support
+            </button>
           </div>
 
-          {/* COMPLIANCE & PERFORMANCE PILLS */}
-          <div className="flex flex-wrap items-center justify-center gap-2 mb-8">
-            {['SOC 2', 'GDPR compliant', '99.97% uptime', 'Under 50ms response'].map((badge, idx) => (
-              <span 
-                key={idx} 
-                className="whitespace-nowrap rounded-full bg-brand/10 border border-brand/20 px-3 py-1 font-mono text-xs font-semibold text-brand"
-              >
-                {badge}
-              </span>
-            ))}
-          </div>
+          {/* TAB CONTENT CARDS */}
+          <div className="bg-white rounded-3xl border border-gray-200/90 shadow-2xl p-4 sm:p-8 text-left relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-80 h-80 bg-emerald-100/40 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20"></div>
 
-          {/* META BUSINESS PARTNER BADGE */}
-          <div className="flex items-center justify-center gap-2 text-xs font-semibold text-zinc-400">
-            <div className="flex items-center gap-2 px-4 py-1.5 rounded-full border border-zinc-800 bg-zinc-900/60">
-              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-              <span>Official Meta Business Partner &amp; WhatsApp Cloud API</span>
-            </div>
+            {/* TAB 1: MARKETING */}
+            {activeTab === 'marketing' && (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+                <div className="lg:col-span-5 space-y-4">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-bold uppercase tracking-wider">
+                    <Send size={12} /> Broadcast Campaigns
+                  </div>
+                  <h3 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">
+                    Drive 4x higher revenue with personalized broadcasts
+                  </h3>
+                  <p className="text-sm text-gray-600 leading-relaxed">
+                    Launch segmented promotional WhatsApp campaigns to thousands of verified contacts in seconds with rich media, discount buttons, and automatic opt-out handling.
+                  </p>
+                  
+                  <div className="grid grid-cols-3 gap-3 pt-2">
+                    <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
+                      <div className="text-xl font-extrabold text-emerald-600">98%</div>
+                      <div className="text-[11px] text-gray-500 font-medium mt-0.5">Open Rate</div>
+                    </div>
+                    <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
+                      <div className="text-xl font-extrabold text-emerald-600">45%</div>
+                      <div className="text-[11px] text-gray-500 font-medium mt-0.5">Click-through</div>
+                    </div>
+                    <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
+                      <div className="text-xl font-extrabold text-emerald-600">3.8x</div>
+                      <div className="text-[11px] text-gray-500 font-medium mt-0.5">ROAS Boost</div>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={onStart}
+                    className="mt-2 text-sm font-bold text-emerald-600 hover:text-emerald-700 flex items-center gap-1.5 group"
+                  >
+                    <span>Create your first broadcast</span>
+                    <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />
+                  </button>
+                </div>
+
+                {/* VISUAL PREVIEW MOCKUP */}
+                <div className="lg:col-span-7 bg-[#f0f2f5] p-4 sm:p-6 rounded-2xl border border-gray-200">
+                  <div className="bg-white rounded-xl shadow-md p-4 max-w-sm mx-auto border border-gray-200/80">
+                    <div className="flex items-center justify-between pb-3 border-b border-gray-100 mb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-full bg-emerald-500 text-white font-bold text-xs flex items-center justify-center">
+                          W
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-gray-900 flex items-center gap-1">
+                            Wati Official Store
+                            <CheckCheck size={12} className="text-blue-500" />
+                          </div>
+                          <div className="text-[10px] text-emerald-600">Online • Official Business</div>
+                        </div>
+                      </div>
+                      <span className="text-[10px] text-gray-400">10:42 AM</span>
+                    </div>
+
+                    <div className="bg-emerald-50/70 p-3 rounded-xl border border-emerald-100 text-xs text-gray-800 space-y-2">
+                      <div className="font-bold text-emerald-900">🎉 Exclusive VIP Flash Sale</div>
+                      <p>Hey Moamen! Get 25% off all summer collections with code <strong>VIP25</strong> today only.</p>
+                      <div className="pt-1 flex flex-col gap-1.5">
+                        <button className="w-full py-2 bg-[#00D084] text-[#07301f] rounded-lg font-bold text-xs text-center shadow-sm">
+                          🛍️ Shop Collection (25% OFF)
+                        </button>
+                        <button className="w-full py-1.5 bg-white border border-gray-200 text-gray-700 rounded-lg text-[11px] text-center">
+                          Chat with Stylist
+                        </button>
+                      </div>
+                    </div>
+                    
+                    <div className="mt-3 flex items-center justify-between text-[11px] text-gray-400 pt-2 border-t border-gray-100">
+                      <span>✓✓ Read by recipient</span>
+                      <span className="text-emerald-600 font-semibold">12,450 sent • 0 failed</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 2: SALES */}
+            {activeTab === 'sales' && (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+                <div className="lg:col-span-5 space-y-4">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-bold uppercase tracking-wider">
+                    <Zap size={12} /> Lead Capture &amp; CTWA Ads
+                  </div>
+                  <h3 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">
+                    Turn Meta ads clicks into qualified buyers instantly
+                  </h3>
+                  <p className="text-sm text-gray-600 leading-relaxed">
+                    Connect Instagram &amp; Facebook ads straight into conversational WhatsApp funnels. Qualify leads with automated questions and assign to agents in real time.
+                  </p>
+
+                  <div className="grid grid-cols-3 gap-3 pt-2">
+                    <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
+                      <div className="text-xl font-extrabold text-blue-600">&lt;30s</div>
+                      <div className="text-[11px] text-gray-500 font-medium mt-0.5">Response Time</div>
+                    </div>
+                    <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
+                      <div className="text-xl font-extrabold text-blue-600">+68%</div>
+                      <div className="text-[11px] text-gray-500 font-medium mt-0.5">Conversion Rate</div>
+                    </div>
+                    <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
+                      <div className="text-xl font-extrabold text-blue-600">100%</div>
+                      <div className="text-[11px] text-gray-500 font-medium mt-0.5">CRM Sync</div>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={onStart}
+                    className="mt-2 text-sm font-bold text-emerald-600 hover:text-emerald-700 flex items-center gap-1.5 group"
+                  >
+                    <span>Launch WhatsApp ad funnel</span>
+                    <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />
+                  </button>
+                </div>
+
+                <div className="lg:col-span-7 bg-[#f0f2f5] p-4 sm:p-6 rounded-2xl border border-gray-200">
+                  <div className="bg-white rounded-xl shadow-md p-4 max-w-sm mx-auto border border-gray-200/80 space-y-3">
+                    <div className="flex items-center gap-2 pb-2 border-b border-gray-100">
+                      <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                      <span className="text-xs font-bold text-gray-900">Lead Inbound from Instagram Ad #492</span>
+                    </div>
+
+                    <div className="bg-gray-50 p-2.5 rounded-lg text-xs text-gray-700">
+                      <div className="text-[10px] text-gray-400 uppercase font-bold">Auto-Qualification Bot</div>
+                      <p className="mt-1">"What size team do you currently have?"</p>
+                      <div className="mt-1.5 inline-block px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-md font-semibold text-[11px]">
+                        Customer selected: "10-50 agents"
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Users size={14} className="text-emerald-600" />
+                        <div>
+                          <div className="font-bold text-emerald-900">Assigned to Account Exec</div>
+                          <div className="text-[10px] text-emerald-700">HubSpot deal created: $2,400 MRR</div>
+                        </div>
+                      </div>
+                      <span className="text-[10px] bg-emerald-200/80 px-2 py-0.5 rounded text-emerald-900 font-bold">LIVE</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 3: SUPPORT */}
+            {activeTab === 'support' && (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+                <div className="lg:col-span-5 space-y-4">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-50 text-purple-700 text-xs font-bold uppercase tracking-wider">
+                    <Bot size={12} /> Astra AI Customer Agent
+                  </div>
+                  <h3 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">
+                    Resolve 70% of support tickets automatically 24/7
+                  </h3>
+                  <p className="text-sm text-gray-600 leading-relaxed">
+                    Deploy an intelligent AI agent trained on your knowledge base. Astra answers customer inquiries instantly with perfect brand tone and escalates complex issues effortlessly.
+                  </p>
+
+                  <div className="grid grid-cols-3 gap-3 pt-2">
+                    <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
+                      <div className="text-xl font-extrabold text-purple-600">3.2s</div>
+                      <div className="text-[11px] text-gray-500 font-medium mt-0.5">Avg Resolution</div>
+                    </div>
+                    <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
+                      <div className="text-xl font-extrabold text-purple-600">72%</div>
+                      <div className="text-[11px] text-gray-500 font-medium mt-0.5">Deflection Rate</div>
+                    </div>
+                    <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
+                      <div className="text-xl font-extrabold text-purple-600">24/7</div>
+                      <div className="text-[11px] text-gray-500 font-medium mt-0.5">Availability</div>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={onStart}
+                    className="mt-2 text-sm font-bold text-emerald-600 hover:text-emerald-700 flex items-center gap-1.5 group"
+                  >
+                    <span>Test your Astra AI agent</span>
+                    <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />
+                  </button>
+                </div>
+
+                <div className="lg:col-span-7 bg-[#f0f2f5] p-4 sm:p-6 rounded-2xl border border-gray-200">
+                  <div className="bg-white rounded-xl shadow-md p-4 max-w-sm mx-auto border border-gray-200/80 space-y-3">
+                    <div className="flex items-center gap-2 pb-2 border-b border-gray-100">
+                      <Sparkles size={14} className="text-purple-600" />
+                      <span className="text-xs font-bold text-gray-900">Astra AI Support Session</span>
+                      <span className="ml-auto text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-bold">Autonomous</span>
+                    </div>
+
+                    <div className="bg-gray-100 p-2.5 rounded-xl text-xs text-gray-800 ml-6">
+                      <div className="text-[10px] text-gray-400">Customer</div>
+                      "Where is order #WT-9481? Can I reschedule delivery for Friday?"
+                    </div>
+
+                    <div className="bg-emerald-50 p-2.5 rounded-xl text-xs text-gray-900 mr-4 border border-emerald-200/70">
+                      <div className="text-[10px] text-emerald-700 font-bold flex items-center gap-1">
+                        <Bot size={10} /> Astra AI Agent
+                      </div>
+                      <p className="mt-1">
+                        "Your package is out for delivery! I have updated your delivery slot to <strong>Friday, 2 PM - 5 PM</strong> with courier tracking link: wati.delivery/9481"
+                      </p>
+                    </div>
+
+                    <div className="text-[11px] text-emerald-700 font-semibold text-center bg-emerald-50/50 py-1.5 rounded-lg">
+                      ✓ Resolved in 2.8 seconds • CSAT 5/5 ⭐
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
           </div>
 
         </div>

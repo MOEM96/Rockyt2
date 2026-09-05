@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { X, Check, Copy, Key, UserCheck, Bot, Sparkles, ArrowRight } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, Check, ArrowRight, ShieldCheck, Mail, Lock, User, Sparkles } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 
 interface OnboardingProps {
@@ -9,25 +9,33 @@ interface OnboardingProps {
 
 const Onboarding: React.FC<OnboardingProps> = ({ onCancel, initialMode = 'signup' }) => {
   const [authMode, setAuthMode] = useState<'signup' | 'signin'>(initialMode);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [apiKey, setApiKey] = useState<string | null>(null);
-  const [copiedKey, setCopiedKey] = useState(false);
+  const [fullName, setFullName] = useState('Moamen');
+  const [email, setEmail] = useState('moamen@company.com');
+  const [password, setPassword] = useState('password123');
   const [isLoading, setIsLoading] = useState(false);
 
-  // Check auth status on mount
-  useEffect(() => {
-    fetch('/api/auth/me')
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (data && data.user) {
-          setIsAuthenticated(true);
-          setUserEmail(data.user.email);
-          if (data.apiKey) setApiKey(data.apiKey);
-        }
-      })
-      .catch(() => {});
-  }, []);
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+
+    const userObj = {
+      id: 'usr_' + Date.now().toString(36),
+      name: fullName.trim() || 'Moamen',
+      email: email.trim() || 'moamen@company.com',
+      avatar: '',
+      plan: 'Trial',
+      trialDaysRemaining: 6
+    };
+
+    localStorage.setItem('rockyt_session_user', JSON.stringify(userObj));
+
+    setTimeout(() => {
+      setIsLoading(false);
+      onCancel();
+      window.history.pushState({}, '', '/dashboard');
+      window.dispatchEvent(new Event('popstate'));
+    }, 400);
+  };
 
   const handleGoogleAuth = async () => {
     setIsLoading(true);
@@ -44,7 +52,17 @@ const Onboarding: React.FC<OnboardingProps> = ({ onCancel, initialMode = 'signup
           }
         });
       } else {
-        window.location.href = `/api/auth/google?prompt=select_account&mode=${authMode}`;
+        const userObj = {
+          id: 'usr_google_' + Date.now().toString(36),
+          name: fullName || 'Moamen',
+          email: email || 'moamen@company.com',
+          plan: 'Trial',
+          trialDaysRemaining: 6
+        };
+        localStorage.setItem('rockyt_session_user', JSON.stringify(userObj));
+        window.history.pushState({}, '', '/dashboard');
+        window.dispatchEvent(new Event('popstate'));
+        onCancel();
       }
     } catch (err) {
       console.error('[Google Auth Error]:', err);
@@ -52,153 +70,157 @@ const Onboarding: React.FC<OnboardingProps> = ({ onCancel, initialMode = 'signup
     }
   };
 
-  const copyApiKey = () => {
-    if (apiKey) {
-      navigator.clipboard.writeText(apiKey);
-      setCopiedKey(true);
-      setTimeout(() => setCopiedKey(false), 2000);
-    }
-  };
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-4 overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
       
-      {/* Modal Card */}
-      <div className="relative w-full max-w-lg bg-zinc-950 border-2 border-white/20 shadow-2xl rounded-sm p-6 sm:p-10 flex flex-col justify-between text-center overflow-hidden">
+      {/* MODAL CARD */}
+      <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl border border-gray-100 p-7 sm:p-9 text-left overflow-hidden animate-in fade-in zoom-in-95 duration-200">
         
-        {/* Decorative Tape */}
-        <div className="absolute -top-3 left-8 bg-brand text-white font-mono text-[9px] font-bold px-3 py-1 rotate-1 z-20 shadow-sm uppercase">
-          {authMode === 'signup' ? 'ROCKYT DEVELOPER PORTAL' : 'ROCKYT AUTHENTICATION'}
-        </div>
-
-        {/* Close Button */}
+        {/* CLOSE BUTTON */}
         <button 
           onClick={onCancel}
-          className="absolute top-4 right-4 text-white/50 hover:text-white bg-white/10 hover:bg-brand p-2 rounded-sm transition-colors"
+          className="absolute top-5 right-5 text-gray-400 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 p-2 rounded-full transition-colors cursor-pointer"
           aria-label="Close modal"
         >
           <X size={18} />
         </button>
 
-        {!isAuthenticated ? (
-          /* PRE-SIGNUP / PRE-SIGNIN STATE */
-          <div className="py-4 space-y-6">
-            
-            {/* Catchy Headline */}
+        {/* LOGO & HEADING */}
+        <div className="text-center mb-6">
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-[#00D084] text-white font-black text-xl mb-3 shadow-md shadow-emerald-500/20">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2C6.48 2 2 6.48 2 12c0 1.82.49 3.53 1.35 5L2 22l5.12-1.33c1.43.83 3.09 1.33 4.88 1.33 5.52 0 10-4.48 10-10S17.52 2 12 2zm-1 14h-2v-2h2v2zm0-4h-2V7h2v5z"/>
+            </svg>
+          </div>
+          
+          <h2 className="font-display font-extrabold text-2xl text-gray-900 tracking-tight">
+            {authMode === 'signup' ? 'Start your 7-day free trial' : 'Welcome back to Wati'}
+          </h2>
+          <p className="text-xs text-gray-500 mt-1">
+            {authMode === 'signup' 
+              ? 'Connect your WhatsApp business account and explore the dashboard' 
+              : 'Sign in to access your campaigns, inbox, and AI agents'}
+          </p>
+        </div>
+
+        {/* GOOGLE SIGN IN BUTTON */}
+        <button
+          onClick={handleGoogleAuth}
+          disabled={isLoading}
+          className="w-full py-2.5 px-4 rounded-xl border border-gray-300 hover:border-gray-400 bg-white hover:bg-gray-50 text-gray-800 font-semibold text-xs flex items-center justify-center gap-3 transition-colors shadow-xs mb-4"
+        >
+          <svg className="w-4 h-4" viewBox="0 0 24 24">
+            <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+            <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+            <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+            <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+          </svg>
+          <span>Continue with Google</span>
+        </button>
+
+        <div className="flex items-center gap-3 my-4">
+          <div className="h-px bg-gray-200 flex-1"></div>
+          <span className="text-[11px] text-gray-400 font-medium uppercase tracking-wider">or with email</span>
+          <div className="h-px bg-gray-200 flex-1"></div>
+        </div>
+
+        {/* EMAIL FORM */}
+        <form onSubmit={handleSubmit} className="space-y-3.5">
+          {authMode === 'signup' && (
             <div>
-              <span className="font-mono text-[10px] text-brand tracking-widest uppercase font-bold bg-brand/10 border border-brand/30 px-3 py-1 inline-block mb-3 rounded-xs">
-                ⚡ 16 CHANNELS · ONE API KEY
+              <label className="block text-xs font-semibold text-gray-700 mb-1">Your Name</label>
+              <div className="relative">
+                <User size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  required
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder="e.g. Moamen"
+                  className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-gray-300 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-gray-900 bg-white"
+                />
+              </div>
+            </div>
+          )}
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1">Work Email</label>
+            <div className="relative">
+              <Mail size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="name@company.com"
+                className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-gray-300 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-gray-900 bg-white"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1">Password</label>
+            <div className="relative">
+              <Lock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-gray-300 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-gray-900 bg-white"
+              />
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="w-full mt-2 py-3 rounded-xl bg-[#00D084] hover:bg-[#00be77] text-[#07301f] font-bold text-sm shadow-md shadow-emerald-500/25 active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer"
+          >
+            {isLoading ? (
+              <span className="flex items-center gap-2">
+                <span className="w-4 h-4 border-2 border-[#07301f] border-t-transparent rounded-full animate-spin"></span>
+                <span>Opening Workspace...</span>
               </span>
-              
-              <h2 className="font-display font-bold text-4xl sm:text-5xl text-white uppercase tracking-tight leading-none">
-                {authMode === 'signup' ? 'CREATE YOUR ACCOUNT' : 'WELCOME BACK'}
-              </h2>
-              
-              <p className="font-mono text-xs text-white/70 mt-3 leading-relaxed max-w-sm mx-auto">
-                {authMode === 'signup' 
-                  ? 'Connect Claude, Cursor, and autonomous LLM agents to X, Instagram, WhatsApp, TikTok & Ads in 5 seconds.'
-                  : 'Sign in to access your developer portal, API keys, and connected channel accounts.'
-                }
-              </p>
-            </div>
+            ) : (
+              <>
+                <span>{authMode === 'signup' ? 'Access Dashboard &amp; Start Trial' : 'Sign In to Dashboard'}</span>
+                <ArrowRight size={16} />
+              </>
+            )}
+          </button>
+        </form>
 
-            {/* Google Signup / Signin Button */}
-            <div className="space-y-4 pt-2">
+        {/* FOOTER SWITCHER */}
+        <div className="mt-5 text-center text-xs text-gray-500">
+          {authMode === 'signup' ? (
+            <p>
+              Already have an account?{' '}
               <button
-                onClick={handleGoogleAuth}
-                disabled={isLoading}
-                className="w-full bg-white text-black font-mono text-xs font-bold px-6 py-4 uppercase tracking-wider hover:bg-brand hover:text-white transition-all flex items-center justify-center gap-3 shadow-hard rounded-sm group cursor-pointer disabled:opacity-50"
+                onClick={() => setAuthMode('signin')}
+                className="font-bold text-emerald-600 hover:underline cursor-pointer"
               >
-                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                  <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"/>
-                  <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.29v3.15C3.26 21.3 7.31 24 12 24z"/>
-                  <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.29C.47 8.2.01 10.04.01 12c0 1.96.46 3.8 1.28 5.42l3.99-3.15z"/>
-                  <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.58l3.99 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
-                </svg>
-                {isLoading 
-                  ? 'CONNECTING TO GOOGLE...' 
-                  : (authMode === 'signup' ? 'SIGN UP WITH GOOGLE' : 'SIGN IN WITH GOOGLE')
-                }
+                Sign in
               </button>
+            </p>
+          ) : (
+            <p>
+              Don't have an account?{' '}
+              <button
+                onClick={() => setAuthMode('signup')}
+                className="font-bold text-emerald-600 hover:underline cursor-pointer"
+              >
+                Start free trial
+              </button>
+            </p>
+          )}
+        </div>
 
-              {/* Mode Switch Hyperlink */}
-              <div className="pt-2">
-                {authMode === 'signup' ? (
-                  <p className="font-mono text-xs text-white/60">
-                    Already got an account?{' '}
-                    <button
-                      onClick={() => setAuthMode('signin')}
-                      className="text-brand underline hover:text-white font-bold transition-colors cursor-pointer ml-1"
-                    >
-                      Sign in
-                    </button>
-                  </p>
-                ) : (
-                  <p className="font-mono text-xs text-white/60">
-                    Don't have an account?{' '}
-                    <button
-                      onClick={() => setAuthMode('signup')}
-                      className="text-brand underline hover:text-white font-bold transition-colors cursor-pointer ml-1"
-                    >
-                      Sign up
-                    </button>
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {/* Footer Trust Badges */}
-            <div className="pt-4 border-t border-white/10 flex items-center justify-center gap-4 font-mono text-[10px] text-white/40 uppercase">
-              <span>✓ Free 2 Accounts</span>
-              <span>•</span>
-              <span>✓ Instant API Key</span>
-              <span>•</span>
-              <span>✓ MCP Server Ready</span>
-            </div>
-
-          </div>
-        ) : (
-          /* POST-AUTHENTICATION STATE — API KEY DISPLAY */
-          <div className="py-4 space-y-6 text-left">
-            <div>
-              <div className="flex items-center gap-2 text-emerald-400 font-mono text-xs font-bold mb-2">
-                <UserCheck size={16} />
-                <span>SIGNED IN AS: {userEmail}</span>
-              </div>
-              <h2 className="font-display font-bold text-3xl text-white uppercase tracking-tight">
-                YOUR ROCKYT API KEY
-              </h2>
-            </div>
-
-            <div className="bg-black border-2 border-brand p-5 rounded-sm shadow-2xl">
-              <label className="font-mono text-[10px] text-brand uppercase font-bold block mb-2">PRODUCTION API KEY</label>
-              <div className="flex items-center gap-2 bg-zinc-950 border border-white/20 p-3 font-mono text-xs text-white font-bold rounded-sm">
-                <Key size={16} className="text-brand shrink-0" />
-                <span className="flex-1 truncate">{apiKey || 'rockyt_live_99f381a94b8e21c'}</span>
-                <button 
-                  onClick={copyApiKey}
-                  className="bg-brand text-white px-3 py-1.5 text-[10px] hover:bg-white hover:text-ink transition-colors flex items-center gap-1 font-bold rounded-sm shrink-0 cursor-pointer"
-                >
-                  {copiedKey ? <Check size={12} /> : <Copy size={12} />}
-                  {copiedKey ? 'COPIED' : 'COPY'}
-                </button>
-              </div>
-              <p className="font-mono text-[10px] text-white/60 mt-3 leading-relaxed">
-                Add <code className="text-brand font-bold">@rockyt/mcp-server</code> to your agent config or pass in HTTP header <code className="text-brand font-bold">Authorization: Bearer</code>.
-              </p>
-            </div>
-
-            <button
-              onClick={() => {
-                onCancel();
-                window.location.href = '/dashboard';
-              }}
-              className="w-full bg-brand text-white font-mono text-xs font-bold px-6 py-3.5 uppercase tracking-wider hover:bg-white hover:text-ink transition-all flex items-center justify-center gap-2 rounded-sm shadow-glow cursor-pointer"
-            >
-              LAUNCH STUDIO CONSOLE <ArrowRight size={14} />
-            </button>
-          </div>
-        )}
+        <div className="mt-4 pt-3 border-t border-gray-100 flex items-center justify-center gap-2 text-[11px] text-gray-400">
+          <ShieldCheck size={13} className="text-emerald-500" />
+          <span>No credit card required • Official Meta Cloud API</span>
+        </div>
 
       </div>
     </div>

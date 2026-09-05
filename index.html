@@ -1,45 +1,24 @@
 <!DOCTYPE html>
-<html lang="en" class="scroll-smooth bg-[#050505] text-white">
+<html lang="en" class="scroll-smooth bg-[#fafbfc] text-[#111827]">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
-    <title>ROCKYT.IO // Social Media, Messaging &amp; Ads API for AI Agents &amp; Developers</title>
+    <title>Wati | #1 AI-powered Customer Engagement &amp; WhatsApp Growth Platform</title>
     
     <!-- FAVICON -->
-    <link rel="icon" type="image/svg+xml" href="/rockyt-icon.svg" />
-    <link rel="alternate icon" href="/favicon.ico" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2300D084'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12c0 1.85.5 3.58 1.38 5.07L2 22l5.07-1.35C8.52 21.5 10.21 22 12 22c5.52 0 10-4.48 10-10S17.52 2 12 2zm-1 14h-2v-2h2v2zm0-4h-2V7h2v5z'/%3E%3C/svg%3E" />
 
     <!-- PRIMARY META TAGS -->
-    <meta name="title" content="ROCKYT.IO // Social Media, Messaging &amp; Ads API for AI Agents &amp; Developers" />
-    <meta name="description" content="Unified social media, WhatsApp messaging, and Meta/Google ads API for AI Agents and developers. Post, message, and market across 16 channels with one REST API or MCP tool call." />
-    <meta name="keywords" content="Rockyt API, Rockyt.io, AI Agents API, Model Context Protocol, MCP server, social media api, messaging api, whatsapp api, instagram api, twitter api, tiktok api, linkedin api, meta ads api" />
-    <meta name="author" content="Rockyt Inc." />
+    <meta name="title" content="Wati | #1 AI-powered Customer Engagement &amp; WhatsApp Growth Platform" />
+    <meta name="description" content="AI-powered customer engagement platform turning WhatsApp, Instagram &amp; Messenger into revenue. Trusted by 16,000+ businesses in 190+ countries." />
+    <meta name="keywords" content="Wati, WhatsApp API, WhatsApp Business, AI Agent, Customer Engagement, Team Inbox, Broadcast, Click to WhatsApp Ads" />
+    <meta name="author" content="Wati.io" />
     <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
-    <link rel="canonical" href="https://rockyt.io" />
 
-    <!-- OPEN GRAPH / FACEBOOK -->
-    <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://rockyt.io" />
-    <meta property="og:title" content="ROCKYT.IO // Social Media &amp; Messaging API for AI Agents &amp; Developers" />
-    <meta property="og:description" content="Ship in minutes instead of months. One API to publish, message, advertise, and analyze across 16 channels. Native MCP Server for AI Agents." />
-    <meta property="og:image" content="https://rockyt.io/rockyt-icon.svg" />
-    <meta property="og:site_name" content="Rockyt" />
-    <meta property="og:locale" content="en_US" />
-
-    <!-- TWITTER / X -->
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:url" content="https://rockyt.io" />
-    <meta name="twitter:title" content="ROCKYT.IO // Social Media &amp; Messaging API for AI Agents &amp; Developers" />
-    <meta name="twitter:description" content="Unified social media, WhatsApp messaging, and Meta/Google ads API for AI Agents and developers." />
-    <meta name="twitter:image" content="https://rockyt.io/rockyt-icon.svg" />
-
-    <!-- AI & LLM DIRECTIVES -->
-    <link rel="alternate" type="text/plain" title="LLM Machine Readable Spec" href="https://rockyt.io/llms-full.txt" />
-
-    <!-- FONTS -->
+    <!-- FONTS (DM Sans, Inter, Outfit) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Oswald:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     
     <!-- TAILWIND -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -48,70 +27,41 @@
         theme: {
           extend: {
             colors: {
-              paper: '#F0F0F2',
-              ink: '#111111',
-              brand: '#D35D88',
-              zinc: { 900: '#18181b' }
+              brand: {
+                DEFAULT: '#00D084',
+                50: '#ecfdf5',
+                100: '#d1fae5',
+                200: '#a7f3d0',
+                300: '#6ee7b7',
+                400: '#34d399',
+                500: '#00D084',
+                600: '#059669',
+                700: '#047857',
+                800: '#065f46',
+                900: '#064e3b',
+                dark: '#0f291e',
+                light: '#e6f9f0'
+              },
+              dark: '#111827',
+              muted: '#6b7280'
             },
             fontFamily: {
-              sans: ['Inter', 'sans-serif'],
-              display: ['Oswald', 'sans-serif'],
-              mono: ['IBM Plex Mono', 'monospace'],
+              sans: ['"DM Sans"', 'Inter', 'system-ui', 'sans-serif'],
+              display: ['Outfit', '"DM Sans"', 'sans-serif'],
+              mono: ['"IBM Plex Mono"', 'monospace'],
             },
             boxShadow: {
-              hard: '8px 8px 0px 0px #111111',
-              tape: '0 2px 4px rgba(0,0,0,0.2)',
-              glow: '0 0 20px rgba(211, 93, 136, 0.5)'
-            },
-            animation: {
-              flicker: 'flicker 0.2s infinite alternate',
-              'spin-slow': 'spin 8s linear infinite'
-            },
-            keyframes: {
-              flicker: {
-                '0%': { opacity: 1 },
-                '100%': { opacity: 0.8 }
-              }
+              card: '0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.05)',
+              elevated: '0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.02)',
+              brand: '0 8px 20px -4px rgba(0, 208, 132, 0.35)',
             }
           }
         }
       }
     </script>
     <link rel="stylesheet" href="/index.css" />
-
-    <!-- JSON-LD STRUCTURED DATA FOR SEO & AEO (AI SEARCH ENGINES) -->
-    <script type="application/ld+json">
-    [
-      {
-        "@context": "https://schema.org",
-        "@type": "SoftwareApplication",
-        "name": "Rockyt Unified API",
-        "operatingSystem": "All",
-        "applicationCategory": "DeveloperApplication",
-        "description": "Unified social media, WhatsApp messaging, and Meta/Google ads API for developers and AI agents.",
-        "url": "https://rockyt.io",
-        "offers": {
-          "@type": "Offer",
-          "price": "0.00",
-          "priceCurrency": "USD",
-          "description": "Free for up to 2 connected accounts"
-        }
-      },
-      {
-        "@context": "https://schema.org",
-        "@type": "Organization",
-        "name": "Rockyt Inc.",
-        "url": "https://rockyt.io",
-        "logo": "https://rockyt.io/rockyt-icon.svg",
-        "sameAs": [
-          "https://x.com/rockyt_io",
-          "https://github.com/rockyt"
-        ]
-      }
-    ]
-    </script>
   </head>
-  <body class="antialiased selection:bg-brand selection:text-white relative bg-[#050505] text-white min-h-screen">
+  <body class="antialiased selection:bg-[#00D084] selection:text-white relative bg-[#fafbfc] text-[#111827] min-h-screen">
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
   </body>

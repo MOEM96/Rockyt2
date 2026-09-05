@@ -200,12 +200,6 @@ const App: React.FC = () => {
 
   return (
     <>
-      {/* GLOBAL NOISE OVERLAY */}
-      <div className="noise-overlay"></div>
-
-      {/* WEBGL BACKGROUND (Interactive 3D Tunnel) */}
-      <TunnelBackground />
-
       {/* NAVIGATION BAR */}
       {!isDashboardRoute && (
         <Navbar 
@@ -217,7 +211,7 @@ const App: React.FC = () => {
       )}
 
       {/* MAIN VIEW / ONBOARDING / PLATFORM ROUTE / DOCS ROUTE / DASHBOARD ROUTE */}
-      <Suspense fallback={<div className="min-h-screen bg-black flex items-center justify-center font-mono text-brand text-xs font-bold relative z-30">LOADING ROCKYT WHATSAPP CLOUD...</div>}>
+      <Suspense fallback={<div className="min-h-screen bg-white flex items-center justify-center font-sans text-emerald-600 text-sm font-bold">LOADING WATI WORKSPACE...</div>}>
         {isDashboardRoute ? (
           <WhatsAppDashboard 
             userSession={userSession} 
@@ -226,7 +220,7 @@ const App: React.FC = () => {
           />
         ) : (currentPath === '/dashboard' && !userSession) ? (
           <WhatsAppDashboard 
-            userSession={{ name: 'Demo Workspace', email: 'demo@rockyt.io' }} 
+            userSession={{ name: 'Moamen', email: 'moamen@company.com' }} 
             onBackHome={() => navigateTo('/')} 
             onSignOut={handleSignOut}
           />
@@ -256,7 +250,7 @@ const App: React.FC = () => {
             <Footer onStartOnboarding={startOnboarding} onNavigateToPath={navigateTo} />
           </>
         ) : (
-          <main className="relative z-10 w-full transition-opacity duration-1000">
+          <main className="relative z-10 w-full transition-opacity duration-500 bg-[#fafbfc]">
             <Hero onStart={startOnboarding} />
             <PartnerLogos />
             <WhyRockyt />

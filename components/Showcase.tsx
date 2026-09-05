@@ -8,113 +8,67 @@ interface ShowcaseProps {
 const Showcase: React.FC<ShowcaseProps> = ({ onStartOnboarding }) => {
   const featureList = [
     {
-      icon: <MessageSquare className="w-5 h-5 text-brand" />,
-      title: "Messaging",
-      description: "Send to one person, a group chat, or a broadcast to thousands. Schedule it, track delivery per recipient, cancel before it sends."
+      icon: <MessageSquare className="w-5 h-5 text-emerald-600" />,
+      title: "Messaging & Broadcasts",
+      description: "Send to one person, a segmented group, or broadcast to thousands. Schedule delivery, track reads per recipient, and auto-manage opt-outs."
     },
     {
-      icon: <Phone className="w-5 h-5 text-emerald-400" />,
-      title: "Calling",
-      description: "Take and place calls on WhatsApp. Route to a phone line, SIP, or a voice agent (Vapi, Retell, ElevenLabs)."
+      icon: <Phone className="w-5 h-5 text-emerald-600" />,
+      title: "Voice & Calling",
+      description: "Take and place calls on verified WhatsApp Business. Route to human support lines, SIP trunks, or AI voice agents."
     },
     {
-      icon: <Inbox className="w-5 h-5 text-sky-400" />,
-      title: "Unified inbox",
-      description: "Every reply in one place. WhatsApp, Telegram, Instagram, Facebook, X, Reddit, and Bluesky."
+      icon: <Inbox className="w-5 h-5 text-emerald-600" />,
+      title: "Shared Team Inbox",
+      description: "Every customer reply in one organized workspace. Multi-agent routing, collision detection, internal mentions, and canned responses."
     },
     {
-      icon: <Bot className="w-5 h-5 text-amber-400" />,
-      title: "WhatsApp chatbots",
-      description: "Build AI agents and automation that understand context. Connect your AI, hand off to a human anytime."
+      icon: <Bot className="w-5 h-5 text-emerald-600" />,
+      title: "Astra AI Agents",
+      description: "Build autonomous chatbots that understand full context. Grounded in your knowledge base with seamless handoff to human staff."
     },
     {
-      icon: <Users className="w-5 h-5 text-purple-400" />,
-      title: "Contacts",
-      description: "Send a broadcast that knows who it's going to. Tags, opt-in status, and custom fields on every contact."
+      icon: <Users className="w-5 h-5 text-emerald-600" />,
+      title: "Smart Contacts CRM",
+      description: "Maintain rich user profiles with custom attributes, behavioral tags, purchase histories, and verified opt-in tracking."
     },
     {
-      icon: <Megaphone className="w-5 h-5 text-rose-400" />,
+      icon: <Megaphone className="w-5 h-5 text-emerald-600" />,
       title: "Click-to-WhatsApp Ads",
-      description: "Turn ad clicks into WhatsApp chats. Send conversions back to Meta for attribution."
+      description: "Turn Meta ad clicks into active WhatsApp conversations. Send purchase events back to Meta CAPI for optimal ad attribution."
     }
   ];
 
-  const countries = [
-    { name: "United States", price: "$3/mo" },
-    { name: "United Kingdom", price: "$3/mo" },
-    { name: "Germany", price: "$3/mo" },
-    { name: "France", price: "$3/mo" },
-    { name: "Spain", price: "$3/mo" },
-    { name: "Canada", price: "$3/mo" },
-    { name: "Brazil", price: "$4/mo" },
-    { name: "Italy", price: "$3/mo" },
-    { name: "Sweden", price: "$11/mo" }
-  ];
-
   return (
-    <div className="space-y-24 py-12 relative z-10">
+    <div className="space-y-20 py-16 bg-[#fafbfc] relative z-10 border-b border-gray-100">
       
-      {/* ─── SECTION 1: NUMBER PROVISIONING (#numbers) ─── */}
-      <section id="numbers" className="scroll-mt-32">
-        <div className="mx-auto w-full max-w-[1080px] px-6 lg:px-8">
-          <div className="rounded-3xl border border-zinc-800 bg-zinc-900/90 backdrop-blur-md p-8 sm:p-12 shadow-2xl">
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
-              
-              <div className="lg:col-span-6 flex flex-col gap-4">
-                <span className="font-mono text-xs font-bold text-brand uppercase tracking-wider">Number provisioning</span>
-                <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-white">
-                  Buy a WhatsApp number in 50+ countries
-                </h2>
-                <p className="text-zinc-400 text-sm sm:text-base leading-relaxed">
-                  Pick a country. Rockyt provisions the number, verifies it, and connects it for messaging and calling.
-                </p>
-                <div className="pt-2">
-                  <button
-                    onClick={onStartOnboarding}
-                    className="inline-flex items-center gap-2 rounded-xl bg-brand hover:bg-brand-hover text-white font-bold text-sm px-6 py-3.5 transition-all shadow-lg shadow-brand/20"
-                  >
-                    Start for free <ArrowRight className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="lg:col-span-6 grid grid-cols-3 gap-3 bg-zinc-950/80 p-5 rounded-2xl border border-zinc-800">
-                {countries.map((c, idx) => (
-                  <div key={idx} className="flex flex-col p-2.5 rounded-xl bg-zinc-900 border border-zinc-800/80">
-                    <span className="text-xs font-semibold text-white truncate">{c.name}</span>
-                    <span className="text-[10px] font-mono text-brand font-bold mt-1">{c.price}</span>
-                  </div>
-                ))}
-              </div>
-
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ─── SECTION 2: FULL API SURFACE (#features) ─── */}
-      <section id="features" className="scroll-mt-32">
-        <div className="mx-auto w-full max-w-[1080px] px-6 lg:px-8">
+      {/* ─── SECTION: FULL API & PLATFORM SURFACE (#features) ─── */}
+      <section className="scroll-mt-32">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6">
           
-          <div className="flex flex-col gap-3 px-6 py-10 items-center text-center">
-            <span className="font-mono text-sm font-bold text-brand uppercase tracking-wider">Full API Surface</span>
-            <h2 className="text-2xl sm:text-3xl font-semibold tracking-[-0.02em]">
-              <span className="text-white">Everything you need to ship</span>
-              <span className="text-zinc-500"> WhatsApp features</span>
+          <div className="flex flex-col gap-3 px-6 pb-12 items-center text-center max-w-3xl mx-auto">
+            <span className="text-xs font-bold text-emerald-700 uppercase tracking-wider bg-emerald-50 border border-emerald-200 px-3.5 py-1 rounded-full">
+              Comprehensive Platform
+            </span>
+            <h2 className="text-3xl sm:text-5xl font-display font-bold tracking-tight text-gray-900">
+              Everything you need to scale on WhatsApp
             </h2>
+            <p className="text-gray-600 text-base sm:text-lg">
+              Enterprise-grade reliability, compliance, and intuitive tools built for high-growth teams.
+            </p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {featureList.map((f, idx) => (
               <div 
                 key={idx}
-                className="flex flex-col p-6 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-xl hover:border-zinc-700 transition-all"
+                className="flex flex-col p-7 rounded-2xl bg-white border border-gray-200 shadow-sm hover:shadow-md hover:border-emerald-300 transition-all"
               >
-                <div className="w-10 h-10 rounded-xl bg-zinc-800/90 flex items-center justify-center mb-4">
+                <div className="w-11 h-11 rounded-xl bg-emerald-50 flex items-center justify-center mb-5">
                   {f.icon}
                 </div>
-                <h3 className="text-base font-bold text-white mb-2">{f.title}</h3>
-                <p className="text-sm text-zinc-400 leading-relaxed">{f.description}</p>
+                <h3 className="text-base font-bold text-gray-900 mb-2">{f.title}</h3>
+                <p className="text-sm text-gray-600 leading-relaxed">{f.description}</p>
               </div>
             ))}
           </div>
@@ -122,72 +76,50 @@ const Showcase: React.FC<ShowcaseProps> = ({ onStartOnboarding }) => {
         </div>
       </section>
 
-      {/* ─── SECTION 3: AI AGENTS & MCP (#ai-agents) ─── */}
-      <section id="ai-agents" className="scroll-mt-32 bg-zinc-950/80 border-y border-zinc-800 py-16">
-        <div className="mx-auto w-full max-w-[1080px] px-6 lg:px-8">
+      {/* ─── SECTION: DEVELOPER & AI AGENT APIS ─── */}
+      <section className="scroll-mt-32 py-12">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6">
           
-          <div className="flex flex-col items-center gap-4 px-6 py-8 text-center max-w-2xl mx-auto">
-            <span className="font-mono text-sm font-bold text-brand uppercase tracking-wider">AI Agents</span>
-            <h2 className="text-2xl sm:text-3xl font-semibold tracking-[-0.02em]">
-              <span className="text-white">Let an agent run WhatsApp </span>
-              <span className="text-zinc-500">end to end</span>
-            </h2>
-            <p className="text-sm sm:text-base leading-relaxed text-zinc-400">
-              The entire flow runs through Rockyt's MCP server, so an AI agent can buy a number, complete verification, and start messaging or calling without a human touching the dashboard.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
-            
-            {/* SDK CARD */}
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-6 flex flex-col justify-between shadow-xl">
-              <div>
-                <p className="font-mono text-xs font-bold text-brand uppercase tracking-wider mb-2">REST API + 8 SDKs</p>
-                <div className="flex flex-wrap gap-1.5 my-4">
-                  {['Node', 'Python', 'Go', 'Ruby', 'Java', 'PHP', '.NET', 'Rust'].map((sdk, i) => (
-                    <span key={i} className="rounded-full bg-zinc-800 px-2.5 py-0.5 font-mono text-[10px] font-bold text-white">
-                      {sdk}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              <p className="text-xs text-zinc-400 font-medium">One bearer token, one JSON shape.</p>
-            </div>
-
-            {/* CLI CARD */}
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-6 flex flex-col justify-between shadow-xl">
-              <div>
-                <p className="font-mono text-xs font-bold text-brand uppercase tracking-wider mb-2">CLI</p>
-                <div className="bg-black/80 rounded-xl p-3 font-mono text-xs text-emerald-400 my-4 space-y-1">
-                  <p>$ rockyt send --phone +1415...</p>
-                  <p className="text-zinc-400">&#123; "status": "sent", "id": "msg_8f2a" &#125;</p>
-                </div>
-              </div>
-              <p className="text-xs text-zinc-400 font-medium">Structured JSON output built for agents to parse and recover from errors.</p>
-            </div>
-
-            {/* MCP SERVER CARD */}
-            <div className="rounded-2xl border border-brand/40 bg-zinc-900/80 p-6 flex flex-col justify-between shadow-xl relative overflow-hidden">
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <Zap className="w-4 h-4 text-brand" />
-                  <p className="font-mono text-xs font-bold text-brand uppercase tracking-wider">MCP Server</p>
-                </div>
-                <h3 className="text-sm font-bold text-white mb-2">For Claude, Cursor, and any MCP client.</h3>
-                <p className="text-xs text-zinc-400 leading-relaxed">
-                  LLM-optimized docs mean any agent can wire up the full WhatsApp surface itself.
+          <div className="rounded-3xl border border-gray-200 bg-white p-8 sm:p-12 shadow-sm">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+              
+              <div className="lg:col-span-6 space-y-4">
+                <span className="text-xs font-bold text-emerald-700 uppercase tracking-wider bg-emerald-50 px-3 py-1 rounded-full">
+                  Developer &amp; AI Friendly
+                </span>
+                <h2 className="text-2xl sm:text-4xl font-bold tracking-tight text-gray-900">
+                  Integrate via REST API, Webhooks, or MCP Server
+                </h2>
+                <p className="text-gray-600 text-sm sm:text-base leading-relaxed">
+                  Power your internal workflows with robust webhooks, pre-built client SDKs, or directly connect Claude, Cursor, and autonomous AI agents using our native Model Context Protocol (MCP) server.
                 </p>
+                <div className="pt-2">
+                  <button
+                    onClick={onStartOnboarding}
+                    className="inline-flex items-center gap-2 rounded-full bg-[#00D084] hover:bg-[#00be77] text-[#07301f] font-bold text-sm px-6 py-3 shadow-md shadow-emerald-500/20 transition-all"
+                  >
+                    <span>Get API Access</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
-              <div className="pt-4">
-                <button
-                  onClick={onStartOnboarding}
-                  className="w-full rounded-xl bg-brand text-white font-bold text-xs py-2.5 hover:bg-brand-hover transition-colors shadow-md shadow-brand/20"
-                >
-                  Start for free
-                </button>
-              </div>
-            </div>
 
+              <div className="lg:col-span-6 bg-[#0f172a] rounded-2xl p-6 text-gray-200 font-mono text-xs shadow-lg space-y-3">
+                <div className="flex items-center justify-between pb-3 border-b border-gray-800 text-gray-400 text-[11px]">
+                  <span>bash — cURL</span>
+                  <span className="text-emerald-400">POST /api/whatsapp/messages/send</span>
+                </div>
+                <div className="text-gray-400"># Send high-speed WhatsApp template message</div>
+                <div className="text-emerald-400">curl -X POST https://api.wati.io/v1/messages \</div>
+                <div className="pl-4 text-gray-300">-H "Authorization: Bearer wati_key_live" \</div>
+                <div className="pl-4 text-gray-300">-H "Content-Type: application/json" \</div>
+                <div className="pl-4 text-amber-300">-d '&#123; "to": "+12029087457", "template": "order_confirmed" &#125;'</div>
+                <div className="text-gray-500 pt-2 border-t border-gray-800">
+                  Response: &#123; "status": "sent", "message_id": "wamid.HBgL...", "delivered": true &#125;
+                </div>
+              </div>
+
+            </div>
           </div>
 
         </div>

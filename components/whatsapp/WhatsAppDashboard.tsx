@@ -2,8 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { 
   MessageSquare, Zap, Megaphone, LayoutTemplate, Radio, 
   Bot, Users, Settings, Phone, ShieldCheck, ExternalLink, 
-  Plus, LogOut, ArrowLeft, Activity, Bell, Sparkles, CheckCircle2,
-  AlertTriangle, Power, TestTube2, Clock, CheckCheck, BarChart3
+  Plus, LogOut, ArrowLeft, Bell, Sparkles, CheckCircle2,
+  AlertTriangle, Power, Clock, CheckCheck, BarChart3, ChevronDown,
+  ChevronRight, Calendar, List, RefreshCw, Eye, CornerDownLeft,
+  Send, XCircle, Loader2, Layers, HelpCircle, UserCheck, Play,
+  Share2, ShoppingBag, Target, ArrowRight, Check, Info
 } from 'lucide-react';
 
 import { WhatsAppInbox } from './WhatsAppInbox';
@@ -13,7 +16,6 @@ import { TemplateStudio } from './TemplateStudio';
 import { BroadcastManager } from './BroadcastManager';
 import { MCPGateway } from './MCPGateway';
 import { ContactsCRM } from './ContactsCRM';
-import { SandboxOnboardingCard } from './SandboxOnboardingCard';
 import WABAConnectionModal from './WABAConnectionModal';
 import { getAuthHeaders } from '../../lib/frontendAuth';
 
@@ -23,37 +25,49 @@ interface WhatsAppDashboardProps {
   onSignOut?: () => void;
 }
 
-export type WhatsAppTab = 
-  | 'inbox' 
-  | 'automations' 
-  | 'ctwa_capi' 
-  | 'templates' 
-  | 'broadcasts' 
-  | 'mcp_gateway' 
-  | 'contacts';
+export type DashboardView = 
+  | 'setup'
+  | 'campaigns'
+  | 'inbox'
+  | 'contacts'
+  | 'astra'
+  | 'automations'
+  | 'commerce'
+  | 'ads'
+  | 'analytics'
+  | 'connectors'
+  | 'settings';
 
 export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
   userSession,
   onBackHome,
   onSignOut,
 }) => {
-  const [activeTab, setActiveTab] = useState<WhatsAppTab>('inbox');
+  // Navigation views
+  const [currentView, setCurrentView] = useState<DashboardView>('setup');
+  const [campaignSubView, setCampaignSubView] = useState<'overview' | 'templates' | 'scheduled'>('overview');
+  const [campaignChannel, setCampaignChannel] = useState<'whatsapp' | 'sms'>('whatsapp');
+  const [selectedChannelPill, setSelectedChannelPill] = useState<'whatsapp' | 'instagram' | 'messenger' | 'tiktok'>('whatsapp');
+  
+  // UI states
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [connectorsExpanded, setConnectorsExpanded] = useState(true);
+  const [settingsExpanded, setSettingsExpanded] = useState(false);
   const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
-  const [showSandboxBanner, setShowSandboxBanner] = useState(true);
-  const [account, setAccount] = useState<any>(null);
-  const [sandboxSession, setSandboxSession] = useState<any>(null);
-  const [isLoadingAccount, setIsLoadingAccount] = useState(true);
-  const [selectedPhone, setSelectedPhone] = useState<string | undefined>(undefined);
-  const [selectedName, setSelectedName] = useState<string | undefined>(undefined);
+  const [previewSampleData, setPreviewSampleData] = useState(true);
+  const [plannerView, setPlannerView] = useState<'calendar' | 'list'>('calendar');
+  const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
+  const [chatWidgetOpen, setChatWidgetOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<Array<{ sender: 'bot' | 'user'; text: string; time: string }>>([
+    { sender: 'bot', text: 'Hi Moamen! I am your Astra AI WhatsApp Assistant. How can I help you set up your store today?', time: 'Just now' }
+  ]);
+  const [inputChatText, setInputChatText] = useState('');
 
-  // Quick stats state
-  const [stats, setStats] = useState({
-    conversationsCount: 0,
-    unreadCount: 0,
-    capiEventsCount: 0,
-    activeAutomationsCount: 2,
-    windowOpenCount: 0,
-  });
+  // Account and API states
+  const [account, setAccount] = useState<any>(null);
+  const [isLoadingAccount, setIsLoadingAccount] = useState(true);
+
+  const userName = userSession?.name || 'Moamen';
 
   const getHeaders = () => {
     const headers = getAuthHeaders();
@@ -68,7 +82,6 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
       if (res.ok) {
         const data = await res.json();
         setAccount(data.account || null);
-        setSandboxSession(data.sandbox || null);
       }
     } catch (e) {
       console.warn('Failed to load WhatsApp account status', e);
@@ -77,366 +90,1395 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
     }
   };
 
-  const fetchStats = async () => {
-    try {
-      const hdrs = getHeaders();
-      const [convsRes, capiRes, autoRes] = await Promise.all([
-        fetch('/api/whatsapp/conversations', { headers: hdrs }).catch(() => null),
-        fetch('/api/whatsapp/capi/events', { headers: hdrs }).catch(() => null),
-        fetch('/api/whatsapp/automations', { headers: hdrs }).catch(() => null),
-      ]);
-
-      let convsCount = 0;
-      let unread = 0;
-      let winOpen = 0;
-      if (convsRes && convsRes.ok) {
-        const d = await convsRes.json();
-        const convs = d.data || [];
-        convsCount = convs.length;
-        unread = convs.reduce((acc: number, c: any) => acc + (c.unread_count || 0), 0);
-        winOpen = convs.filter((c: any) => c.is_window_open).length;
-      }
-
-      let capiCount = 0;
-      if (capiRes && capiRes.ok) {
-        const d = await capiRes.json();
-        capiCount = (d.data || []).length;
-      }
-
-      let autoCount = 2;
-      if (autoRes && autoRes.ok) {
-        const d = await autoRes.json();
-        autoCount = (d.data || []).filter((a: any) => a.is_active).length;
-      }
-
-      setStats({
-        conversationsCount: convsCount,
-        unreadCount: unread,
-        capiEventsCount: capiCount,
-        activeAutomationsCount: autoCount,
-        windowOpenCount: winOpen,
-      });
-    } catch {}
-  };
-
   useEffect(() => {
     fetchAccountStatus();
-    fetchStats();
-    const interval = setInterval(fetchStats, 30000);
-    return () => clearInterval(interval);
   }, [userSession?.id]);
 
-  const handleDisconnect = async () => {
-    if (!confirm('Are you sure you want to disconnect this WhatsApp account?')) return;
-    try {
-      await fetch('/api/whatsapp/account/disconnect', { method: 'POST', headers: getHeaders() });
-      setAccount(null);
-      setSandboxSession(null);
-    } catch (e) {
-      console.error('Failed to disconnect', e);
-    }
+  const handleSendChat = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inputChatText.trim()) return;
+    const userMsg = inputChatText;
+    setInputChatText('');
+    setChatMessages(prev => [...prev, { sender: 'user', text: userMsg, time: 'Just now' }]);
+
+    setTimeout(() => {
+      setChatMessages(prev => [
+        ...prev, 
+        { 
+          sender: 'bot', 
+          text: `Got it! I am simulating your WhatsApp Cloud response for: "${userMsg}". Your Meta WhatsApp Business API webhook is live!`, 
+          time: 'Just now' 
+        }
+      ]);
+    }, 800);
   };
 
-  const isConnected = Boolean(account && account.status !== 'disconnected');
-  const isSandbox = account?.mode === 'sandbox' || Boolean(sandboxSession);
-
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col font-sans selection:bg-emerald-500 selection:text-black">
-      {/* ─── Modern Top Glass Header ─── */}
-      <header className="h-16 border-b border-zinc-800/80 bg-zinc-950/90 backdrop-blur-md px-4 sm:px-6 flex items-center justify-between sticky top-0 z-40">
-        <div className="flex items-center gap-4">
-          <button
-            onClick={onBackHome}
-            className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-white transition-colors"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Home</span>
-          </button>
-
-          <div className="h-4 w-px bg-zinc-800 hidden sm:block"></div>
-
-          {/* Logo & Platform Tag */}
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center text-black font-black text-sm shadow-lg shadow-emerald-500/20">
-                W
-              </div>
-              {isConnected && (
-                <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-400 border-2 border-black rounded-full shadow-sm animate-pulse" />
-              )}
-            </div>
-
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-extrabold tracking-tight text-white">Rockyt WhatsApp Cloud</span>
-                {isSandbox ? (
-                  <span className="px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[10px] font-bold flex items-center gap-1">
-                    <TestTube2 className="w-3 h-3" />
-                    Sandbox Active
-                  </span>
-                ) : account?.status === 'connected' ? (
-                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold flex items-center gap-1">
-                    <ShieldCheck className="w-3 h-3" />
-                    WABA Connected
-                  </span>
-                ) : (
-                  <span className="px-2 py-0.5 rounded-full bg-zinc-800/80 border border-zinc-700 text-zinc-400 text-[10px] font-bold">
-                    Sandbox Ready
-                  </span>
-                )}
-              </div>
-              <div className="text-[10px] text-zinc-400 font-mono">
-                {sandboxSession ? (
-                  <span>Test Phone: <strong className="text-emerald-400">{sandboxSession.formatted_phone || sandboxSession.phone_number}</strong> • Shared: +1 (202) 908-7457</span>
-                ) : account ? (
-                  <span>{account.phone_number || account.name} • Limit: <strong className="text-emerald-400">{account.messaging_limit_tier || 'PRO'}</strong></span>
-                ) : (
-                  <span className="text-zinc-500">Dedicated workspace tenant isolation active</span>
-                )}
-              </div>
-            </div>
-          </div>
+    <div className="min-h-screen bg-[#f8fafc] text-gray-800 flex flex-col font-sans selection:bg-[#00D084] selection:text-white">
+      
+      {/* ─────────────────────────────────────────────────────────────
+          1. TOP TRIAL NOTIFICATION BANNER (Exact Match to Images)
+      ───────────────────────────────────────────────────────────── */}
+      <div className="bg-[#111827] text-white px-4 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-3 text-xs sm:text-sm font-medium z-50">
+        <div className="flex items-center gap-2">
+          <span>
+            You have <strong className="text-white font-bold">6 days</strong> to explore this{' '}
+            <strong className="text-white font-bold">Trial account</strong>. Connect your preferred channel to unlock all features.
+          </span>
         </div>
 
-        {/* Top Right User Profile & Connection Actions */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <button
             onClick={() => setIsConnectModalOpen(true)}
-            className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 ${
-              isConnected
-                ? 'bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-200'
-                : 'bg-emerald-500 hover:bg-emerald-400 text-black font-bold shadow-lg shadow-emerald-500/20'
-            }`}
+            className="px-4 py-1.5 rounded-full bg-[#00D084] hover:bg-[#00be77] text-[#07301f] font-bold text-xs shadow-sm transition-all"
           >
-            <Phone className="w-3.5 h-3.5" />
-            <span>{isConnected ? 'Connection Settings' : 'Connect Meta WABA'}</span>
+            Connect Channel
           </button>
-
-          {isConnected && (
-            <button
-              onClick={handleDisconnect}
-              className="p-2 bg-zinc-900 hover:bg-rose-950/40 border border-zinc-800 hover:border-rose-500/40 rounded-xl text-xs text-zinc-400 hover:text-rose-400 transition-all"
-              title="Disconnect Account"
-            >
-              <Power className="w-3.5 h-3.5" />
-            </button>
-          )}
-
-          <div className="flex items-center gap-2 pl-2 border-l border-zinc-800">
-            {userSession?.picture ? (
-              <img
-                src={userSession.picture}
-                alt="Avatar"
-                className="w-7 h-7 rounded-full object-cover border border-zinc-800"
-              />
-            ) : (
-              <div className="w-7 h-7 rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-xs flex items-center justify-center border border-emerald-500/30">
-                {userSession?.name?.charAt(0) || 'U'}
-              </div>
-            )}
-
-            <button
-              onClick={onSignOut}
-              className="p-1.5 text-zinc-400 hover:text-rose-400 rounded-lg hover:bg-zinc-900 transition-colors"
-              title="Sign Out"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* ─── Quick Metrics & Intelligence Ribbon ─── */}
-      <div className="border-b border-zinc-800/80 bg-zinc-950/40 px-4 sm:px-6 py-3">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div className="p-3 rounded-xl bg-zinc-900/50 border border-zinc-800/70 flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center flex-shrink-0">
-              <Clock className="w-4 h-4" />
-            </div>
-            <div>
-              <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">24h Service Window</div>
-              <div className="text-xs font-bold text-white flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                <span>{stats.windowOpenCount > 0 ? `${stats.windowOpenCount} Threads Active` : 'Compliance Active'}</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="p-3 rounded-xl bg-zinc-900/50 border border-zinc-800/70 flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-blue-500/10 text-blue-400 flex items-center justify-center flex-shrink-0">
-              <MessageSquare className="w-4 h-4" />
-            </div>
-            <div>
-              <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">Live Inbox Threads</div>
-              <div className="text-xs font-bold text-white">
-                {stats.conversationsCount} Conversations {stats.unreadCount > 0 && <span className="text-emerald-400">({stats.unreadCount} unread)</span>}
-              </div>
-            </div>
-          </div>
-
-          <div className="p-3 rounded-xl bg-zinc-900/50 border border-zinc-800/70 flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-purple-500/10 text-purple-400 flex items-center justify-center flex-shrink-0">
-              <Megaphone className="w-4 h-4" />
-            </div>
-            <div>
-              <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">Meta CAPI Health</div>
-              <div className="text-xs font-bold text-white">
-                99.8% Match Rate <span className="text-zinc-500">({stats.capiEventsCount} logged)</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="p-3 rounded-xl bg-zinc-900/50 border border-zinc-800/70 flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center flex-shrink-0">
-              <Zap className="w-4 h-4" />
-            </div>
-            <div>
-              <div className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">Automations Engine</div>
-              <div className="text-xs font-bold text-white">
-                {stats.activeAutomationsCount} Rules Live <span className="text-emerald-400">• Sub-second</span>
-              </div>
-            </div>
-          </div>
+          <button
+            onClick={() => alert('Trial is active. 6 days remaining.')}
+            className="px-4 py-1.5 rounded-full bg-[#1f2937] hover:bg-[#374151] border border-gray-600 text-white font-semibold text-xs transition-colors"
+          >
+            Buy Now
+          </button>
         </div>
       </div>
 
-      {/* ─── Secondary Modular Navigation Tabs ─── */}
-      <nav className="border-b border-zinc-800/60 bg-zinc-950/60 px-4 sm:px-6 flex items-center gap-1.5 overflow-x-auto no-scrollbar py-2">
-        <button
-          onClick={() => setActiveTab('inbox')}
-          className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'inbox'
-              ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/20'
-              : 'text-zinc-400 hover:text-white hover:bg-zinc-900/60'
-          }`}
-        >
-          <MessageSquare className="w-3.5 h-3.5" />
-          <span>Realtime CRM Inbox</span>
-        </button>
+      {/* ─────────────────────────────────────────────────────────────
+          2. TOP HEADER APPLICATION BAR (Exact Match to Images)
+      ───────────────────────────────────────────────────────────── */}
+      <header className="h-16 bg-white border-b border-gray-200 px-4 sm:px-6 flex items-center justify-between sticky top-0 z-40 shadow-xs">
+        
+        {/* Left: Brand Logo */}
+        <div className="flex items-center gap-6">
+          <div 
+            onClick={() => setCurrentView('setup')}
+            className="flex items-center gap-2.5 cursor-pointer select-none"
+          >
+            <div className="w-8 h-8 rounded-xl bg-[#00D084] flex items-center justify-center text-white shadow-sm">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 2C6.48 2 2 6.48 2 12c0 1.82.49 3.53 1.35 5L2 22l5.12-1.33c1.43.83 3.09 1.33 4.88 1.33 5.52 0 10-4.48 10-10S17.52 2 12 2zm-1 14h-2v-2h2v2zm0-4h-2V7h2v5z"/>
+              </svg>
+            </div>
+            <div className="flex items-baseline">
+              <span className="font-sans font-black text-2xl tracking-tight text-gray-900">
+                wati
+              </span>
+              <span className="w-1.5 h-1.5 rounded-full bg-[#00D084] ml-0.5"></span>
+            </div>
+          </div>
+        </div>
 
-        <button
-          onClick={() => setActiveTab('contacts')}
-          className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'contacts'
-              ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/20'
-              : 'text-zinc-400 hover:text-white hover:bg-zinc-900/60'
-          }`}
-        >
-          <Users className="w-3.5 h-3.5" />
-          <span>Contacts & CRM</span>
-        </button>
+        {/* Right Actions */}
+        <div className="flex items-center gap-4">
+          
+          {/* Account Setup Progress Pill */}
+          <button
+            onClick={() => setCurrentView('setup')}
+            className={`flex items-center gap-2 px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
+              currentView === 'setup'
+                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                : 'text-gray-700 hover:text-emerald-700 hover:bg-gray-50'
+            }`}
+          >
+            <span>Account Setup</span>
+            <span className="px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-bold">
+              0/7
+            </span>
+          </button>
 
-        <button
-          onClick={() => setActiveTab('automations')}
-          className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'automations'
-              ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/20'
-              : 'text-zinc-400 hover:text-white hover:bg-zinc-900/60'
-          }`}
-        >
-          <Zap className="w-3.5 h-3.5" />
-          <span>Visual Automation Canvas</span>
-        </button>
+          {/* Book a Demo Button */}
+          <button
+            onClick={() => alert('Booking demo with a Wati Solutions Specialist...')}
+            className="px-4 py-1.5 rounded-full border border-[#00D084] text-[#00945e] hover:bg-emerald-50 text-xs font-bold transition-all"
+          >
+            Book a demo
+          </button>
 
-        <button
-          onClick={() => setActiveTab('ctwa_capi')}
-          className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'ctwa_capi'
-              ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/20'
-              : 'text-zinc-400 hover:text-white hover:bg-zinc-900/60'
-          }`}
-        >
-          <Megaphone className="w-3.5 h-3.5" />
-          <span>CTWA & Meta CAPI Hub</span>
-        </button>
+          {/* Notification Bell */}
+          <button 
+            onClick={() => alert('You have no unread notifications.')}
+            className="relative p-2 text-gray-500 hover:text-gray-800 rounded-full hover:bg-gray-100 transition-colors"
+            title="Notifications"
+          >
+            <Bell size={18} />
+            <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-white"></span>
+          </button>
 
-        <button
-          onClick={() => setActiveTab('templates')}
-          className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'templates'
-              ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/20'
-              : 'text-zinc-400 hover:text-white hover:bg-zinc-900/60'
-          }`}
-        >
-          <LayoutTemplate className="w-3.5 h-3.5" />
-          <span>Meta Template Studio</span>
-        </button>
+          {/* User Profile Avatar with Dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
+              className="flex items-center gap-2 pl-2 border-l border-gray-200 focus:outline-none cursor-pointer"
+            >
+              <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 font-bold text-xs flex items-center justify-center border border-emerald-300 shadow-xs">
+                {userName.charAt(0).toUpperCase()}
+              </div>
+            </button>
 
-        <button
-          onClick={() => setActiveTab('broadcasts')}
-          className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'broadcasts'
-              ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/20'
-              : 'text-zinc-400 hover:text-white hover:bg-zinc-900/60'
-          }`}
-        >
-          <Radio className="w-3.5 h-3.5" />
-          <span>Broadcast Campaigns</span>
-        </button>
+            {profileDropdownOpen && (
+              <div className="absolute right-0 mt-2 w-56 bg-white rounded-2xl shadow-xl border border-gray-100 p-2 z-50 text-xs">
+                <div className="p-3 border-b border-gray-100">
+                  <div className="font-bold text-gray-900">{userName}</div>
+                  <div className="text-[11px] text-gray-500 truncate">{userSession?.email || 'moamen@company.com'}</div>
+                  <div className="mt-1 inline-block px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px]">
+                    Trial Account • 6 Days
+                  </div>
+                </div>
 
-        <button
-          onClick={() => setActiveTab('mcp_gateway')}
-          className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
-            activeTab === 'mcp_gateway'
-              ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/20'
-              : 'text-zinc-400 hover:text-white hover:bg-zinc-900/60'
-          }`}
-        >
-          <Bot className="w-3.5 h-3.5" />
-          <span>External MCP Gateway</span>
-        </button>
-      </nav>
+                <div className="py-1">
+                  <button
+                    onClick={() => { setProfileDropdownOpen(false); setCurrentView('setup'); }}
+                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-50 text-gray-700"
+                  >
+                    Setup Guide
+                  </button>
+                  <button
+                    onClick={() => { setProfileDropdownOpen(false); setCurrentView('settings'); }}
+                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-50 text-gray-700"
+                  >
+                    Account Settings
+                  </button>
+                  <button
+                    onClick={() => { setProfileDropdownOpen(false); onBackHome?.(); }}
+                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-50 text-gray-700"
+                  >
+                    Return to Website
+                  </button>
+                </div>
 
-      {/* ─── Main Content Canvas ─── */}
-      <main className="flex-1 p-4 sm:p-6 overflow-y-auto space-y-6">
-        {/* Interactive 3-Step Sandbox AHA Onboarding Banner if not yet verified or toggled */}
-        {showSandboxBanner && (!sandboxSession || sandboxSession.status !== 'active') && (
-          <SandboxOnboardingCard
-            session={sandboxSession}
-            userSession={userSession}
-            onActivated={(sess) => {
-              setSandboxSession(sess);
-              fetchAccountStatus();
-            }}
-            onOpenInbox={() => {
-              setShowSandboxBanner(false);
-              setActiveTab('inbox');
-            }}
-          />
+                <div className="pt-1 border-t border-gray-100">
+                  <button
+                    onClick={() => { setProfileDropdownOpen(false); onSignOut?.(); }}
+                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-rose-50 text-rose-600 font-semibold flex items-center gap-1.5"
+                  >
+                    <LogOut size={14} />
+                    <span>Sign out</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+        </div>
+      </header>
+
+      {/* ─────────────────────────────────────────────────────────────
+          3. MAIN LAYOUT: SIDEBAR + CONTENT AREA
+      ───────────────────────────────────────────────────────────── */}
+      <div className="flex-1 flex overflow-hidden">
+        
+        {/* ─── PRIMARY SIDEBAR (Exact Match to Images) ─── */}
+        <aside className={`${isSidebarCollapsed ? 'w-18' : 'w-56'} bg-white border-r border-gray-200 flex flex-col justify-between transition-all duration-200 z-30 shrink-0 select-none`}>
+          
+          <div className="py-4 px-3 space-y-1 overflow-y-auto">
+            
+            {/* Campaigns */}
+            <button
+              onClick={() => setCurrentView('campaigns')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                currentView === 'campaigns'
+                  ? 'bg-emerald-50 text-emerald-800 font-bold'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+              }`}
+            >
+              <Megaphone size={18} className={currentView === 'campaigns' ? 'text-emerald-600' : 'text-gray-400'} />
+              {!isSidebarCollapsed && <span>Campaigns</span>}
+            </button>
+
+            {/* Team Inbox */}
+            <button
+              onClick={() => setCurrentView('inbox')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                currentView === 'inbox'
+                  ? 'bg-emerald-50 text-emerald-800 font-bold'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+              }`}
+            >
+              <MessageSquare size={18} className={currentView === 'inbox' ? 'text-emerald-600' : 'text-gray-400'} />
+              {!isSidebarCollapsed && <span>Team Inbox</span>}
+            </button>
+
+            {/* Contacts */}
+            <button
+              onClick={() => setCurrentView('contacts')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                currentView === 'contacts'
+                  ? 'bg-emerald-50 text-emerald-800 font-bold'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+              }`}
+            >
+              <Users size={18} className={currentView === 'contacts' ? 'text-emerald-600' : 'text-gray-400'} />
+              {!isSidebarCollapsed && <span>Contacts</span>}
+            </button>
+
+            {/* Astra (AI) */}
+            <button
+              onClick={() => setCurrentView('astra')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                currentView === 'astra'
+                  ? 'bg-emerald-50 text-emerald-800 font-bold'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+              }`}
+            >
+              <Sparkles size={18} className={currentView === 'astra' ? 'text-emerald-600' : 'text-gray-400'} />
+              {!isSidebarCollapsed && <span>Astra</span>}
+            </button>
+
+            {/* Automations */}
+            <button
+              onClick={() => setCurrentView('automations')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                currentView === 'automations'
+                  ? 'bg-emerald-50 text-emerald-800 font-bold'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+              }`}
+            >
+              <Zap size={18} className={currentView === 'automations' ? 'text-emerald-600' : 'text-gray-400'} />
+              {!isSidebarCollapsed && <span>Automations</span>}
+            </button>
+
+            {/* Commerce */}
+            <button
+              onClick={() => setCurrentView('commerce')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                currentView === 'commerce'
+                  ? 'bg-emerald-50 text-emerald-800 font-bold'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+              }`}
+            >
+              <ShoppingBag size={18} className={currentView === 'commerce' ? 'text-emerald-600' : 'text-gray-400'} />
+              {!isSidebarCollapsed && <span>Commerce</span>}
+            </button>
+
+            {/* Ads */}
+            <button
+              onClick={() => setCurrentView('ads')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                currentView === 'ads'
+                  ? 'bg-emerald-50 text-emerald-800 font-bold'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+              }`}
+            >
+              <Target size={18} className={currentView === 'ads' ? 'text-emerald-600' : 'text-gray-400'} />
+              {!isSidebarCollapsed && <span>Ads</span>}
+            </button>
+
+            {/* Analytics */}
+            <button
+              onClick={() => setCurrentView('analytics')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                currentView === 'analytics'
+                  ? 'bg-emerald-50 text-emerald-800 font-bold'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+              }`}
+            >
+              <BarChart3 size={18} className={currentView === 'analytics' ? 'text-emerald-600' : 'text-gray-400'} />
+              {!isSidebarCollapsed && <span>Analytics</span>}
+            </button>
+
+            {/* Connectors (Expandable) */}
+            <div>
+              <button
+                onClick={() => setConnectorsExpanded(!connectorsExpanded)}
+                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold text-gray-600 hover:text-gray-900 hover:bg-gray-50 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <Share2 size={18} className="text-gray-400" />
+                  {!isSidebarCollapsed && <span>Connectors</span>}
+                </div>
+                {!isSidebarCollapsed && (
+                  <ChevronDown size={14} className={`text-gray-400 transition-transform ${connectorsExpanded ? 'rotate-180' : ''}`} />
+                )}
+              </button>
+
+              {connectorsExpanded && !isSidebarCollapsed && (
+                <div className="pl-9 pr-2 py-1 space-y-1">
+                  <button 
+                    onClick={() => setCurrentView('connectors')}
+                    className="w-full text-left py-1.5 px-2 rounded-lg text-xs text-gray-500 hover:text-gray-900 hover:bg-gray-50"
+                  >
+                    API
+                  </button>
+                  <button 
+                    onClick={() => setCurrentView('connectors')}
+                    className="w-full text-left py-1.5 px-2 rounded-lg text-xs text-gray-500 hover:text-gray-900 hover:bg-gray-50"
+                  >
+                    Integrations
+                  </button>
+                  <button 
+                    onClick={() => setCurrentView('connectors')}
+                    className="w-full text-left py-1.5 px-2 rounded-lg text-xs text-gray-500 hover:text-gray-900 hover:bg-gray-50"
+                  >
+                    Webhooks
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Settings (Expandable) */}
+            <div>
+              <button
+                onClick={() => setSettingsExpanded(!settingsExpanded)}
+                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold text-gray-600 hover:text-gray-900 hover:bg-gray-50 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <Settings size={18} className="text-gray-400" />
+                  {!isSidebarCollapsed && <span>Settings</span>}
+                </div>
+                {!isSidebarCollapsed && (
+                  <ChevronDown size={14} className={`text-gray-400 transition-transform ${settingsExpanded ? 'rotate-180' : ''}`} />
+                )}
+              </button>
+
+              {settingsExpanded && !isSidebarCollapsed && (
+                <div className="pl-9 pr-2 py-1 space-y-1">
+                  <button 
+                    onClick={() => setCurrentView('settings')}
+                    className="w-full text-left py-1.5 px-2 rounded-lg text-xs text-gray-500 hover:text-gray-900 hover:bg-gray-50"
+                  >
+                    User Management
+                  </button>
+                  <button 
+                    onClick={() => setCurrentView('settings')}
+                    className="w-full text-left py-1.5 px-2 rounded-lg text-xs text-gray-500 hover:text-gray-900 hover:bg-gray-50"
+                  >
+                    Account Details
+                  </button>
+                  <button 
+                    onClick={() => setCurrentView('settings')}
+                    className="w-full text-left py-1.5 px-2 rounded-lg text-xs text-gray-500 hover:text-gray-900 hover:bg-gray-50"
+                  >
+                    Channels
+                  </button>
+                </div>
+              )}
+            </div>
+
+          </div>
+
+          {/* Bottom: Collapse Button */}
+          <div className="p-3 border-t border-gray-100">
+            <button
+              onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+              className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+            >
+              <div className="w-5 h-5 rounded border border-gray-300 flex items-center justify-center">
+                <ArrowLeft size={12} className={`transition-transform ${isSidebarCollapsed ? 'rotate-180' : ''}`} />
+              </div>
+              {!isSidebarCollapsed && <span>Collapse</span>}
+            </button>
+          </div>
+
+        </aside>
+
+        {/* ─── SECONDARY SUB-SIDEBAR (When in Campaigns View - Exact Match to Image 2) ─── */}
+        {currentView === 'campaigns' && (
+          <aside className="w-56 bg-white border-r border-gray-200 p-4 flex flex-col justify-between shrink-0 select-none">
+            <div className="space-y-4">
+              <div className="font-bold text-gray-900 text-sm">
+                Campaigns
+              </div>
+
+              {/* + Create New Campaign Button */}
+              <button
+                onClick={() => setCampaignSubView('templates')}
+                className="w-full py-2.5 px-3 rounded-xl bg-[#00D084] hover:bg-[#00be77] text-[#07301f] font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
+              >
+                <Plus size={16} />
+                <span>Create New Campaign</span>
+              </button>
+
+              {/* Sub-menu items */}
+              <div className="space-y-1 pt-2">
+                <button
+                  onClick={() => setCampaignSubView('overview')}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                    campaignSubView === 'overview'
+                      ? 'bg-emerald-50 text-emerald-800 font-bold border border-emerald-200/60'
+                      : 'text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <BarChart3 size={15} className={campaignSubView === 'overview' ? 'text-emerald-600' : 'text-gray-400'} />
+                  <span>Campaign Overview</span>
+                </button>
+
+                <button
+                  onClick={() => setCampaignSubView('templates')}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                    campaignSubView === 'templates'
+                      ? 'bg-emerald-50 text-emerald-800 font-bold border border-emerald-200/60'
+                      : 'text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <LayoutTemplate size={15} className="text-gray-400" />
+                    <span>Template Messages</span>
+                  </div>
+                  <ChevronDown size={14} className="text-gray-400" />
+                </button>
+
+                <button
+                  onClick={() => setCampaignSubView('scheduled')}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                    campaignSubView === 'scheduled'
+                      ? 'bg-emerald-50 text-emerald-800 font-bold border border-emerald-200/60'
+                      : 'text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <Clock size={15} className={campaignSubView === 'scheduled' ? 'text-emerald-600' : 'text-gray-400'} />
+                  <span>Scheduled Campaigns</span>
+                </button>
+              </div>
+            </div>
+          </aside>
         )}
 
-        {activeTab === 'inbox' && (
-          <WhatsAppInbox
-            onOpenConnect={() => setIsConnectModalOpen(true)}
-            initialPhone={selectedPhone}
-            initialName={selectedName}
-          />
-        )}
-        {activeTab === 'contacts' && (
-          <ContactsCRM
-            onSelectContactChat={(phone, name) => {
-              setSelectedPhone(phone);
-              setSelectedName(name);
-              setActiveTab('inbox');
-            }}
-          />
-        )}
-        {activeTab === 'automations' && <AutomationBuilder />}
-        {activeTab === 'ctwa_capi' && <CTWAHub />}
-        {activeTab === 'templates' && <TemplateStudio />}
-        {activeTab === 'broadcasts' && <BroadcastManager />}
-        {activeTab === 'mcp_gateway' && <MCPGateway />}
-      </main>
+        {/* ─── MAIN WORKSPACE CONTENT ─── */}
+        <main className="flex-1 overflow-y-auto bg-[#f8fafc]">
+          
+          {/* =========================================================================
+              VIEW 1: ONBOARDING & SETUP GUIDE (Exact Match to Image 1)
+          ========================================================================= */}
+          {currentView === 'setup' && (
+            <div className="max-w-4xl mx-auto px-6 py-10">
+              
+              {/* Main Greeting Banner */}
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
+                <div>
+                  <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">
+                    Hello, <span className="text-[#00D084]">{userName}!</span>
+                    <br />
+                    Let's get you set up
+                  </h1>
+                  <p className="text-xs sm:text-sm text-gray-500 mt-2 font-medium">
+                    Personalised for Sales on WhatsApp
+                    <br />
+                    Just follow these steps and Wati handles the rest
+                  </p>
+                </div>
 
-      {/* ─── WABA Embedded / Headless / Sandbox Connection Modal ─── */}
-      <WABAConnectionModal
-        isOpen={isConnectModalOpen}
-        onClose={() => setIsConnectModalOpen(false)}
-        onConnected={(acc) => {
-          setAccount(acc);
-          fetchAccountStatus();
-        }}
-      />
+                <div className="flex flex-col sm:items-end gap-1.5 text-xs text-gray-500">
+                  <div className="flex items-center gap-1.5 text-gray-700 font-semibold">
+                    <ShieldCheck size={14} className="text-emerald-600" />
+                    <span>Join 16,000+ businesses</span>
+                  </div>
+                  <div className="flex items-center gap-1 text-amber-500">
+                    <span>★</span>
+                    <span className="font-bold text-gray-800">4.6/5</span>
+                    <span className="text-gray-400">rating</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Channel Selector Bar */}
+              <div className="mb-6">
+                <div className="text-xs text-gray-500 font-medium mb-2.5">
+                  Choose a channel you'd like to connect
+                </div>
+                <div className="flex flex-wrap gap-2.5">
+                  <button
+                    onClick={() => setSelectedChannelPill('whatsapp')}
+                    className={`px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+                      selectedChannelPill === 'whatsapp'
+                        ? 'bg-emerald-50 text-emerald-800 border-2 border-[#00D084]'
+                        : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-[#00D084]"></span>
+                    <span>WhatsApp</span>
+                  </button>
+
+                  <button
+                    onClick={() => setSelectedChannelPill('instagram')}
+                    className={`px-4 py-2 rounded-full text-xs font-medium flex items-center gap-2 transition-all cursor-pointer ${
+                      selectedChannelPill === 'instagram'
+                        ? 'bg-emerald-50 text-emerald-800 border-2 border-[#00D084]'
+                        : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    <span>Instagram</span>
+                  </button>
+
+                  <button
+                    onClick={() => setSelectedChannelPill('messenger')}
+                    className={`px-4 py-2 rounded-full text-xs font-medium flex items-center gap-2 transition-all cursor-pointer ${
+                      selectedChannelPill === 'messenger'
+                        ? 'bg-emerald-50 text-emerald-800 border-2 border-[#00D084]'
+                        : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    <span>Messenger</span>
+                  </button>
+
+                  <button
+                    onClick={() => setSelectedChannelPill('tiktok')}
+                    className={`px-4 py-2 rounded-full text-xs font-medium flex items-center gap-2 transition-all cursor-pointer ${
+                      selectedChannelPill === 'tiktok'
+                        ? 'bg-emerald-50 text-emerald-800 border-2 border-[#00D084]'
+                        : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    <span>TikTok</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* 7-Step Setup Checklist Container (Exact Card Layout) */}
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden divide-y divide-gray-100">
+                
+                {/* Step 1: Connect WhatsApp */}
+                <div className="p-5 sm:p-6 bg-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="flex items-start gap-4">
+                    <div className="w-8 h-8 rounded-full border-2 border-[#00D084] text-[#00D084] font-bold text-sm flex items-center justify-center shrink-0">
+                      1
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-gray-900">Connect WhatsApp</h4>
+                      <p className="text-xs text-gray-500 mt-0.5">Start receiving and resolving customer issues on WhatsApp</p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => setIsConnectModalOpen(true)}
+                    className="px-5 py-2.5 rounded-xl bg-[#00D084] hover:bg-[#00be77] text-[#07301f] font-bold text-xs shadow-sm transition-all shrink-0 cursor-pointer"
+                  >
+                    Connect WhatsApp
+                  </button>
+                </div>
+
+                {/* Step 2: Preview and deploy your AI agent */}
+                <div 
+                  onClick={() => setCurrentView('astra')}
+                  className="p-5 sm:p-6 bg-emerald-50/40 hover:bg-emerald-50/70 border-l-4 border-l-[#00D084] flex items-center justify-between gap-4 cursor-pointer transition-colors"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-8 h-8 rounded-full border border-emerald-300 text-emerald-700 font-bold text-sm flex items-center justify-center shrink-0 bg-white">
+                      2
+                    </div>
+                    <span className="text-sm font-semibold text-gray-900">Preview and deploy your AI agent</span>
+                  </div>
+                  <ChevronRight size={16} className="text-emerald-600" />
+                </div>
+
+                {/* Step 3: Manage all incoming leads */}
+                <div 
+                  onClick={() => setCurrentView('inbox')}
+                  className="p-5 sm:p-6 hover:bg-gray-50 flex items-center justify-between gap-4 cursor-pointer transition-colors"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-8 h-8 rounded-full border border-gray-300 text-gray-500 font-medium text-sm flex items-center justify-center shrink-0">
+                      3
+                    </div>
+                    <span className="text-sm text-gray-800">Manage all incoming leads in your AI powered inbox</span>
+                  </div>
+                  <ChevronRight size={16} className="text-gray-400" />
+                </div>
+
+                {/* Step 4: Invite sales team */}
+                <div 
+                  onClick={() => setCurrentView('settings')}
+                  className="p-5 sm:p-6 hover:bg-gray-50 flex items-center justify-between gap-4 cursor-pointer transition-colors"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-8 h-8 rounded-full border border-gray-300 text-gray-500 font-medium text-sm flex items-center justify-center shrink-0">
+                      4
+                    </div>
+                    <span className="text-sm text-gray-800">Invite your sales team</span>
+                  </div>
+                  <ChevronRight size={16} className="text-gray-400" />
+                </div>
+
+                {/* Divider Label */}
+                <div className="bg-gray-50/80 px-6 py-3 text-xs text-gray-500 font-semibold uppercase tracking-wider">
+                  After set up, explore more of Wati
+                </div>
+
+                {/* Step 5: Sync your CRM */}
+                <div 
+                  onClick={() => setCurrentView('connectors')}
+                  className="p-5 sm:p-6 hover:bg-gray-50 flex items-center justify-between gap-4 cursor-pointer transition-colors"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-8 h-8 rounded-full border border-gray-300 text-gray-500 font-medium text-sm flex items-center justify-center shrink-0">
+                      5
+                    </div>
+                    <span className="text-sm text-gray-800">Sync your CRM to close deals faster</span>
+                  </div>
+                  <ChevronRight size={16} className="text-gray-400" />
+                </div>
+
+                {/* Step 6: Bring in more leads */}
+                <div 
+                  onClick={() => setCurrentView('ads')}
+                  className="p-5 sm:p-6 hover:bg-gray-50 flex items-center justify-between gap-4 cursor-pointer transition-colors"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-8 h-8 rounded-full border border-gray-300 text-gray-500 font-medium text-sm flex items-center justify-center shrink-0">
+                      6
+                    </div>
+                    <span className="text-sm text-gray-800">Bring in more leads by creating ads</span>
+                  </div>
+                  <ChevronRight size={16} className="text-gray-400" />
+                </div>
+
+                {/* Step 7: Automate repetitive actions */}
+                <div 
+                  onClick={() => setCurrentView('automations')}
+                  className="p-5 sm:p-6 hover:bg-gray-50 flex items-center justify-between gap-4 cursor-pointer transition-colors"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-8 h-8 rounded-full border border-gray-300 text-gray-500 font-medium text-sm flex items-center justify-center shrink-0">
+                      7
+                    </div>
+                    <span className="text-sm text-gray-800">Automate repetitive actions</span>
+                  </div>
+                  <ChevronRight size={16} className="text-gray-400" />
+                </div>
+
+              </div>
+
+            </div>
+          )}
+
+          {/* =========================================================================
+              VIEW 2: CAMPAIGNS OVERVIEW DASHBOARD (Exact Match to Image 2)
+          ========================================================================= */}
+          {currentView === 'campaigns' && campaignSubView === 'overview' && (
+            <div className="p-6 sm:p-8 space-y-6 max-w-7xl mx-auto">
+              
+              {/* Top Page Header */}
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-xl sm:text-2xl font-extrabold text-gray-900 tracking-tight">
+                    Campaigns Overview
+                  </h2>
+                  <p className="text-xs text-gray-500 mt-0.5 font-medium">
+                    Get an overview of all your campaign related analytics and insights
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* Default Channel Selector */}
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-xl text-xs font-semibold text-gray-700 shadow-xs">
+                    <span className="w-2 h-2 rounded-full bg-[#00D084]"></span>
+                    <span>Default</span>
+                    <ChevronDown size={14} className="text-gray-400" />
+                  </div>
+
+                  {/* Watch Tutorial */}
+                  <button 
+                    onClick={() => alert('Launching video tutorial: "How to run your first WhatsApp broadcast in Wati"')}
+                    className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 font-semibold px-2 py-1"
+                  >
+                    <Play size={13} fill="currentColor" />
+                    <span>Watch Tutorial</span>
+                  </button>
+
+                  {/* New Campaign Button */}
+                  <button
+                    onClick={() => setCampaignSubView('templates')}
+                    className="px-4 py-2 rounded-xl border border-[#00D084] text-[#00945e] hover:bg-emerald-50 text-xs font-bold transition-all shadow-xs"
+                  >
+                    New Campaign
+                  </button>
+
+                  {/* Guided Campaign Setup Button */}
+                  <button
+                    onClick={() => setCampaignSubView('templates')}
+                    className="px-4 py-2 rounded-xl bg-[#00D084] hover:bg-[#00be77] text-[#07301f] font-bold text-xs shadow-sm transition-all"
+                  >
+                    Guided Campaign Setup
+                  </button>
+                </div>
+              </div>
+
+              {/* Channel Tabs: WhatsApp / SMS */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setCampaignChannel('whatsapp')}
+                  className={`px-5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    campaignChannel === 'whatsapp'
+                      ? 'bg-white text-gray-900 shadow-sm border border-gray-200'
+                      : 'text-gray-500 hover:text-gray-800'
+                  }`}
+                >
+                  WhatsApp
+                </button>
+                <button
+                  onClick={() => setCampaignChannel('sms')}
+                  className={`px-5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                    campaignChannel === 'sms'
+                      ? 'bg-white text-gray-900 shadow-sm border border-gray-200'
+                      : 'text-gray-500 hover:text-gray-800'
+                  }`}
+                >
+                  SMS
+                </button>
+              </div>
+
+              {/* Overview Filter Ribbon */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="font-bold text-gray-900 text-sm">Overview</span>
+
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-xl text-xs font-medium text-gray-700 shadow-xs">
+                    <span>Last 7 days</span>
+                    <ChevronDown size={14} className="text-gray-400" />
+                  </div>
+
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-xl text-xs font-medium text-gray-700 shadow-xs">
+                    <Calendar size={13} className="text-gray-400" />
+                    <span>29 August 2026</span>
+                    <ChevronDown size={14} className="text-gray-400" />
+                  </div>
+
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-xl text-xs font-medium text-gray-700 shadow-xs">
+                    <Calendar size={13} className="text-gray-400" />
+                    <span>05 September 2026</span>
+                    <ChevronDown size={14} className="text-gray-400" />
+                  </div>
+
+                  <button className="p-2 bg-white border border-gray-300 rounded-xl hover:bg-gray-50 text-gray-600 transition-colors shadow-xs">
+                    <RefreshCw size={14} />
+                  </button>
+                </div>
+
+                {/* Right: Preview with sample data toggle */}
+                <div className="flex flex-col sm:items-end gap-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-600 font-medium">Preview with sample data</span>
+                    <button
+                      onClick={() => setPreviewSampleData(!previewSampleData)}
+                      className={`w-9 h-5 rounded-full transition-colors relative cursor-pointer ${
+                        previewSampleData ? 'bg-[#00D084]' : 'bg-gray-300'
+                      }`}
+                    >
+                      <span className={`w-4 h-4 rounded-full bg-white absolute top-0.5 transition-transform ${
+                        previewSampleData ? 'right-0.5' : 'left-0.5'
+                      }`} />
+                    </button>
+                  </div>
+
+                  {previewSampleData && (
+                    <div className="px-3 py-1 bg-amber-50 border border-amber-200 text-amber-800 text-[11px] rounded-lg font-medium flex items-center gap-1.5">
+                      <AlertTriangle size={12} className="text-amber-600" />
+                      <span>Data shown is for representation purpose only</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 3 Top Intelligence Status Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                
+                {/* Card 1: Meta messaging limit */}
+                <div className="p-5 rounded-2xl bg-white border border-gray-200 shadow-xs flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between text-xs text-gray-500 font-semibold mb-2">
+                      <div className="flex items-center gap-1.5 text-emerald-700">
+                        <span className="text-base">👑</span>
+                        <span>Your daily Meta messaging limit</span>
+                        <HelpCircle size={13} className="text-gray-400" />
+                      </div>
+                    </div>
+
+                    <div className="text-sm font-bold text-gray-900 mt-2">
+                      {previewSampleData ? '957/2000 unique contacts' : '0/250 unique contacts'}
+                    </div>
+
+                    {/* Progress Bar */}
+                    <div className="w-full h-2 bg-gray-100 rounded-full mt-2 overflow-hidden">
+                      <div className={`h-full rounded-full transition-all duration-500 ${
+                        previewSampleData ? 'w-[48%] bg-[#00D084]' : 'w-0 bg-[#00D084]'
+                      }`}></div>
+                    </div>
+
+                    <div className="mt-2 text-right">
+                      <a href="#limits" className="text-xs text-blue-600 hover:underline font-medium">
+                        What are limits?
+                      </a>
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-gray-100 text-[11px] text-gray-400">
+                    Sample data, turn off preview for actuals
+                  </div>
+                </div>
+
+                {/* Card 2: Consecutive days of messaging */}
+                <div className="p-5 rounded-2xl bg-white border border-gray-200 shadow-xs flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center gap-1.5 text-xs text-amber-600 font-semibold mb-2">
+                      <Zap size={15} />
+                      <span className="text-gray-700">Consecutive days of messaging</span>
+                      <HelpCircle size={13} className="text-gray-400" />
+                    </div>
+
+                    {/* 7 Day Status Circles */}
+                    <div className="flex items-center gap-2.5 my-4">
+                      {[1, 2, 3, 4, 5, 6, 7].map((day) => (
+                        <div
+                          key={day}
+                          className={`w-4 h-4 rounded-full border-2 transition-all ${
+                            previewSampleData && day <= 3
+                              ? 'border-amber-500 bg-amber-100'
+                              : 'border-amber-400 bg-transparent'
+                          }`}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-gray-100 text-[11px] text-gray-400">
+                    Sample data, turn off preview for actuals
+                  </div>
+                </div>
+
+                {/* Card 3: Messaging Quality */}
+                <div className="p-5 rounded-2xl bg-white border border-gray-200 shadow-xs flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center gap-1.5 text-xs text-blue-600 font-semibold mb-2">
+                      <ShieldCheck size={15} />
+                      <span className="text-gray-700">Messaging Quality</span>
+                      <HelpCircle size={13} className="text-gray-400" />
+                    </div>
+
+                    <div className="flex items-center gap-2 my-3">
+                      <div className="flex items-end gap-1 h-5">
+                        <div className="w-1.5 h-2 bg-[#00D084] rounded-xs"></div>
+                        <div className="w-1.5 h-3.5 bg-[#00D084] rounded-xs"></div>
+                        <div className="w-1.5 h-5 bg-[#00D084] rounded-xs"></div>
+                      </div>
+                      <span className="text-sm font-bold text-emerald-700">
+                        {previewSampleData ? 'High' : 'Pending Verification'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-gray-100 text-[11px] text-gray-400">
+                    Sample data, turn off preview for actuals
+                  </div>
+                </div>
+
+              </div>
+
+              {/* 8 Analytics Metrics Grid (Exact Match to Image 2) */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3.5">
+                
+                {/* 1. Sent */}
+                <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex items-center justify-between">
+                  <div>
+                    <div className="text-2xl font-extrabold text-gray-900 font-display">
+                      {previewSampleData ? '600' : '0'}
+                    </div>
+                    <div className="text-xs text-gray-500 font-medium flex items-center gap-1 mt-0.5">
+                      <span>Sent</span>
+                      <HelpCircle size={11} className="text-gray-300" />
+                    </div>
+                  </div>
+                  <div className="w-6 h-6 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                    <Check size={14} />
+                  </div>
+                </div>
+
+                {/* 2. Delivered */}
+                <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex items-center justify-between">
+                  <div>
+                    <div className="text-2xl font-extrabold text-gray-900 font-display">
+                      {previewSampleData ? '590' : '0'}
+                    </div>
+                    <div className="text-xs text-gray-500 font-medium flex items-center gap-1 mt-0.5">
+                      <span>Delivered</span>
+                      <HelpCircle size={11} className="text-gray-300" />
+                    </div>
+                  </div>
+                  <div className="w-6 h-6 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                    <CheckCheck size={14} />
+                  </div>
+                </div>
+
+                {/* 3. Read */}
+                <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex items-center justify-between">
+                  <div>
+                    <div className="text-2xl font-extrabold text-gray-900 font-display">
+                      {previewSampleData ? '582' : '0'}
+                    </div>
+                    <div className="text-xs text-gray-500 font-medium flex items-center gap-1 mt-0.5">
+                      <span>Read</span>
+                      <HelpCircle size={11} className="text-gray-300" />
+                    </div>
+                  </div>
+                  <div className="w-6 h-6 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                    <Eye size={14} />
+                  </div>
+                </div>
+
+                {/* 4. Replied */}
+                <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex items-center justify-between">
+                  <div>
+                    <div className="text-2xl font-extrabold text-gray-900 font-display">
+                      {previewSampleData ? '227' : '0'}
+                    </div>
+                    <div className="text-xs text-gray-500 font-medium flex items-center gap-1 mt-0.5">
+                      <span>Replied</span>
+                      <HelpCircle size={11} className="text-gray-300" />
+                    </div>
+                  </div>
+                  <div className="w-6 h-6 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                    <CornerDownLeft size={14} />
+                  </div>
+                </div>
+
+                {/* 5. Sending */}
+                <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex items-center justify-between">
+                  <div>
+                    <div className="text-2xl font-extrabold text-gray-900 font-display">
+                      {previewSampleData ? '0' : '0'}
+                    </div>
+                    <div className="text-xs text-gray-500 font-medium flex items-center gap-1 mt-0.5">
+                      <span>Sending</span>
+                      <HelpCircle size={11} className="text-gray-300" />
+                    </div>
+                  </div>
+                  <div className="w-6 h-6 rounded-full bg-gray-50 text-gray-400 flex items-center justify-center">
+                    <Send size={14} />
+                  </div>
+                </div>
+
+                {/* 6. Failed */}
+                <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex items-center justify-between">
+                  <div>
+                    <div className="text-2xl font-extrabold text-gray-900 font-display">
+                      {previewSampleData ? '59' : '0'}
+                    </div>
+                    <div className="text-xs text-gray-500 font-medium flex items-center gap-1 mt-0.5">
+                      <span>Failed</span>
+                      <HelpCircle size={11} className="text-gray-300" />
+                    </div>
+                  </div>
+                  <div className="w-6 h-6 rounded-full bg-rose-50 text-rose-500 flex items-center justify-center">
+                    <XCircle size={14} />
+                  </div>
+                </div>
+
+                {/* 7. Processing */}
+                <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex items-center justify-between">
+                  <div>
+                    <div className="text-2xl font-extrabold text-gray-900 font-display">
+                      {previewSampleData ? '1' : '0'}
+                    </div>
+                    <div className="text-xs text-gray-500 font-medium flex items-center gap-1 mt-0.5">
+                      <span>Processing</span>
+                      <HelpCircle size={11} className="text-gray-300" />
+                    </div>
+                  </div>
+                  <div className="w-6 h-6 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                    <RefreshCw size={14} />
+                  </div>
+                </div>
+
+                {/* 8. Queued */}
+                <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex items-center justify-between">
+                  <div>
+                    <div className="text-2xl font-extrabold text-gray-900 font-display">
+                      {previewSampleData ? '2' : '0'}
+                    </div>
+                    <div className="text-xs text-gray-500 font-medium flex items-center gap-1 mt-0.5">
+                      <span>Queued</span>
+                      <HelpCircle size={11} className="text-gray-300" />
+                    </div>
+                  </div>
+                  <div className="w-6 h-6 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                    <Layers size={14} />
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Campaign Planner Section */}
+              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                  <div>
+                    <h3 className="text-base font-bold text-gray-900">Campaign Planner</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Organize and schedule your upcoming broadcast distributions</p>
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-1.5 p-1 bg-gray-100 rounded-xl">
+                      <button
+                        onClick={() => setPlannerView('calendar')}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                          plannerView === 'calendar'
+                            ? 'bg-white text-gray-900 shadow-xs'
+                            : 'text-gray-500 hover:text-gray-900'
+                        }`}
+                      >
+                        <Calendar size={13} />
+                        <span>Calendar</span>
+                      </button>
+
+                      <button
+                        onClick={() => setPlannerView('list')}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                          plannerView === 'list'
+                            ? 'bg-white text-gray-900 shadow-xs'
+                            : 'text-gray-500 hover:text-gray-900'
+                        }`}
+                      >
+                        <List size={13} />
+                        <span>List</span>
+                      </button>
+                    </div>
+
+                    <label className="flex items-center gap-2 text-xs text-gray-600 font-medium cursor-pointer">
+                      <input type="checkbox" defaultChecked className="rounded text-emerald-600 focus:ring-emerald-500" />
+                      <span>Set as default</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Planner Calendar / List View */}
+                {plannerView === 'calendar' ? (
+                  <div className="border border-gray-200 rounded-xl p-4 overflow-x-auto">
+                    <div className="grid grid-cols-7 gap-2 min-w-[600px] text-center text-xs">
+                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
+                        <div key={d} className="font-bold text-gray-500 py-1.5">{d}</div>
+                      ))}
+                      {[30, 31, 1, 2, 3, 4, 5].map((d, i) => (
+                        <div key={i} className={`p-3 rounded-xl border min-h-[90px] text-left transition-all ${
+                          i === 6 ? 'border-emerald-500 bg-emerald-50/30' : 'border-gray-100 bg-gray-50/50'
+                        }`}>
+                          <div className="font-bold text-xs text-gray-700">{d}</div>
+                          {i === 6 && (
+                            <div className="mt-2 p-1.5 bg-white rounded-lg border border-emerald-200 text-[10px] text-emerald-900 shadow-xs">
+                              <div className="font-bold truncate">📢 VIP Weekend Sale</div>
+                              <div className="text-gray-400">12,450 recipients</div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-gray-100 border border-gray-200 rounded-xl overflow-hidden">
+                    <div className="p-4 flex items-center justify-between text-xs">
+                      <div>
+                        <div className="font-bold text-gray-900">VIP Weekend Flash Sale</div>
+                        <div className="text-gray-500">Target Segment: Active Buyers • 12,450 contacts</div>
+                      </div>
+                      <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px]">
+                        Scheduled: Sep 5, 2:00 PM
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+            </div>
+          )}
+
+          {/* Sub-views for Campaigns (Templates & Broadcasts) */}
+          {currentView === 'campaigns' && campaignSubView === 'templates' && (
+            <div className="p-6">
+              <TemplateStudio />
+            </div>
+          )}
+
+          {currentView === 'campaigns' && campaignSubView === 'scheduled' && (
+            <div className="p-6">
+              <BroadcastManager />
+            </div>
+          )}
+
+          {/* =========================================================================
+              VIEW 3: TEAM INBOX
+          ========================================================================= */}
+          {currentView === 'inbox' && (
+            <div className="h-full">
+              <WhatsAppInbox userSession={userSession} />
+            </div>
+          )}
+
+          {/* =========================================================================
+              VIEW 4: CONTACTS CRM
+          ========================================================================= */}
+          {currentView === 'contacts' && (
+            <div className="p-6">
+              <ContactsCRM />
+            </div>
+          )}
+
+          {/* =========================================================================
+              VIEW 5: ASTRA AI AGENT
+          ========================================================================= */}
+          {currentView === 'astra' && (
+            <div className="p-6 sm:p-8 max-w-4xl mx-auto space-y-6">
+              <div className="flex items-center justify-between pb-4 border-b border-gray-200">
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                    <Sparkles size={20} className="text-emerald-600" />
+                    <span>Astra AI Customer Agent</span>
+                  </h2>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Zero-code autonomous conversational AI trained on your website and support documents
+                  </p>
+                </div>
+                <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold">
+                  Status: Active
+                </span>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-xs space-y-4">
+                <h3 className="font-bold text-sm text-gray-900">Agent Persona &amp; Knowledge Base</h3>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Agent Name</label>
+                  <input
+                    type="text"
+                    defaultValue="Astra"
+                    className="w-full text-xs px-3 py-2 rounded-xl border border-gray-300 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">System Instructions</label>
+                  <textarea
+                    rows={4}
+                    defaultValue="You are the friendly, helpful customer engagement assistant for Wati. Answer user queries concisely, provide product catalog links when requested, and escalate to human agent if the user asks for refund or human support."
+                    className="w-full text-xs p-3 rounded-xl border border-gray-300 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+                <button
+                  onClick={() => alert('Astra AI agent settings updated successfully!')}
+                  className="px-5 py-2.5 rounded-xl bg-[#00D084] text-[#07301f] font-bold text-xs shadow-sm hover:bg-[#00be77]"
+                >
+                  Save AI Persona
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* =========================================================================
+              VIEW 6: AUTOMATIONS
+          ========================================================================= */}
+          {currentView === 'automations' && (
+            <div className="p-6">
+              <AutomationBuilder />
+            </div>
+          )}
+
+          {/* =========================================================================
+              VIEW 7: COMMERCE & CATALOG
+          ========================================================================= */}
+          {currentView === 'commerce' && (
+            <div className="p-6 sm:p-8 max-w-4xl mx-auto space-y-6">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">WhatsApp Commerce &amp; Catalog</h2>
+                <p className="text-xs text-gray-500 mt-1">Connect your Facebook Catalog or Shopify store for direct checkout in WhatsApp</p>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-xs text-center py-12">
+                <ShoppingBag size={40} className="mx-auto text-emerald-500 mb-3" />
+                <h3 className="font-bold text-gray-900 text-base">Meta Commerce Manager Ready</h3>
+                <p className="text-xs text-gray-500 max-w-md mx-auto mt-1 mb-6">
+                  Sync product catalogs, display multi-item carousels, and collect orders directly inside WhatsApp chat threads.
+                </p>
+                <button
+                  onClick={() => alert('Syncing catalog with Meta Commerce API...')}
+                  className="px-6 py-2.5 rounded-xl bg-[#00D084] text-[#07301f] font-bold text-xs shadow-sm"
+                >
+                  Connect Product Catalog
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* =========================================================================
+              VIEW 8: ADS (CTWA HUB)
+          ========================================================================= */}
+          {currentView === 'ads' && (
+            <div className="p-6">
+              <CTWAHub />
+            </div>
+          )}
+
+          {/* =========================================================================
+              VIEW 9: ANALYTICS
+          ========================================================================= */}
+          {currentView === 'analytics' && (
+            <div className="p-6 sm:p-8 max-w-5xl mx-auto space-y-6">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">Analytics &amp; Intelligence</h2>
+                <p className="text-xs text-gray-500 mt-1">Comprehensive delivery rates, agent response times, and revenue attribution</p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="p-6 rounded-2xl bg-white border border-gray-200 shadow-xs">
+                  <div className="text-xs text-gray-500 font-bold uppercase">Average Response Time</div>
+                  <div className="text-3xl font-extrabold text-emerald-600 mt-2">1m 42s</div>
+                  <div className="text-[11px] text-gray-400 mt-1">↓ 68% vs industry average</div>
+                </div>
+
+                <div className="p-6 rounded-2xl bg-white border border-gray-200 shadow-xs">
+                  <div className="text-xs text-gray-500 font-bold uppercase">Customer CSAT Score</div>
+                  <div className="text-3xl font-extrabold text-emerald-600 mt-2">4.9 / 5.0</div>
+                  <div className="text-[11px] text-gray-400 mt-1">Based on 1,420 post-chat ratings</div>
+                </div>
+
+                <div className="p-6 rounded-2xl bg-white border border-gray-200 shadow-xs">
+                  <div className="text-xs text-gray-500 font-bold uppercase">AI Auto-Resolution</div>
+                  <div className="text-3xl font-extrabold text-emerald-600 mt-2">72.4%</div>
+                  <div className="text-[11px] text-gray-400 mt-1">Resolved without human escalation</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* =========================================================================
+              VIEW 10: CONNECTORS / API
+          ========================================================================= */}
+          {currentView === 'connectors' && (
+            <div className="p-6">
+              <MCPGateway userSession={userSession} />
+            </div>
+          )}
+
+          {/* =========================================================================
+              VIEW 11: SETTINGS
+          ========================================================================= */}
+          {currentView === 'settings' && (
+            <div className="p-6 sm:p-8 max-w-4xl mx-auto space-y-6">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">Workspace Settings</h2>
+                <p className="text-xs text-gray-500 mt-1">Manage users, channels, billing, and API tokens</p>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-xs space-y-4">
+                <h3 className="font-bold text-sm text-gray-900">User Profile</h3>
+                <div className="grid grid-cols-2 gap-4 text-xs">
+                  <div>
+                    <label className="block font-semibold text-gray-700 mb-1">Name</label>
+                    <input
+                      type="text"
+                      defaultValue={userName}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-gray-700 mb-1">Email</label>
+                    <input
+                      type="email"
+                      defaultValue={userSession?.email || 'moamen@company.com'}
+                      className="w-full px-3 py-2 rounded-xl border border-gray-300"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-gray-100 flex items-center justify-between">
+                  <div>
+                    <div className="text-xs font-bold text-gray-900">Connected Phone Number</div>
+                    <div className="text-xs text-gray-500">{account?.phone_number || '+1 (202) 908-7457 (Demo Virtual)'}</div>
+                  </div>
+                  <button
+                    onClick={() => setIsConnectModalOpen(true)}
+                    className="px-4 py-1.5 rounded-xl border border-gray-300 hover:border-gray-400 text-xs font-bold"
+                  >
+                    Manage WABA
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+        </main>
+
+      </div>
+
+      {/* ─────────────────────────────────────────────────────────────
+          4. FLOATING GREEN CHAT WIDGET BUBBLE (Exact Match to Image 1)
+      ───────────────────────────────────────────────────────────── */}
+      <div className="fixed bottom-6 right-6 z-50">
+        {chatWidgetOpen ? (
+          <div className="w-84 sm:w-96 bg-white rounded-3xl shadow-2xl border border-gray-200 overflow-hidden flex flex-col animate-in fade-in slide-in-from-bottom-5 duration-200">
+            {/* Header */}
+            <div className="bg-[#00D084] text-[#07301f] p-4 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-full bg-white text-emerald-700 font-bold flex items-center justify-center text-xs">
+                  <Bot size={16} />
+                </div>
+                <div>
+                  <div className="font-bold text-xs">Astra AI Support</div>
+                  <div className="text-[10px] text-emerald-900">Online • Typically replies instantly</div>
+                </div>
+              </div>
+              <button 
+                onClick={() => setChatWidgetOpen(false)}
+                className="text-emerald-900 hover:text-black p-1 rounded-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Chat Body */}
+            <div className="p-4 h-72 overflow-y-auto space-y-3 bg-[#f0f2f5] text-xs">
+              {chatMessages.map((msg, i) => (
+                <div 
+                  key={i} 
+                  className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+                >
+                  <div className={`p-3 rounded-2xl max-w-[80%] shadow-xs ${
+                    msg.sender === 'user' 
+                      ? 'bg-[#00D084] text-[#07301f] rounded-tr-none font-medium' 
+                      : 'bg-white text-gray-800 rounded-tl-none border border-gray-200'
+                  }`}>
+                    {msg.text}
+                    <div className="text-[9px] text-gray-400 mt-1 text-right">{msg.time}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Chat Input */}
+            <form onSubmit={handleSendChat} className="p-2.5 bg-white border-t border-gray-200 flex items-center gap-2">
+              <input
+                type="text"
+                value={inputChatText}
+                onChange={(e) => setInputChatText(e.target.value)}
+                placeholder="Type a WhatsApp message..."
+                className="flex-1 px-3 py-2 text-xs rounded-xl border border-gray-300 focus:outline-none focus:border-emerald-500"
+              />
+              <button
+                type="submit"
+                className="p-2 bg-[#00D084] text-[#07301f] hover:bg-[#00be77] rounded-xl transition-colors cursor-pointer"
+              >
+                <Send size={15} />
+              </button>
+            </form>
+          </div>
+        ) : (
+          <button
+            onClick={() => setChatWidgetOpen(true)}
+            className="w-14 h-14 rounded-full bg-[#00D084] hover:bg-[#00be77] text-white flex items-center justify-center shadow-xl shadow-emerald-500/30 hover:scale-105 active:scale-95 transition-all cursor-pointer"
+            title="Open WhatsApp chat support"
+          >
+            <MessageSquare size={26} />
+          </button>
+        )}
+      </div>
+
+      {/* Meta WABA Connection Modal */}
+      {isConnectModalOpen && (
+        <WABAConnectionModal
+          isOpen={isConnectModalOpen}
+          onClose={() => {
+            setIsConnectModalOpen(false);
+            fetchAccountStatus();
+          }}
+          onSuccess={() => {
+            setIsConnectModalOpen(false);
+            fetchAccountStatus();
+          }}
+        />
+      )}
+
     </div>
   );
 };

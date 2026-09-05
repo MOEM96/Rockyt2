@@ -1,109 +1,198 @@
-import React from 'react';
-import { ArrowRight, Check } from 'lucide-react';
+import React, { useState } from 'react';
+import { ArrowRight, Check, Sparkles, ShieldCheck } from 'lucide-react';
 
 interface PricingProps {
   onStartOnboarding?: () => void;
 }
 
 const Pricing: React.FC<PricingProps> = ({ onStartOnboarding }) => {
-  const priceRows = [
-    {
-      price: "$3",
-      countries: ["United States", "United Kingdom", "Germany", "France", "Spain", "Canada", "Italy", "Ireland"]
-    },
-    {
-      price: "$4",
-      countries: ["Brazil", "Estonia", "Croatia", "Puerto Rico", "Netherlands"]
-    },
-    {
-      price: "$6",
-      countries: ["Mexico", "Singapore", "Cyprus"]
-    },
-    {
-      price: "$7",
-      countries: ["Australia", "Iceland"]
-    },
-    {
-      price: "$11",
-      countries: ["Poland", "Sweden", "South Africa", "Panama"]
-    },
-    {
-      price: "$16–$21",
-      countries: ["Georgia", "Thailand", "Colombia", "Indonesia"]
-    }
-  ];
+  const [billingPeriod, setBillingPeriod] = useState<'monthly' | 'annual'>('annual');
 
   return (
-    <section id="pricing" className="scroll-mt-32 py-20 relative z-10">
-      <div className="mx-auto w-full max-w-[1080px] px-6 lg:px-8">
+    <section id="pricing" className="py-24 bg-[#fafbfc] border-b border-gray-100 relative z-10">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6">
         
         {/* HEADER */}
-        <div className="flex flex-col items-center gap-4 text-center max-w-3xl mx-auto mb-12">
-          <span className="font-mono text-sm font-bold text-brand uppercase tracking-wider">Pricing</span>
-          <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-white">
-            Meta's rates, zero markup
+        <div className="flex flex-col items-center gap-4 text-center max-w-3xl mx-auto mb-10">
+          <span className="text-xs font-bold text-emerald-700 uppercase tracking-wider bg-emerald-50 border border-emerald-200 px-3.5 py-1 rounded-full">
+            Transparent Pricing
+          </span>
+          <h2 className="text-3xl sm:text-5xl font-display font-bold tracking-tight text-gray-900">
+            Simple plans that grow with your business
           </h2>
-          <p className="text-zinc-400 text-base leading-relaxed">
-            You pay Rockyt only for connected accounts and the number itself. Everything the API does is free. Meta bills the message directly, at their rate.
-          </p>
-        </div>
-
-        {/* 2 MAIN PRICING PILLS */}
-        <div className="flex flex-col sm:flex-row items-stretch justify-center gap-4 mb-14 max-w-2xl mx-auto">
-          <div className="flex-1 rounded-2xl p-6 bg-brand/10 border border-brand/30 text-brand text-center flex flex-col justify-center">
-            <p className="text-2xl font-black mb-1">$0 /account</p>
-            <p className="text-sm font-medium text-brand/90">first 2, then graduated</p>
-          </div>
-
-          <div className="flex-1 rounded-2xl p-6 bg-zinc-900/90 border border-zinc-800 text-white text-center flex flex-col justify-center">
-            <p className="text-2xl font-black mb-1">$3 /number</p>
-            <p className="text-sm font-medium text-zinc-400">optional, if bought here</p>
-          </div>
-        </div>
-
-        {/* NUMBER PRICING BY COUNTRY TABLE */}
-        <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl p-6 sm:p-8">
-          <p className="text-center text-base font-bold text-white mb-6">
-            Example number pricing by country
+          <p className="text-gray-600 text-base sm:text-lg leading-relaxed">
+            All plans include access to official WhatsApp Cloud API, shared team inbox, and broadcast automation.
           </p>
 
-          <div className="space-y-4">
-            <div className="flex items-center justify-between text-xs font-bold text-zinc-500 uppercase tracking-wider pb-2 border-b border-zinc-800">
-              <span className="w-24 sm:w-36">Monthly Price</span>
-              <span className="flex-1">Example Countries</span>
-            </div>
+          {/* BILLING TOGGLE */}
+          <div className="inline-flex items-center gap-2 p-1 rounded-full bg-gray-200/70 border border-gray-300/60 mt-2">
+            <button
+              onClick={() => setBillingPeriod('monthly')}
+              className={`px-5 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                billingPeriod === 'monthly'
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              Monthly
+            </button>
+            <button
+              onClick={() => setBillingPeriod('annual')}
+              className={`px-5 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                billingPeriod === 'annual'
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              <span>Annual</span>
+              <span className="px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">20% OFF</span>
+            </button>
+          </div>
+        </div>
 
-            {priceRows.map((row, idx) => (
-              <div 
-                key={idx} 
-                className="flex items-center justify-between gap-4 py-3 border-b border-zinc-800/60 last:border-0"
-              >
-                <span className="w-24 sm:w-36 font-mono font-bold text-brand text-sm sm:text-base">
-                  {row.price}
-                </span>
-                <div className="flex flex-1 flex-wrap gap-1.5">
-                  {row.countries.map((c, i) => (
-                    <span 
-                      key={i} 
-                      className="rounded-md bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300 font-medium"
-                    >
-                      {c}
-                    </span>
-                  ))}
+        {/* 3 PRICING TIERS */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-stretch">
+          
+          {/* TIER 1: GROWTH */}
+          <div className="rounded-3xl bg-white border border-gray-200 p-8 shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
+            <div>
+              <div className="text-lg font-bold text-gray-900">Growth</div>
+              <p className="text-xs text-gray-500 mt-1">For startups and small businesses getting started with WhatsApp.</p>
+              
+              <div className="mt-6 mb-6">
+                <div className="flex items-baseline gap-1">
+                  <span className="text-4xl font-extrabold text-gray-900 font-display">
+                    {billingPeriod === 'annual' ? '$39' : '$49'}
+                  </span>
+                  <span className="text-xs text-gray-500">/month</span>
+                </div>
+                <div className="text-[11px] text-emerald-600 font-semibold mt-1">Includes 1,000 active contacts</div>
+              </div>
+
+              <div className="space-y-3 text-xs text-gray-700 pt-4 border-t border-gray-100">
+                <div className="flex items-center gap-2.5">
+                  <Check size={16} className="text-emerald-500 shrink-0" />
+                  <span>5 Multi-Agent Team Inbox seats</span>
+                </div>
+                <div className="flex items-center gap-2.5">
+                  <Check size={16} className="text-emerald-500 shrink-0" />
+                  <span>Unlimited Broadcasts &amp; Templates</span>
+                </div>
+                <div className="flex items-center gap-2.5">
+                  <Check size={16} className="text-emerald-500 shrink-0" />
+                  <span>Standard Chatbot Rule Builder</span>
+                </div>
+                <div className="flex items-center gap-2.5">
+                  <Check size={16} className="text-emerald-500 shrink-0" />
+                  <span>Click-to-WhatsApp Ads tracking</span>
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
+            </div>
 
-        {/* CTA BUTTON */}
-        <div className="flex justify-center mt-10">
-          <button
-            onClick={onStartOnboarding}
-            className="inline-flex items-center gap-2 rounded-xl bg-brand hover:bg-brand-hover text-white font-bold text-base px-8 py-4 transition-all shadow-xl shadow-brand/25"
-          >
-            Connect my WhatsApp account <ArrowRight className="w-4 h-4" />
-          </button>
+            <button
+              onClick={onStartOnboarding}
+              className="mt-8 w-full py-3 rounded-full border border-gray-300 hover:border-gray-400 bg-white hover:bg-gray-50 text-gray-900 font-bold text-sm shadow-xs transition-all"
+            >
+              Start Free Trial
+            </button>
+          </div>
+
+          {/* TIER 2: PRO (POPULAR) */}
+          <div className="rounded-3xl bg-white border-2 border-[#00D084] p-8 shadow-xl relative flex flex-col justify-between hover:scale-[1.02] transition-all">
+            <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full bg-[#00D084] text-[#07301f] text-xs font-black uppercase tracking-wider shadow-sm flex items-center gap-1">
+              <Sparkles size={12} /> MOST POPULAR
+            </div>
+
+            <div>
+              <div className="text-lg font-bold text-gray-900">Pro</div>
+              <p className="text-xs text-gray-500 mt-1">For growing teams requiring autonomous AI agents &amp; CRM integrations.</p>
+              
+              <div className="mt-6 mb-6">
+                <div className="flex items-baseline gap-1">
+                  <span className="text-4xl font-extrabold text-gray-900 font-display">
+                    {billingPeriod === 'annual' ? '$79' : '$99'}
+                  </span>
+                  <span className="text-xs text-gray-500">/month</span>
+                </div>
+                <div className="text-[11px] text-emerald-600 font-semibold mt-1">Includes 5,000 active contacts</div>
+              </div>
+
+              <div className="space-y-3 text-xs text-gray-700 pt-4 border-t border-gray-100">
+                <div className="flex items-center gap-2.5">
+                  <Check size={16} className="text-emerald-500 shrink-0" />
+                  <span><strong>Astra AI Copilot</strong> with custom knowledge base</span>
+                </div>
+                <div className="flex items-center gap-2.5">
+                  <Check size={16} className="text-emerald-500 shrink-0" />
+                  <span>10 Multi-Agent Team Inbox seats</span>
+                </div>
+                <div className="flex items-center gap-2.5">
+                  <Check size={16} className="text-emerald-500 shrink-0" />
+                  <span>Meta Conversions API (CAPI) sync</span>
+                </div>
+                <div className="flex items-center gap-2.5">
+                  <Check size={16} className="text-emerald-500 shrink-0" />
+                  <span>HubSpot, Shopify &amp; Zapier connectors</span>
+                </div>
+                <div className="flex items-center gap-2.5">
+                  <Check size={16} className="text-emerald-500 shrink-0" />
+                  <span>Green Tick Official Verification assistance</span>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={onStartOnboarding}
+              className="mt-8 w-full py-3 rounded-full bg-[#00D084] text-[#07301f] hover:bg-[#00be77] font-bold text-sm shadow-md shadow-emerald-500/25 transition-all"
+            >
+              Start 7-Day Free Trial
+            </button>
+          </div>
+
+          {/* TIER 3: BUSINESS */}
+          <div className="rounded-3xl bg-white border border-gray-200 p-8 shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
+            <div>
+              <div className="text-lg font-bold text-gray-900">Business</div>
+              <p className="text-xs text-gray-500 mt-1">For scale-ups and high-volume messaging enterprises.</p>
+              
+              <div className="mt-6 mb-6">
+                <div className="flex items-baseline gap-1">
+                  <span className="text-4xl font-extrabold text-gray-900 font-display">
+                    {billingPeriod === 'annual' ? '$239' : '$299'}
+                  </span>
+                  <span className="text-xs text-gray-500">/month</span>
+                </div>
+                <div className="text-[11px] text-emerald-600 font-semibold mt-1">Includes 25,000 active contacts</div>
+              </div>
+
+              <div className="space-y-3 text-xs text-gray-700 pt-4 border-t border-gray-100">
+                <div className="flex items-center gap-2.5">
+                  <Check size={16} className="text-emerald-500 shrink-0" />
+                  <span>Unlimited Team Inbox seats</span>
+                </div>
+                <div className="flex items-center gap-2.5">
+                  <Check size={16} className="text-emerald-500 shrink-0" />
+                  <span>High-throughput WhatsApp Cloud API rate limits</span>
+                </div>
+                <div className="flex items-center gap-2.5">
+                  <Check size={16} className="text-emerald-500 shrink-0" />
+                  <span>Dedicated Customer Success Manager</span>
+                </div>
+                <div className="flex items-center gap-2.5">
+                  <Check size={16} className="text-emerald-500 shrink-0" />
+                  <span>Custom IP whitelisting &amp; SLA guarantee</span>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={onStartOnboarding}
+              className="mt-8 w-full py-3 rounded-full border border-gray-300 hover:border-gray-400 bg-white hover:bg-gray-50 text-gray-900 font-bold text-sm shadow-xs transition-all"
+            >
+              Talk to Enterprise Sales
+            </button>
+          </div>
+
         </div>
 
       </div>
