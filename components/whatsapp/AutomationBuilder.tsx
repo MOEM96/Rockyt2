@@ -5,6 +5,7 @@ import {
   GitBranch, Bot, Database, Activity, RefreshCw, X, HelpCircle, Loader2
 } from 'lucide-react';
 import { AutomationFlow, AutomationNode, AutomationEdge, AutomationNodeType } from '../../lib/whatsappTypes';
+import { getAuthHeaders } from '../../lib/frontendAuth';
 
 export const AutomationBuilder: React.FC = () => {
   const [flows, setFlows] = useState<AutomationFlow[]>([]);
@@ -18,7 +19,7 @@ export const AutomationBuilder: React.FC = () => {
   // Load flows from backend
   const loadFlows = async () => {
     try {
-      const res = await fetch('/api/whatsapp/automations');
+      const res = await fetch('/api/whatsapp/automations', { headers: getAuthHeaders() });
       if (res.ok) {
         const data = await res.json();
         if (data.data) {
@@ -44,7 +45,7 @@ export const AutomationBuilder: React.FC = () => {
     try {
       const res = await fetch(`/api/whatsapp/automations/${flowId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ is_active: !currentStatus }),
       });
       if (res.ok) {
@@ -65,6 +66,7 @@ export const AutomationBuilder: React.FC = () => {
     try {
       const res = await fetch(`/api/whatsapp/automations/${activeFlowId}/test`, {
         method: 'POST',
+        headers: getAuthHeaders(),
       });
       const data = await res.json();
       if (data.result) {
@@ -134,7 +136,7 @@ export const AutomationBuilder: React.FC = () => {
     try {
       const res = await fetch(`/api/whatsapp/automations/${activeFlow.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify(activeFlow),
       });
       if (res.ok) {
@@ -198,7 +200,7 @@ export const AutomationBuilder: React.FC = () => {
     setActiveFlowId(newFlow.id);
     await fetch('/api/whatsapp/automations', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify(newFlow),
     });
     showNotification('Created new automation flow!');

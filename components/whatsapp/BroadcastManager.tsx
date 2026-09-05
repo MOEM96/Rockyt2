@@ -5,6 +5,8 @@ import {
 } from 'lucide-react';
 import { BroadcastCampaign, WhatsAppTemplate, WhatsAppContact } from '../../lib/whatsappTypes';
 
+import { getAuthHeaders } from '../../lib/frontendAuth';
+
 export const BroadcastManager: React.FC = () => {
   const [broadcasts, setBroadcasts] = useState<BroadcastCampaign[]>([]);
   const [templates, setTemplates] = useState<WhatsAppTemplate[]>([]);
@@ -21,10 +23,11 @@ export const BroadcastManager: React.FC = () => {
   const loadData = async () => {
     try {
       setIsLoading(true);
+      const headers = getAuthHeaders();
       const [resBc, resTmpl, resCnt] = await Promise.all([
-        fetch('/api/whatsapp/broadcasts'),
-        fetch('/api/whatsapp/templates'),
-        fetch('/api/whatsapp/contacts'),
+        fetch('/api/whatsapp/broadcasts', { headers }),
+        fetch('/api/whatsapp/templates', { headers }),
+        fetch('/api/whatsapp/contacts', { headers }),
       ]);
 
       if (resBc.ok) {
@@ -62,7 +65,7 @@ export const BroadcastManager: React.FC = () => {
     try {
       const res = await fetch('/api/whatsapp/broadcasts', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({
           title,
           template_name: selectedTemplate,

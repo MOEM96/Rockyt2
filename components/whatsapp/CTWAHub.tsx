@@ -5,6 +5,7 @@ import {
   ShieldCheck, ExternalLink, Play, Clock, Sparkles
 } from 'lucide-react';
 import { MetaCAPIEvent } from '../../lib/whatsappTypes';
+import { getAuthHeaders } from '../../lib/frontendAuth';
 
 export const CTWAHub: React.FC = () => {
   const [capiEvents, setCapiEvents] = useState<MetaCAPIEvent[]>([]);
@@ -20,7 +21,7 @@ export const CTWAHub: React.FC = () => {
   const loadEvents = async () => {
     try {
       setIsLoading(true);
-      const res = await fetch('/api/whatsapp/capi/events');
+      const res = await fetch('/api/whatsapp/capi/events', { headers: getAuthHeaders() });
       if (res.ok) {
         const data = await res.json();
         if (data.data) {
@@ -46,7 +47,7 @@ export const CTWAHub: React.FC = () => {
     try {
       const res = await fetch('/api/whatsapp/capi/trigger', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({
           phone: testPhone,
           event_name: testEventName,

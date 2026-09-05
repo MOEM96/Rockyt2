@@ -5,6 +5,7 @@ import {
   Smartphone, MessageSquare, RefreshCw, Send, Loader2
 } from 'lucide-react';
 import { WhatsAppTemplate } from '../../lib/whatsappTypes';
+import { getAuthHeaders } from '../../lib/frontendAuth';
 
 export const TemplateStudio: React.FC = () => {
   const [templates, setTemplates] = useState<WhatsAppTemplate[]>([]);
@@ -23,7 +24,7 @@ export const TemplateStudio: React.FC = () => {
   const loadTemplates = async () => {
     try {
       setIsLoading(true);
-      const res = await fetch('/api/whatsapp/templates');
+      const res = await fetch('/api/whatsapp/templates', { headers: getAuthHeaders() });
       if (res.ok) {
         const data = await res.json();
         if (data.data) {
@@ -68,7 +69,7 @@ export const TemplateStudio: React.FC = () => {
 
       const res = await fetch('/api/whatsapp/templates', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({
           name,
           category,
@@ -93,7 +94,10 @@ export const TemplateStudio: React.FC = () => {
   const handleDeleteTemplate = async (tmplName: string) => {
     if (!confirm(`Delete template ${tmplName}?`)) return;
     try {
-      const res = await fetch(`/api/whatsapp/templates/${tmplName}`, { method: 'DELETE' });
+      const res = await fetch(`/api/whatsapp/templates/${tmplName}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+      });
       if (res.ok) {
         await loadTemplates();
       }

@@ -4,6 +4,7 @@ import {
   Smartphone, ShieldCheck, RefreshCw, Send, QrCode, ExternalLink, Play, Bot, AlertCircle, Copy, Check
 } from 'lucide-react';
 import { WhatsAppSandboxSession } from '../../lib/whatsappTypes';
+import { getAuthHeaders } from '../../lib/frontendAuth';
 
 interface SandboxOnboardingCardProps {
   session: WhatsAppSandboxSession | null;
@@ -27,10 +28,8 @@ export const SandboxOnboardingCard: React.FC<SandboxOnboardingCardProps> = ({
   const [isSimulating, setIsSimulating] = useState(false);
 
   const getHeaders = () => {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    const uid = userSession?.id || (typeof window !== 'undefined' ? localStorage.getItem('rockyt_user_id') : undefined);
-    if (uid) headers['x-user-id'] = uid;
-    return headers;
+    const auth = getAuthHeaders();
+    return { 'Content-Type': 'application/json', ...auth };
   };
 
   useEffect(() => {

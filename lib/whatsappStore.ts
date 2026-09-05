@@ -15,11 +15,15 @@ import crypto from 'crypto';
 class WhatsAppStore {
   private userSandboxSessions: Map<string, WhatsAppSandboxSession> = new Map();
   private userAccounts: Map<string, WhatsAppAccount> = new Map();
+  private userContacts: Map<string, Map<string, WhatsAppContact>> = new Map();
   private contacts: Map<string, WhatsAppContact> = new Map();
   private conversations: Map<string, WhatsAppConversation> = new Map();
   private messages: Map<string, WhatsAppMessage[]> = new Map();
+  private userTemplates: Map<string, Map<string, WhatsAppTemplate>> = new Map();
   private templates: Map<string, WhatsAppTemplate> = new Map();
+  private userBroadcasts: Map<string, Map<string, BroadcastCampaign>> = new Map();
   private broadcasts: Map<string, BroadcastCampaign> = new Map();
+  private userAutomations: Map<string, Map<string, AutomationFlow>> = new Map();
   private automations: Map<string, AutomationFlow> = new Map();
   private capiEvents: MetaCAPIEvent[] = [];
   private mcpTokens: Map<string, MCPToken> = new Map();
@@ -106,29 +110,49 @@ class WhatsAppStore {
   }
 
   // --- Contacts ---
-  public getContacts(): WhatsAppContact[] {
+  public getContacts(userId?: string): WhatsAppContact[] {
+    if (userId) {
+      const userMap = this.userContacts.get(userId);
+      if (!userMap) return [];
+      return Array.from(userMap.values()).sort(
+        (a, b) => new Date(b.last_activity_at || b.created_at).getTime() - new Date(a.last_activity_at || a.created_at).getTime()
+      );
+    }
     return Array.from(this.contacts.values()).sort(
       (a, b) => new Date(b.last_activity_at || b.created_at).getTime() - new Date(a.last_activity_at || a.created_at).getTime()
     );
   }
 
-  public getContact(id: string): WhatsAppContact | undefined {
+  public getContact(id: string, userId?: string): WhatsAppContact | undefined {
+    if (userId) {
+      return this.userContacts.get(userId)?.get(id);
+    }
     return this.contacts.get(id);
   }
 
-  public getContactByPhone(phone: string): WhatsAppContact | undefined {
+  public getContactByPhone(phone: string, userId?: string): WhatsAppContact | undefined {
     const clean = phone.replace(/[^0-9]/g, '');
-    return Array.from(this.contacts.values()).find(
+    const source = userId ? (this.userContacts.get(userId) ? Array.from(this.userContacts.get(userId)!.values()) : []) : Array.from(this.contacts.values());
+    return source.find(
       (c) => c.phone_number.replace(/[^0-9]/g, '') === clean
     );
   }
 
-  public saveContact(contact: WhatsAppContact): WhatsAppContact {
+  public saveContact(contact: WhatsAppContact, userId?: string): WhatsAppContact {
+    if (userId) {
+      if (!this.userContacts.has(userId)) {
+        this.userContacts.set(userId, new Map());
+      }
+      this.userContacts.get(userId)!.set(contact.id, contact);
+    }
     this.contacts.set(contact.id, contact);
     return contact;
   }
 
-  public deleteContact(id: string): boolean {
+  public deleteContact(id: string, userId?: string): boolean {
+    if (userId) {
+      this.userContacts.get(userId)?.delete(id);
+    }
     return this.contacts.delete(id);
   }
 
@@ -285,57 +309,109 @@ class WhatsAppStore {
   }
 
   // --- Meta Templates ---
-  public getTemplates(): WhatsAppTemplate[] {
+  public getTemplates(userId?: string): WhatsAppTemplate[] {
+    if (userId) {
+      const userMap = this.userTemplates.get(userId);
+      if (!userMap) return [];
+      return Array.from(userMap.values());
+    }
     return Array.from(this.templates.values());
   }
 
-  public getTemplate(name: string): WhatsAppTemplate | undefined {
+  public getTemplate(name: string, userId?: string): WhatsAppTemplate | undefined {
+    if (userId) {
+      return this.userTemplates.get(userId)?.get(name);
+    }
     return this.templates.get(name);
   }
 
-  public saveTemplate(template: WhatsAppTemplate): WhatsAppTemplate {
+  public saveTemplate(template: WhatsAppTemplate, userId?: string): WhatsAppTemplate {
+    if (userId) {
+      if (!this.userTemplates.has(userId)) {
+        this.userTemplates.set(userId, new Map());
+      }
+      this.userTemplates.get(userId)!.set(template.name, template);
+    }
     this.templates.set(template.name, template);
     return template;
   }
 
-  public deleteTemplate(name: string): boolean {
+  public deleteTemplate(name: string, userId?: string): boolean {
+    if (userId) {
+      this.userTemplates.get(userId)?.delete(name);
+    }
     return this.templates.delete(name);
   }
 
   // --- Broadcasts ---
-  public getBroadcasts(): BroadcastCampaign[] {
+  public getBroadcasts(userId?: string): BroadcastCampaign[] {
+    if (userId) {
+      const userMap = this.userBroadcasts.get(userId);
+      if (!userMap) return [];
+      return Array.from(userMap.values()).sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+    }
     return Array.from(this.broadcasts.values()).sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
   }
 
-  public getBroadcast(id: string): BroadcastCampaign | undefined {
+  public getBroadcast(id: string, userId?: string): BroadcastCampaign | undefined {
+    if (userId) {
+      return this.userBroadcasts.get(userId)?.get(id);
+    }
     return this.broadcasts.get(id);
   }
 
-  public saveBroadcast(campaign: BroadcastCampaign): BroadcastCampaign {
+  public saveBroadcast(campaign: BroadcastCampaign, userId?: string): BroadcastCampaign {
+    if (userId) {
+      if (!this.userBroadcasts.has(userId)) {
+        this.userBroadcasts.set(userId, new Map());
+      }
+      this.userBroadcasts.get(userId)!.set(campaign.id, campaign);
+    }
     this.broadcasts.set(campaign.id, campaign);
     return campaign;
   }
 
   // --- Automations ---
-  public getAutomations(): AutomationFlow[] {
+  public getAutomations(userId?: string): AutomationFlow[] {
+    if (userId) {
+      const userMap = this.userAutomations.get(userId);
+      if (!userMap) return [];
+      return Array.from(userMap.values()).sort(
+        (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+      );
+    }
     return Array.from(this.automations.values()).sort(
       (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
     );
   }
 
-  public getAutomation(id: string): AutomationFlow | undefined {
+  public getAutomation(id: string, userId?: string): AutomationFlow | undefined {
+    if (userId) {
+      return this.userAutomations.get(userId)?.get(id);
+    }
     return this.automations.get(id);
   }
 
-  public saveAutomation(flow: AutomationFlow): AutomationFlow {
+  public saveAutomation(flow: AutomationFlow, userId?: string): AutomationFlow {
     flow.updated_at = new Date().toISOString();
+    if (userId) {
+      if (!this.userAutomations.has(userId)) {
+        this.userAutomations.set(userId, new Map());
+      }
+      this.userAutomations.get(userId)!.set(flow.id, flow);
+    }
     this.automations.set(flow.id, flow);
     return flow;
   }
 
-  public deleteAutomation(id: string): boolean {
+  public deleteAutomation(id: string, userId?: string): boolean {
+    if (userId) {
+      this.userAutomations.get(userId)?.delete(id);
+    }
     return this.automations.delete(id);
   }
 

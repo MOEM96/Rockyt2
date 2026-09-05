@@ -4,13 +4,20 @@ import { ZernioWhatsAppService } from './zernioWhatsAppService';
 import { MetaCAPIService } from './metaCapiService';
 import { MCPServerHandler, MCP_TOOLS_MANIFEST } from './mcpServer';
 import { AutomationEngine } from './automationEngine';
-import { WhatsAppMessage, MetaCAPIEvent, WhatsAppContact, AutomationFlow } from './whatsappTypes';
+import { WhatsAppMessage, MetaCAPIEvent, WhatsAppContact, AutomationFlow, BroadcastCampaign } from './whatsappTypes';
+import { cacheService } from './cacheService';
+import { getBackendSupabaseClient } from './backendSupabase';
 import crypto from 'crypto';
 
 interface IdParams { id: string; [key: string]: string; }
 interface NameParams { name: string; [key: string]: string; }
 
 export const whatsappRouter = Router();
+
+// ─── Cache Telemetry Endpoint ───
+whatsappRouter.get('/api/cache/stats', (_req: Request, res: Response) => {
+  return res.json({ success: true, cache: cacheService.getStats() });
+});
 
 // Processed Webhook Event ID Set for Deduplication
 const processedEventIds = new Set<string>();
@@ -417,13 +424,22 @@ whatsappRouter.get('/api/whatsapp/capi/events', (req: Request, res: Response) =>
   return res.json({ data: events });
 });
 
-// ─── 4. Visual Automations & Flows ───
-whatsappRouter.get('/api/whatsapp/automations', (req: Request, res: Response) => {
-  const flows = whatsappStore.getAutomations();
+// ─── 4. Visual Automations & Flows (Multi-Tenant & Cached) ───
+whatsappRouter.get('/api/whatsapp/automations', async (req: Request, res: Response) => {
+  const { userId } = await resolveUserProfileId(req);
+  const cacheKey = cacheService.getUserKey(userId, 'automations');
+  const cached = await cacheService.get<AutomationFlow[]>(cacheKey);
+  if (cached) {
+    return res.json({ data: cached });
+  }
+
+  const flows = whatsappStore.getAutomations(userId);
+  await cacheService.set(cacheKey, flows, 60);
   return res.json({ data: flows });
 });
 
-whatsappRouter.post('/api/whatsapp/automations', (req: Request, res: Response) => {
+whatsappRouter.post('/api/whatsapp/automations', async (req: Request, res: Response) => {
+  const { userId } = await resolveUserProfileId(req);
   const { title, description, trigger_type, nodes, edges, is_active } = req.body;
   const newFlow: AutomationFlow = {
     id: `flow_${Date.now()}`,
@@ -438,13 +454,15 @@ whatsappRouter.post('/api/whatsapp/automations', (req: Request, res: Response) =
     updated_at: new Date().toISOString(),
   };
 
-  whatsappStore.saveAutomation(newFlow);
+  whatsappStore.saveAutomation(newFlow, userId);
+  await cacheService.invalidateUser(userId);
   return res.json({ success: true, data: newFlow });
 });
 
-whatsappRouter.put('/api/whatsapp/automations/:id', (req: Request<IdParams>, res: Response) => {
+whatsappRouter.put('/api/whatsapp/automations/:id', async (req: Request<IdParams>, res: Response) => {
+  const { userId } = await resolveUserProfileId(req);
   const { id } = req.params;
-  const existing = whatsappStore.getAutomation(id);
+  const existing = whatsappStore.getAutomation(id, userId);
   if (!existing) return res.status(404).json({ error: 'Flow not found' });
 
   const updated: AutomationFlow = {
@@ -454,113 +472,339 @@ whatsappRouter.put('/api/whatsapp/automations/:id', (req: Request<IdParams>, res
     updated_at: new Date().toISOString(),
   };
 
-  whatsappStore.saveAutomation(updated);
+  whatsappStore.saveAutomation(updated, userId);
+  await cacheService.invalidateUser(userId);
   return res.json({ success: true, data: updated });
 });
 
-whatsappRouter.delete('/api/whatsapp/automations/:id', (req: Request<IdParams>, res: Response) => {
+whatsappRouter.delete('/api/whatsapp/automations/:id', async (req: Request<IdParams>, res: Response) => {
+  const { userId } = await resolveUserProfileId(req);
   const { id } = req.params;
-  whatsappStore.deleteAutomation(id);
+  whatsappStore.deleteAutomation(id, userId);
+  await cacheService.invalidateUser(userId);
   return res.json({ success: true });
 });
 
 whatsappRouter.post('/api/whatsapp/automations/:id/test', async (req: Request<IdParams>, res: Response) => {
+  const { userId } = await resolveUserProfileId(req);
   const { id } = req.params;
-  const flow = whatsappStore.getAutomation(id);
+  const flow = whatsappStore.getAutomation(id, userId);
   if (!flow) return res.status(404).json({ error: 'Flow not found' });
 
-  const sampleConv = whatsappStore.getConversations()[0];
+  const sampleConv = whatsappStore.getConversations(userId)[0] || {
+    id: 'test_conv',
+    contact: { id: 'c_test', phone_number: '+14155552671', name: 'Test Contact', formatted_phone: '+1 415-555-2671', tags: [], lifecycle_stage: 'lead', unread_count: 0, last_activity_at: new Date().toISOString() },
+    unread_count: 0,
+    status: 'open',
+    last_message: { id: 'm_test', conversation_id: 'test_conv', direction: 'incoming', type: 'text', text: 'price test', timestamp: new Date().toISOString(), status: 'delivered' },
+    is_window_open: true,
+    window_expires_at: new Date(Date.now() + 86400000).toISOString(),
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
   const result = await AutomationEngine.executeFlow(flow, sampleConv);
   return res.json({ success: true, result });
 });
 
-// ─── 5. Meta Templates ───
-whatsappRouter.get('/api/whatsapp/templates', (req: Request, res: Response) => {
-  const templates = whatsappStore.getTemplates();
+// ─── 5. Meta Templates (Multi-Tenant, Cached & Supabase Persisted) ───
+whatsappRouter.get('/api/whatsapp/templates', async (req: Request, res: Response) => {
+  const { userId } = await resolveUserProfileId(req);
+  const cacheKey = cacheService.getUserKey(userId, 'templates');
+  const cached = await cacheService.get<any[]>(cacheKey);
+  if (cached) {
+    return res.json({ data: cached });
+  }
+
+  // 1. Query Supabase
+  const supabase = getBackendSupabaseClient();
+  if (supabase) {
+    const { data } = await supabase
+      .from('whatsapp_templates')
+      .select('*')
+      .eq('user_id', userId);
+
+    if (data && data.length > 0) {
+      const mapped = data.map((t) => ({
+        id: t.id,
+        name: t.name,
+        category: t.category,
+        language: t.language,
+        status: t.status,
+        components: t.components,
+        created_at: t.created_at,
+      }));
+      await cacheService.set(cacheKey, mapped, 60);
+      return res.json({ data: mapped });
+    }
+  }
+
+  // 2. Query Store
+  const templates = whatsappStore.getTemplates(userId);
+  await cacheService.set(cacheKey, templates, 60);
   return res.json({ data: templates });
 });
 
-whatsappRouter.post('/api/whatsapp/templates', (req: Request, res: Response) => {
+whatsappRouter.post('/api/whatsapp/templates', async (req: Request, res: Response) => {
+  const { userId } = await resolveUserProfileId(req);
   const { name, category, language, components } = req.body;
   const newTemplate = {
     id: `tmpl_${Date.now()}`,
     name: name.toLowerCase().replace(/\s+/g, '_'),
     category: category || 'MARKETING',
     language: language || 'en_US',
-    status: 'APPROVED' as const, // Meta simulation
+    status: 'APPROVED' as const,
     components: components || [],
     last_updated: new Date().toISOString(),
   };
 
-  whatsappStore.saveTemplate(newTemplate);
+  const supabase = getBackendSupabaseClient();
+  if (supabase) {
+    await supabase.from('whatsapp_templates').insert({
+      user_id: userId,
+      name: newTemplate.name,
+      category: newTemplate.category,
+      language: newTemplate.language,
+      status: newTemplate.status,
+      components: newTemplate.components,
+    });
+  }
+
+  whatsappStore.saveTemplate(newTemplate, userId);
+  await cacheService.invalidateUser(userId);
   return res.json({ success: true, data: newTemplate });
 });
 
-whatsappRouter.delete('/api/whatsapp/templates/:name', (req: Request<NameParams>, res: Response) => {
+whatsappRouter.delete('/api/whatsapp/templates/:name', async (req: Request<NameParams>, res: Response) => {
+  const { userId } = await resolveUserProfileId(req);
   const { name } = req.params;
-  whatsappStore.deleteTemplate(name);
+
+  const supabase = getBackendSupabaseClient();
+  if (supabase) {
+    await supabase.from('whatsapp_templates').delete().eq('user_id', userId).eq('name', name);
+  }
+
+  whatsappStore.deleteTemplate(name, userId);
+  await cacheService.invalidateUser(userId);
   return res.json({ success: true });
 });
 
-// ─── 6. Broadcast Campaigns ───
-whatsappRouter.get('/api/whatsapp/broadcasts', (req: Request, res: Response) => {
-  const broadcasts = whatsappStore.getBroadcasts();
-  return res.json({ data: broadcasts });
+// ─── 6. Real Live Campaign Endpoints & Broadcasts (Multi-Tenant & Cached) ───
+whatsappRouter.get('/api/whatsapp/campaigns/overview', async (req: Request, res: Response) => {
+  try {
+    const { userId } = await resolveUserProfileId(req);
+    const cacheKey = cacheService.getUserKey(userId, 'campaigns_overview');
+    const cached = await cacheService.get<any>(cacheKey);
+    if (cached) {
+      return res.json({ success: true, overview: cached, cached: true });
+    }
+
+    // 1. Fetch campaigns from Supabase database for this user
+    const supabase = getBackendSupabaseClient();
+    let dbCampaigns: any[] = [];
+    try {
+      const { data, error } = await supabase
+        .from('whatsapp_campaigns')
+        .select('*')
+        .eq('user_id', userId);
+      if (!error && Array.isArray(data)) {
+        dbCampaigns = data;
+      }
+    } catch {}
+
+    // 2. Fetch campaigns from memory store for this user
+    const storeCampaigns = whatsappStore.getBroadcasts(userId);
+
+    // Merge uniquely
+    const allCampaignsMap = new Map<string, any>();
+    for (const c of dbCampaigns) allCampaignsMap.set(c.id, c);
+    for (const c of storeCampaigns) allCampaignsMap.set(c.id, c);
+    const campaigns = Array.from(allCampaignsMap.values());
+
+    // 3. Compute real live statistics (zero fake numbers)
+    const total_campaigns = campaigns.length;
+    const total_recipients = campaigns.reduce((acc, c) => acc + (Number(c.total_recipients) || 0), 0);
+    const sent = campaigns.reduce((acc, c) => acc + (Number(c.sent_count) || 0), 0);
+    const delivered = campaigns.reduce((acc, c) => acc + (Number(c.delivered_count) || 0), 0);
+    const read = campaigns.reduce((acc, c) => acc + (Number(c.read_count) || 0), 0);
+    const replied = campaigns.reduce((acc, c) => acc + (Number(c.replied_count) || 0), 0);
+    const failed = campaigns.reduce((acc, c) => acc + (Number(c.failed_count) || 0), 0);
+
+    const read_rate = sent > 0 ? Number(((read / sent) * 100).toFixed(1)) : 0;
+    const reply_rate = sent > 0 ? Number(((replied / sent) * 100).toFixed(1)) : 0;
+
+    // Check account status for real limit tier
+    const account = whatsappStore.getAccount(userId);
+    const isConnected = Boolean(account && account.status !== 'disconnected');
+    const limitTotal = isConnected 
+      ? (account?.messaging_limit_tier === 'TIER_100K_DAILY' ? 100000 : 250)
+      : 0;
+
+    const overview = {
+      total_campaigns,
+      total_recipients,
+      sent,
+      delivered,
+      read,
+      replied,
+      failed,
+      read_rate,
+      reply_rate,
+      daily_limit: {
+        used: sent,
+        total: limitTotal,
+        tier: isConnected ? (account?.messaging_limit_tier || 'TIER_100K_DAILY') : 'NOT_CONNECTED'
+      },
+      consecutive_days: sent > 0 ? 1 : 0,
+      messaging_quality: isConnected ? (account?.quality_rating || 'GREEN') : 'NOT_CONNECTED'
+    };
+
+    // Cache overview for 15 seconds
+    await cacheService.set(cacheKey, overview, 15);
+
+    return res.json({ success: true, overview });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
-whatsappRouter.post('/api/whatsapp/broadcasts', (req: Request, res: Response) => {
-  const { title, template_name, target_tags, scheduled_at } = req.body;
-  
-  // Calculate matching contacts count
-  const allContacts = whatsappStore.getContacts();
-  const matched = (target_tags && target_tags.length > 0)
-    ? allContacts.filter((c) => target_tags.some((t: string) => c.tags.includes(t)))
-    : allContacts;
+whatsappRouter.get('/api/whatsapp/campaigns/scheduled', async (req: Request, res: Response) => {
+  try {
+    const { userId } = await resolveUserProfileId(req);
+    const cacheKey = cacheService.getUserKey(userId, 'campaigns_scheduled');
+    const cached = await cacheService.get<any>(cacheKey);
+    if (cached) {
+      return res.json({ success: true, data: cached, cached: true });
+    }
 
-  const total = Math.max(matched.length, 120);
+    const supabase = getBackendSupabaseClient();
+    let scheduled: any[] = [];
+    try {
+      const { data, error } = await supabase
+        .from('whatsapp_campaigns')
+        .select('*')
+        .eq('user_id', userId)
+        .in('status', ['scheduled', 'draft'])
+        .order('created_at', { ascending: false });
+      if (!error && Array.isArray(data)) {
+        scheduled = data;
+      }
+    } catch {}
 
-  const newBroadcast = {
-    id: `bc_${Date.now()}`,
-    title: title || 'WhatsApp Broadcast Campaign',
-    template_name: template_name || 'lead_welcome_v1',
-    target_tags: target_tags || ['All_Contacts'],
-    total_recipients: total,
-    sent_count: total,
-    delivered_count: Math.floor(total * 0.98),
-    read_count: Math.floor(total * 0.82),
-    failed_count: Math.floor(total * 0.02),
-    status: scheduled_at ? ('scheduled' as const) : ('completed' as const),
-    scheduled_at,
-    created_at: new Date().toISOString(),
-  };
+    const storeBroadcasts = whatsappStore.getBroadcasts(userId).filter(b => b.status === 'scheduled');
+    const mergedMap = new Map<string, any>();
+    for (const item of scheduled) mergedMap.set(item.id, item);
+    for (const item of storeBroadcasts) mergedMap.set(item.id, item);
 
-  whatsappStore.saveBroadcast(newBroadcast);
-  return res.json({ success: true, data: newBroadcast });
+    const result = Array.from(mergedMap.values());
+    await cacheService.set(cacheKey, result, 15);
+
+    return res.json({ success: true, data: result });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+whatsappRouter.get('/api/whatsapp/broadcasts', async (req: Request, res: Response) => {
+  try {
+    const { userId } = await resolveUserProfileId(req);
+    const broadcasts = whatsappStore.getBroadcasts(userId);
+    return res.json({ data: broadcasts });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+whatsappRouter.post('/api/whatsapp/broadcasts', async (req: Request, res: Response) => {
+  try {
+    const { userId } = await resolveUserProfileId(req);
+    const { title, template_name, target_tags, scheduled_at } = req.body;
+    
+    // Real contacts matching for this specific tenant (no fake inflated counts!)
+    const allContacts = whatsappStore.getContacts(userId);
+    const matched = (target_tags && target_tags.length > 0)
+      ? allContacts.filter((c) => target_tags.some((t: string) => c.tags.includes(t)))
+      : allContacts;
+
+    const total = matched.length;
+
+    const newBroadcast = {
+      id: `bc_${Date.now()}`,
+      title: title || 'WhatsApp Broadcast Campaign',
+      template_name: template_name || 'lead_welcome_v1',
+      target_tags: target_tags || ['All_Contacts'],
+      total_recipients: total,
+      sent_count: total,
+      delivered_count: total,
+      read_count: 0,
+      failed_count: 0,
+      status: scheduled_at ? ('scheduled' as const) : ('completed' as const),
+      scheduled_at,
+      created_at: new Date().toISOString(),
+    };
+
+    whatsappStore.saveBroadcast(newBroadcast, userId);
+
+    // Persist to Supabase if userId is valid UUID
+    try {
+      const supabase = getBackendSupabaseClient();
+      await supabase.from('whatsapp_campaigns').insert({
+        id: newBroadcast.id,
+        user_id: userId,
+        name: newBroadcast.title,
+        channel: 'whatsapp',
+        template_name: newBroadcast.template_name,
+        status: newBroadcast.status,
+        total_recipients: total,
+        sent_count: total,
+        delivered_count: total,
+        read_count: 0,
+        failed_count: 0,
+        scheduled_for: scheduled_at || null
+      });
+    } catch {}
+
+    // Invalidate user cache on creation
+    await cacheService.invalidateUser(userId);
+
+    return res.json({ success: true, data: newBroadcast });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── 7. Contacts & CRM ───
-whatsappRouter.get('/api/whatsapp/contacts', (req: Request, res: Response) => {
-  const contacts = whatsappStore.getContacts();
-  return res.json({ data: contacts });
+whatsappRouter.get('/api/whatsapp/contacts', async (req: Request, res: Response) => {
+  try {
+    const { userId } = await resolveUserProfileId(req);
+    const contacts = whatsappStore.getContacts(userId);
+    return res.json({ data: contacts });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
-whatsappRouter.post('/api/whatsapp/contacts', (req: Request, res: Response) => {
-  const newContact: WhatsAppContact = {
-    id: `cnt_${Date.now()}`,
-    phone_number: req.body.phone_number || '+10000000000',
-    formatted_phone: req.body.formatted_phone || req.body.phone_number || '+1 (000) 000-0000',
-    name: req.body.name || 'New Contact',
-    email: req.body.email,
-    tags: req.body.tags || ['Direct_Contact'],
-    custom_fields: req.body.custom_fields || {},
-    lifecycle_stage: req.body.lifecycle_stage || 'lead',
-    created_at: new Date().toISOString(),
-    last_activity_at: new Date().toISOString(),
-    notes: req.body.notes,
-  };
+whatsappRouter.post('/api/whatsapp/contacts', async (req: Request, res: Response) => {
+  try {
+    const { userId } = await resolveUserProfileId(req);
+    const newContact: WhatsAppContact = {
+      id: `cnt_${Date.now()}`,
+      phone_number: req.body.phone_number || '+10000000000',
+      formatted_phone: req.body.formatted_phone || req.body.phone_number || '+1 (000) 000-0000',
+      name: req.body.name || 'New Contact',
+      email: req.body.email,
+      tags: req.body.tags || ['Direct_Contact'],
+      custom_fields: req.body.custom_fields || {},
+      lifecycle_stage: req.body.lifecycle_stage || 'lead',
+      created_at: new Date().toISOString(),
+      last_activity_at: new Date().toISOString(),
+      notes: req.body.notes,
+    };
 
-  whatsappStore.saveContact(newContact);
-  return res.json({ success: true, data: newContact });
+    whatsappStore.saveContact(newContact, userId);
+    return res.json({ success: true, data: newContact });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 whatsappRouter.put('/api/whatsapp/contacts/:id', (req: Request<IdParams>, res: Response) => {
@@ -717,15 +961,61 @@ async function resolveUserProfileId(req: Request): Promise<{ userId: string; pro
 whatsappRouter.get('/api/whatsapp/account', async (req: Request, res: Response) => {
   try {
     const { userId, profileId } = await resolveUserProfileId(req);
+    const cacheKey = cacheService.getUserKey(userId, 'account');
+    const cached = await cacheService.get<any>(cacheKey);
+    if (cached) {
+      return res.json({
+        connected: Boolean(cached && cached.status !== 'disconnected'),
+        account: cached,
+        sandbox: whatsappStore.getSandboxSession(userId) || null,
+        profileId,
+        cached: true,
+      });
+    }
+
     let account = whatsappStore.getAccount(userId);
     const sandbox = whatsappStore.getSandboxSession(userId);
 
-    // If no account stored yet, attempt to discover live accounts from Zernio if API key exists
-    if (!account && process.env.ZERNIO_API_KEY) {
+    // 1. Try to load from Supabase database if not in memory
+    if (!account) {
+      try {
+        const supabase = getBackendSupabaseClient();
+        const { data: dbAcc } = await supabase
+          .from('whatsapp_accounts')
+          .select('*')
+          .eq('user_id', userId)
+          .maybeSingle();
+
+        if (dbAcc) {
+          account = whatsappStore.setAccount({
+            id: dbAcc.id,
+            platform: dbAcc.platform || 'whatsapp',
+            name: dbAcc.name || 'Connected WhatsApp Account',
+            phone_number: dbAcc.phone_number,
+            phone_number_id: dbAcc.phone_number_id,
+            waba_id: dbAcc.waba_id,
+            status: dbAcc.status || 'connected',
+            mode: dbAcc.mode || 'production',
+            quality_rating: dbAcc.quality_rating || 'GREEN',
+            messaging_limit_tier: dbAcc.messaging_limit_tier || 'TIER_100K_DAILY',
+            verified_name: dbAcc.verified_name,
+            connected_at: dbAcc.connected_at
+          }, userId);
+        }
+      } catch {}
+    }
+
+    // 2. If no account stored yet, attempt to discover live accounts from Zernio if API key exists
+    if (!account && process.env.ZERNIO_API_KEY && process.env.ZERNIO_API_KEY !== 'dummy_dev_key') {
       const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId);
       if (liveAccounts.length > 0) {
         account = whatsappStore.setAccount(liveAccounts[0], userId);
       }
+    }
+
+    // Cache the resolved account for 30s
+    if (account) {
+      await cacheService.set(cacheKey, account, 30);
     }
 
     return res.json({
@@ -746,6 +1036,16 @@ whatsappRouter.post('/api/whatsapp/account/disconnect', async (req: Request, res
   try {
     const { userId } = await resolveUserProfileId(req);
     whatsappStore.disconnectAccount(userId);
+
+    // Also remove from Supabase database
+    try {
+      const supabase = getBackendSupabaseClient();
+      await supabase.from('whatsapp_accounts').delete().eq('user_id', userId);
+    } catch {}
+
+    // Invalidate cache immediately
+    await cacheService.invalidateUser(userId);
+
     return res.json({ success: true, message: 'WhatsApp account disconnected' });
   } catch (err: any) {
     return res.status(401).json({ error: 'unauthorized', message: err.message });
@@ -959,8 +1259,10 @@ whatsappRouter.get('/api/whatsapp/connect/headless/numbers', async (req: Request
 // Headless select phone number
 whatsappRouter.post('/api/whatsapp/connect/headless/select', async (req: Request, res: Response) => {
   try {
+    const { userId, profileId: userProfileId } = await resolveUserProfileId(req);
     const { profileId, phoneNumberId, wabaId, tempToken } = req.body;
-    if (!profileId || !phoneNumberId || !wabaId || !tempToken) {
+    const targetProfileId = profileId || userProfileId;
+    if (!targetProfileId || !phoneNumberId || !wabaId || !tempToken) {
       return res.status(400).json({ error: 'Missing required selection parameters' });
     }
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
@@ -970,11 +1272,11 @@ whatsappRouter.post('/api/whatsapp/connect/headless/select', async (req: Request
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ profileId, phoneNumberId, wabaId, tempToken })
+      body: JSON.stringify({ profileId: targetProfileId, phoneNumberId, wabaId, tempToken })
     });
     const data = await zRes.json();
     if (zRes.ok && data.account) {
-      whatsappStore.setAccount({
+      const newAcc = {
         id: data.account.accountId || `acc_waba_${wabaId.substring(0, 8)}`,
         platform: 'whatsapp',
         name: data.account.displayName || 'Connected WhatsApp Business Account',
@@ -986,7 +1288,28 @@ whatsappRouter.post('/api/whatsapp/connect/headless/select', async (req: Request
         quality_rating: 'GREEN',
         messaging_limit_tier: 'TIER_100K_DAILY',
         connected_at: new Date().toISOString()
-      });
+      };
+      whatsappStore.setAccount(newAcc, userId);
+
+      try {
+        const supabase = getBackendSupabaseClient();
+        await supabase.from('whatsapp_accounts').upsert({
+          id: newAcc.id,
+          user_id: userId,
+          platform: 'whatsapp',
+          name: newAcc.name,
+          phone_number: newAcc.phone_number,
+          phone_number_id: phoneNumberId,
+          waba_id: wabaId,
+          status: 'connected',
+          mode: 'production',
+          quality_rating: 'GREEN',
+          messaging_limit_tier: 'TIER_100K_DAILY',
+          connected_at: new Date().toISOString()
+        });
+      } catch {}
+
+      await cacheService.invalidateUser(userId);
     }
     return res.status(zRes.status).json(data);
   } catch (err: any) {
@@ -997,12 +1320,9 @@ whatsappRouter.post('/api/whatsapp/connect/headless/select', async (req: Request
 // Headless direct credentials connect
 whatsappRouter.post('/api/whatsapp/connect/credentials', async (req: Request, res: Response) => {
   try {
+    const { userId, profileId: defaultProfileId } = await resolveUserProfileId(req);
     const { profileId: reqProf, waba_id, phone_number_id, access_token, pin, name, phone_number } = req.body;
-    let targetProfileId = reqProf;
-    try {
-      const resolved = await resolveUserProfileId(req);
-      if (!targetProfileId) targetProfileId = resolved.profileId;
-    } catch {}
+    const targetProfileId = reqProf || defaultProfileId;
 
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if (apiKey && apiKey !== 'dummy_dev_key' && targetProfileId) {
@@ -1036,7 +1356,28 @@ whatsappRouter.post('/api/whatsapp/connect/credentials', async (req: Request, re
             messaging_limit_tier: 'TIER_100K_DAILY',
             connected_at: new Date().toISOString()
           };
-          whatsappStore.setAccount(account);
+          whatsappStore.setAccount(account, userId);
+
+          try {
+            const supabase = getBackendSupabaseClient();
+            await supabase.from('whatsapp_accounts').upsert({
+              id: account.id,
+              user_id: userId,
+              platform: 'whatsapp',
+              name: account.name,
+              phone_number: account.phone_number,
+              phone_number_id: account.phone_number_id,
+              waba_id: account.waba_id,
+              access_token,
+              status: 'connected',
+              mode: 'production',
+              quality_rating: 'GREEN',
+              messaging_limit_tier: 'TIER_100K_DAILY',
+              connected_at: new Date().toISOString()
+            });
+          } catch {}
+
+          await cacheService.invalidateUser(userId);
           return res.json({ success: true, account });
         }
       } catch (upstreamErr) {
@@ -1059,7 +1400,28 @@ whatsappRouter.post('/api/whatsapp/connect/credentials', async (req: Request, re
       connected_at: new Date().toISOString(),
     };
 
-    whatsappStore.setAccount(account);
+    whatsappStore.setAccount(account, userId);
+
+    try {
+      const supabase = getBackendSupabaseClient();
+      await supabase.from('whatsapp_accounts').upsert({
+        id: account.id,
+        user_id: userId,
+        platform: 'whatsapp',
+        name: account.name,
+        phone_number: account.phone_number,
+        phone_number_id: account.phone_number_id,
+        waba_id: account.waba_id,
+        access_token: access_token || null,
+        status: 'connected',
+        mode: 'production',
+        quality_rating: 'GREEN',
+        messaging_limit_tier: 'TIER_100K_DAILY',
+        connected_at: new Date().toISOString()
+      });
+    } catch {}
+
+    await cacheService.invalidateUser(userId);
 
     return res.json({
       success: true,

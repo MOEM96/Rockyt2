@@ -5,6 +5,7 @@ import {
   Code, Loader2, CheckCircle2 
 } from 'lucide-react';
 import { MCPToken } from '../../lib/whatsappTypes';
+import { getAuthHeaders } from '../../lib/frontendAuth';
 
 export const MCPGateway: React.FC = () => {
   const [tokens, setTokens] = useState<MCPToken[]>([]);
@@ -20,9 +21,10 @@ export const MCPGateway: React.FC = () => {
 
   const loadData = async () => {
     try {
+      const headers = getAuthHeaders();
       const [resTokens, resManifest] = await Promise.all([
-        fetch('/api/mcp/tokens'),
-        fetch('/api/mcp/manifest'),
+        fetch('/api/mcp/tokens', { headers }),
+        fetch('/api/mcp/manifest', { headers }),
       ]);
       if (resTokens.ok) {
         const dataTokens = await resTokens.json();
@@ -48,7 +50,7 @@ export const MCPGateway: React.FC = () => {
     try {
       const res = await fetch('/api/mcp/tokens', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ name: newKeyName, scopes: ['*'] }),
       });
       const data = await res.json();
@@ -64,7 +66,10 @@ export const MCPGateway: React.FC = () => {
 
   const handleDeleteToken = async (id: string) => {
     try {
-      const res = await fetch(`/api/mcp/tokens/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/mcp/tokens/${id}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+      });
       if (res.ok) await loadData();
     } catch (e) {}
   };

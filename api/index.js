@@ -9,7 +9,7 @@ import cookieParser from "cookie-parser";
 import helmet from "helmet";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
-import Redis from "ioredis";
+import Redis2 from "ioredis";
 
 // lib/whatsappRoutes.ts
 import { Router } from "express";
@@ -20,11 +20,15 @@ var WhatsAppStore = class {
   constructor() {
     this.userSandboxSessions = /* @__PURE__ */ new Map();
     this.userAccounts = /* @__PURE__ */ new Map();
+    this.userContacts = /* @__PURE__ */ new Map();
     this.contacts = /* @__PURE__ */ new Map();
     this.conversations = /* @__PURE__ */ new Map();
     this.messages = /* @__PURE__ */ new Map();
+    this.userTemplates = /* @__PURE__ */ new Map();
     this.templates = /* @__PURE__ */ new Map();
+    this.userBroadcasts = /* @__PURE__ */ new Map();
     this.broadcasts = /* @__PURE__ */ new Map();
+    this.userAutomations = /* @__PURE__ */ new Map();
     this.automations = /* @__PURE__ */ new Map();
     this.capiEvents = [];
     this.mcpTokens = /* @__PURE__ */ new Map();
@@ -98,25 +102,45 @@ var WhatsAppStore = class {
     return acc !== null && acc.status !== "disconnected";
   }
   // --- Contacts ---
-  getContacts() {
+  getContacts(userId) {
+    if (userId) {
+      const userMap = this.userContacts.get(userId);
+      if (!userMap) return [];
+      return Array.from(userMap.values()).sort(
+        (a, b) => new Date(b.last_activity_at || b.created_at).getTime() - new Date(a.last_activity_at || a.created_at).getTime()
+      );
+    }
     return Array.from(this.contacts.values()).sort(
       (a, b) => new Date(b.last_activity_at || b.created_at).getTime() - new Date(a.last_activity_at || a.created_at).getTime()
     );
   }
-  getContact(id) {
+  getContact(id, userId) {
+    if (userId) {
+      return this.userContacts.get(userId)?.get(id);
+    }
     return this.contacts.get(id);
   }
-  getContactByPhone(phone) {
+  getContactByPhone(phone, userId) {
     const clean = phone.replace(/[^0-9]/g, "");
-    return Array.from(this.contacts.values()).find(
+    const source = userId ? this.userContacts.get(userId) ? Array.from(this.userContacts.get(userId).values()) : [] : Array.from(this.contacts.values());
+    return source.find(
       (c) => c.phone_number.replace(/[^0-9]/g, "") === clean
     );
   }
-  saveContact(contact) {
+  saveContact(contact, userId) {
+    if (userId) {
+      if (!this.userContacts.has(userId)) {
+        this.userContacts.set(userId, /* @__PURE__ */ new Map());
+      }
+      this.userContacts.get(userId).set(contact.id, contact);
+    }
     this.contacts.set(contact.id, contact);
     return contact;
   }
-  deleteContact(id) {
+  deleteContact(id, userId) {
+    if (userId) {
+      this.userContacts.get(userId)?.delete(id);
+    }
     return this.contacts.delete(id);
   }
   // --- Conversations ---
@@ -244,47 +268,99 @@ var WhatsAppStore = class {
     return msg;
   }
   // --- Meta Templates ---
-  getTemplates() {
+  getTemplates(userId) {
+    if (userId) {
+      const userMap = this.userTemplates.get(userId);
+      if (!userMap) return [];
+      return Array.from(userMap.values());
+    }
     return Array.from(this.templates.values());
   }
-  getTemplate(name) {
+  getTemplate(name, userId) {
+    if (userId) {
+      return this.userTemplates.get(userId)?.get(name);
+    }
     return this.templates.get(name);
   }
-  saveTemplate(template) {
+  saveTemplate(template, userId) {
+    if (userId) {
+      if (!this.userTemplates.has(userId)) {
+        this.userTemplates.set(userId, /* @__PURE__ */ new Map());
+      }
+      this.userTemplates.get(userId).set(template.name, template);
+    }
     this.templates.set(template.name, template);
     return template;
   }
-  deleteTemplate(name) {
+  deleteTemplate(name, userId) {
+    if (userId) {
+      this.userTemplates.get(userId)?.delete(name);
+    }
     return this.templates.delete(name);
   }
   // --- Broadcasts ---
-  getBroadcasts() {
+  getBroadcasts(userId) {
+    if (userId) {
+      const userMap = this.userBroadcasts.get(userId);
+      if (!userMap) return [];
+      return Array.from(userMap.values()).sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+    }
     return Array.from(this.broadcasts.values()).sort(
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
   }
-  getBroadcast(id) {
+  getBroadcast(id, userId) {
+    if (userId) {
+      return this.userBroadcasts.get(userId)?.get(id);
+    }
     return this.broadcasts.get(id);
   }
-  saveBroadcast(campaign) {
+  saveBroadcast(campaign, userId) {
+    if (userId) {
+      if (!this.userBroadcasts.has(userId)) {
+        this.userBroadcasts.set(userId, /* @__PURE__ */ new Map());
+      }
+      this.userBroadcasts.get(userId).set(campaign.id, campaign);
+    }
     this.broadcasts.set(campaign.id, campaign);
     return campaign;
   }
   // --- Automations ---
-  getAutomations() {
+  getAutomations(userId) {
+    if (userId) {
+      const userMap = this.userAutomations.get(userId);
+      if (!userMap) return [];
+      return Array.from(userMap.values()).sort(
+        (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+      );
+    }
     return Array.from(this.automations.values()).sort(
       (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
     );
   }
-  getAutomation(id) {
+  getAutomation(id, userId) {
+    if (userId) {
+      return this.userAutomations.get(userId)?.get(id);
+    }
     return this.automations.get(id);
   }
-  saveAutomation(flow) {
+  saveAutomation(flow, userId) {
     flow.updated_at = (/* @__PURE__ */ new Date()).toISOString();
+    if (userId) {
+      if (!this.userAutomations.has(userId)) {
+        this.userAutomations.set(userId, /* @__PURE__ */ new Map());
+      }
+      this.userAutomations.get(userId).set(flow.id, flow);
+    }
     this.automations.set(flow.id, flow);
     return flow;
   }
-  deleteAutomation(id) {
+  deleteAutomation(id, userId) {
+    if (userId) {
+      this.userAutomations.get(userId)?.delete(id);
+    }
     return this.automations.delete(id);
   }
   // --- Meta CAPI Events ---
@@ -1529,9 +1605,162 @@ var AutomationEngine = class {
   }
 };
 
+// lib/cacheService.ts
+import Redis from "ioredis";
+var CacheService = class {
+  constructor() {
+    this.memoryCache = /* @__PURE__ */ new Map();
+    this.redisClient = null;
+    this.isRedisConnected = false;
+    this.hits = 0;
+    this.misses = 0;
+    const redisUrl = process.env.REDIS_URL || process.env.KV_URL;
+    const redisHost = process.env.REDIS_HOST;
+    if (redisUrl || redisHost) {
+      try {
+        this.redisClient = redisUrl ? new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1 }) : new Redis({
+          host: redisHost || "localhost",
+          port: Number(process.env.REDIS_PORT || 6379),
+          password: process.env.REDIS_PASSWORD || void 0,
+          lazyConnect: true,
+          maxRetriesPerRequest: 1
+        });
+        this.redisClient.connect().then(() => {
+          this.isRedisConnected = true;
+          console.log("[CacheService] Connected to Redis server.");
+        }).catch((err) => {
+          console.warn("[CacheService] Redis connection not available, falling back to High-Speed In-Memory TTL Cache:", err.message);
+          this.redisClient = null;
+        });
+      } catch (err) {
+        console.warn("[CacheService] Redis init failed, using In-Memory Cache:", err.message);
+      }
+    }
+    setInterval(() => this.cleanupExpired(), 6e4).unref();
+  }
+  cleanupExpired() {
+    const now = Date.now();
+    for (const [key, entry] of this.memoryCache.entries()) {
+      if (entry.expiresAt <= now) {
+        this.memoryCache.delete(key);
+      }
+    }
+  }
+  /**
+   * Generates a namespaced cache key for a specific user.
+   */
+  getUserKey(userId, resource) {
+    return `user:${userId.trim().toLowerCase()}:${resource}`;
+  }
+  /**
+   * Retrieves a cached value by key.
+   */
+  async get(key) {
+    const memEntry = this.memoryCache.get(key);
+    if (memEntry) {
+      if (memEntry.expiresAt > Date.now()) {
+        this.hits++;
+        return memEntry.value;
+      }
+      this.memoryCache.delete(key);
+    }
+    if (this.isRedisConnected && this.redisClient) {
+      try {
+        const raw = await this.redisClient.get(key);
+        if (raw) {
+          this.hits++;
+          const parsed = JSON.parse(raw);
+          this.memoryCache.set(key, { value: parsed, expiresAt: Date.now() + 3e4 });
+          return parsed;
+        }
+      } catch (e) {
+      }
+    }
+    this.misses++;
+    return null;
+  }
+  /**
+   * Stores a value in cache with a TTL (default: 60 seconds).
+   */
+  async set(key, value, ttlSeconds = 60) {
+    const expiresAt = Date.now() + ttlSeconds * 1e3;
+    this.memoryCache.set(key, { value, expiresAt });
+    if (this.isRedisConnected && this.redisClient) {
+      try {
+        await this.redisClient.set(key, JSON.stringify(value), "EX", ttlSeconds);
+      } catch (e) {
+      }
+    }
+  }
+  /**
+   * Deletes a specific cache key.
+   */
+  async del(key) {
+    this.memoryCache.delete(key);
+    if (this.isRedisConnected && this.redisClient) {
+      try {
+        await this.redisClient.del(key);
+      } catch (e) {
+      }
+    }
+  }
+  /**
+   * Invalidates all cached resources for a given user.
+   */
+  async invalidateUser(userId) {
+    if (!userId) return;
+    const prefix = `user:${userId.trim().toLowerCase()}:`;
+    for (const key of this.memoryCache.keys()) {
+      if (key.startsWith(prefix)) {
+        this.memoryCache.delete(key);
+      }
+    }
+    if (this.isRedisConnected && this.redisClient) {
+      try {
+        const keys = await this.redisClient.keys(`${prefix}*`);
+        if (keys.length > 0) {
+          await this.redisClient.del(...keys);
+        }
+      } catch (e) {
+      }
+    }
+  }
+  /**
+   * Flushes the entire cache.
+   */
+  async flush() {
+    this.memoryCache.clear();
+    if (this.isRedisConnected && this.redisClient) {
+      try {
+        await this.redisClient.flushdb();
+      } catch (e) {
+      }
+    }
+  }
+  /**
+   * Telemetry stats for observability.
+   */
+  getStats() {
+    const total = this.hits + this.misses;
+    const hitRate = total > 0 ? `${(this.hits / total * 100).toFixed(1)}%` : "0.0%";
+    return {
+      engine: this.isRedisConnected ? "Redis (L2) + Memory (L1)" : "High-Speed In-Memory TTL Cache (L1)",
+      isRedisConnected: this.isRedisConnected,
+      activeMemoryKeys: this.memoryCache.size,
+      hits: this.hits,
+      misses: this.misses,
+      hitRate
+    };
+  }
+};
+var cacheService = new CacheService();
+
 // lib/whatsappRoutes.ts
 import crypto6 from "crypto";
 var whatsappRouter = Router();
+whatsappRouter.get("/api/cache/stats", (_req, res) => {
+  return res.json({ success: true, cache: cacheService.getStats() });
+});
 var processedEventIds = /* @__PURE__ */ new Set();
 whatsappRouter.post("/api/webhooks/zernio", async (req, res) => {
   try {
@@ -1887,11 +2116,19 @@ whatsappRouter.get("/api/whatsapp/capi/events", (req, res) => {
   const events = whatsappStore2.getCAPIEvents();
   return res.json({ data: events });
 });
-whatsappRouter.get("/api/whatsapp/automations", (req, res) => {
-  const flows = whatsappStore2.getAutomations();
+whatsappRouter.get("/api/whatsapp/automations", async (req, res) => {
+  const { userId } = await resolveUserProfileId(req);
+  const cacheKey = cacheService.getUserKey(userId, "automations");
+  const cached = await cacheService.get(cacheKey);
+  if (cached) {
+    return res.json({ data: cached });
+  }
+  const flows = whatsappStore2.getAutomations(userId);
+  await cacheService.set(cacheKey, flows, 60);
   return res.json({ data: flows });
 });
-whatsappRouter.post("/api/whatsapp/automations", (req, res) => {
+whatsappRouter.post("/api/whatsapp/automations", async (req, res) => {
+  const { userId } = await resolveUserProfileId(req);
   const { title, description, trigger_type, nodes, edges, is_active } = req.body;
   const newFlow = {
     id: `flow_${Date.now()}`,
@@ -1905,12 +2142,14 @@ whatsappRouter.post("/api/whatsapp/automations", (req, res) => {
     created_at: (/* @__PURE__ */ new Date()).toISOString(),
     updated_at: (/* @__PURE__ */ new Date()).toISOString()
   };
-  whatsappStore2.saveAutomation(newFlow);
+  whatsappStore2.saveAutomation(newFlow, userId);
+  await cacheService.invalidateUser(userId);
   return res.json({ success: true, data: newFlow });
 });
-whatsappRouter.put("/api/whatsapp/automations/:id", (req, res) => {
+whatsappRouter.put("/api/whatsapp/automations/:id", async (req, res) => {
+  const { userId } = await resolveUserProfileId(req);
   const { id } = req.params;
-  const existing = whatsappStore2.getAutomation(id);
+  const existing = whatsappStore2.getAutomation(id, userId);
   if (!existing) return res.status(404).json({ error: "Flow not found" });
   const updated = {
     ...existing,
@@ -1918,27 +2157,66 @@ whatsappRouter.put("/api/whatsapp/automations/:id", (req, res) => {
     id,
     updated_at: (/* @__PURE__ */ new Date()).toISOString()
   };
-  whatsappStore2.saveAutomation(updated);
+  whatsappStore2.saveAutomation(updated, userId);
+  await cacheService.invalidateUser(userId);
   return res.json({ success: true, data: updated });
 });
-whatsappRouter.delete("/api/whatsapp/automations/:id", (req, res) => {
+whatsappRouter.delete("/api/whatsapp/automations/:id", async (req, res) => {
+  const { userId } = await resolveUserProfileId(req);
   const { id } = req.params;
-  whatsappStore2.deleteAutomation(id);
+  whatsappStore2.deleteAutomation(id, userId);
+  await cacheService.invalidateUser(userId);
   return res.json({ success: true });
 });
 whatsappRouter.post("/api/whatsapp/automations/:id/test", async (req, res) => {
+  const { userId } = await resolveUserProfileId(req);
   const { id } = req.params;
-  const flow = whatsappStore2.getAutomation(id);
+  const flow = whatsappStore2.getAutomation(id, userId);
   if (!flow) return res.status(404).json({ error: "Flow not found" });
-  const sampleConv = whatsappStore2.getConversations()[0];
+  const sampleConv = whatsappStore2.getConversations(userId)[0] || {
+    id: "test_conv",
+    contact: { id: "c_test", phone_number: "+14155552671", name: "Test Contact", formatted_phone: "+1 415-555-2671", tags: [], lifecycle_stage: "lead", unread_count: 0, last_activity_at: (/* @__PURE__ */ new Date()).toISOString() },
+    unread_count: 0,
+    status: "open",
+    last_message: { id: "m_test", conversation_id: "test_conv", direction: "incoming", type: "text", text: "price test", timestamp: (/* @__PURE__ */ new Date()).toISOString(), status: "delivered" },
+    is_window_open: true,
+    window_expires_at: new Date(Date.now() + 864e5).toISOString(),
+    created_at: (/* @__PURE__ */ new Date()).toISOString(),
+    updated_at: (/* @__PURE__ */ new Date()).toISOString()
+  };
   const result = await AutomationEngine.executeFlow(flow, sampleConv);
   return res.json({ success: true, result });
 });
-whatsappRouter.get("/api/whatsapp/templates", (req, res) => {
-  const templates = whatsappStore2.getTemplates();
+whatsappRouter.get("/api/whatsapp/templates", async (req, res) => {
+  const { userId } = await resolveUserProfileId(req);
+  const cacheKey = cacheService.getUserKey(userId, "templates");
+  const cached = await cacheService.get(cacheKey);
+  if (cached) {
+    return res.json({ data: cached });
+  }
+  const supabase = getBackendSupabaseClient();
+  if (supabase) {
+    const { data } = await supabase.from("whatsapp_templates").select("*").eq("user_id", userId);
+    if (data && data.length > 0) {
+      const mapped = data.map((t) => ({
+        id: t.id,
+        name: t.name,
+        category: t.category,
+        language: t.language,
+        status: t.status,
+        components: t.components,
+        created_at: t.created_at
+      }));
+      await cacheService.set(cacheKey, mapped, 60);
+      return res.json({ data: mapped });
+    }
+  }
+  const templates = whatsappStore2.getTemplates(userId);
+  await cacheService.set(cacheKey, templates, 60);
   return res.json({ data: templates });
 });
-whatsappRouter.post("/api/whatsapp/templates", (req, res) => {
+whatsappRouter.post("/api/whatsapp/templates", async (req, res) => {
+  const { userId } = await resolveUserProfileId(req);
   const { name, category, language, components } = req.body;
   const newTemplate = {
     id: `tmpl_${Date.now()}`,
@@ -1946,64 +2224,206 @@ whatsappRouter.post("/api/whatsapp/templates", (req, res) => {
     category: category || "MARKETING",
     language: language || "en_US",
     status: "APPROVED",
-    // Meta simulation
     components: components || [],
     last_updated: (/* @__PURE__ */ new Date()).toISOString()
   };
-  whatsappStore2.saveTemplate(newTemplate);
+  const supabase = getBackendSupabaseClient();
+  if (supabase) {
+    await supabase.from("whatsapp_templates").insert({
+      user_id: userId,
+      name: newTemplate.name,
+      category: newTemplate.category,
+      language: newTemplate.language,
+      status: newTemplate.status,
+      components: newTemplate.components
+    });
+  }
+  whatsappStore2.saveTemplate(newTemplate, userId);
+  await cacheService.invalidateUser(userId);
   return res.json({ success: true, data: newTemplate });
 });
-whatsappRouter.delete("/api/whatsapp/templates/:name", (req, res) => {
+whatsappRouter.delete("/api/whatsapp/templates/:name", async (req, res) => {
+  const { userId } = await resolveUserProfileId(req);
   const { name } = req.params;
-  whatsappStore2.deleteTemplate(name);
+  const supabase = getBackendSupabaseClient();
+  if (supabase) {
+    await supabase.from("whatsapp_templates").delete().eq("user_id", userId).eq("name", name);
+  }
+  whatsappStore2.deleteTemplate(name, userId);
+  await cacheService.invalidateUser(userId);
   return res.json({ success: true });
 });
-whatsappRouter.get("/api/whatsapp/broadcasts", (req, res) => {
-  const broadcasts = whatsappStore2.getBroadcasts();
-  return res.json({ data: broadcasts });
+whatsappRouter.get("/api/whatsapp/campaigns/overview", async (req, res) => {
+  try {
+    const { userId } = await resolveUserProfileId(req);
+    const cacheKey = cacheService.getUserKey(userId, "campaigns_overview");
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
+      return res.json({ success: true, overview: cached, cached: true });
+    }
+    const supabase = getBackendSupabaseClient();
+    let dbCampaigns = [];
+    try {
+      const { data, error } = await supabase.from("whatsapp_campaigns").select("*").eq("user_id", userId);
+      if (!error && Array.isArray(data)) {
+        dbCampaigns = data;
+      }
+    } catch {
+    }
+    const storeCampaigns = whatsappStore2.getBroadcasts(userId);
+    const allCampaignsMap = /* @__PURE__ */ new Map();
+    for (const c of dbCampaigns) allCampaignsMap.set(c.id, c);
+    for (const c of storeCampaigns) allCampaignsMap.set(c.id, c);
+    const campaigns = Array.from(allCampaignsMap.values());
+    const total_campaigns = campaigns.length;
+    const total_recipients = campaigns.reduce((acc, c) => acc + (Number(c.total_recipients) || 0), 0);
+    const sent = campaigns.reduce((acc, c) => acc + (Number(c.sent_count) || 0), 0);
+    const delivered = campaigns.reduce((acc, c) => acc + (Number(c.delivered_count) || 0), 0);
+    const read = campaigns.reduce((acc, c) => acc + (Number(c.read_count) || 0), 0);
+    const replied = campaigns.reduce((acc, c) => acc + (Number(c.replied_count) || 0), 0);
+    const failed = campaigns.reduce((acc, c) => acc + (Number(c.failed_count) || 0), 0);
+    const read_rate = sent > 0 ? Number((read / sent * 100).toFixed(1)) : 0;
+    const reply_rate = sent > 0 ? Number((replied / sent * 100).toFixed(1)) : 0;
+    const account = whatsappStore2.getAccount(userId);
+    const isConnected = Boolean(account && account.status !== "disconnected");
+    const limitTotal = isConnected ? account?.messaging_limit_tier === "TIER_100K_DAILY" ? 1e5 : 250 : 0;
+    const overview = {
+      total_campaigns,
+      total_recipients,
+      sent,
+      delivered,
+      read,
+      replied,
+      failed,
+      read_rate,
+      reply_rate,
+      daily_limit: {
+        used: sent,
+        total: limitTotal,
+        tier: isConnected ? account?.messaging_limit_tier || "TIER_100K_DAILY" : "NOT_CONNECTED"
+      },
+      consecutive_days: sent > 0 ? 1 : 0,
+      messaging_quality: isConnected ? account?.quality_rating || "GREEN" : "NOT_CONNECTED"
+    };
+    await cacheService.set(cacheKey, overview, 15);
+    return res.json({ success: true, overview });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
-whatsappRouter.post("/api/whatsapp/broadcasts", (req, res) => {
-  const { title, template_name, target_tags, scheduled_at } = req.body;
-  const allContacts = whatsappStore2.getContacts();
-  const matched = target_tags && target_tags.length > 0 ? allContacts.filter((c) => target_tags.some((t) => c.tags.includes(t))) : allContacts;
-  const total = Math.max(matched.length, 120);
-  const newBroadcast = {
-    id: `bc_${Date.now()}`,
-    title: title || "WhatsApp Broadcast Campaign",
-    template_name: template_name || "lead_welcome_v1",
-    target_tags: target_tags || ["All_Contacts"],
-    total_recipients: total,
-    sent_count: total,
-    delivered_count: Math.floor(total * 0.98),
-    read_count: Math.floor(total * 0.82),
-    failed_count: Math.floor(total * 0.02),
-    status: scheduled_at ? "scheduled" : "completed",
-    scheduled_at,
-    created_at: (/* @__PURE__ */ new Date()).toISOString()
-  };
-  whatsappStore2.saveBroadcast(newBroadcast);
-  return res.json({ success: true, data: newBroadcast });
+whatsappRouter.get("/api/whatsapp/campaigns/scheduled", async (req, res) => {
+  try {
+    const { userId } = await resolveUserProfileId(req);
+    const cacheKey = cacheService.getUserKey(userId, "campaigns_scheduled");
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
+      return res.json({ success: true, data: cached, cached: true });
+    }
+    const supabase = getBackendSupabaseClient();
+    let scheduled = [];
+    try {
+      const { data, error } = await supabase.from("whatsapp_campaigns").select("*").eq("user_id", userId).in("status", ["scheduled", "draft"]).order("created_at", { ascending: false });
+      if (!error && Array.isArray(data)) {
+        scheduled = data;
+      }
+    } catch {
+    }
+    const storeBroadcasts = whatsappStore2.getBroadcasts(userId).filter((b) => b.status === "scheduled");
+    const mergedMap = /* @__PURE__ */ new Map();
+    for (const item of scheduled) mergedMap.set(item.id, item);
+    for (const item of storeBroadcasts) mergedMap.set(item.id, item);
+    const result = Array.from(mergedMap.values());
+    await cacheService.set(cacheKey, result, 15);
+    return res.json({ success: true, data: result });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
-whatsappRouter.get("/api/whatsapp/contacts", (req, res) => {
-  const contacts = whatsappStore2.getContacts();
-  return res.json({ data: contacts });
+whatsappRouter.get("/api/whatsapp/broadcasts", async (req, res) => {
+  try {
+    const { userId } = await resolveUserProfileId(req);
+    const broadcasts = whatsappStore2.getBroadcasts(userId);
+    return res.json({ data: broadcasts });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
-whatsappRouter.post("/api/whatsapp/contacts", (req, res) => {
-  const newContact = {
-    id: `cnt_${Date.now()}`,
-    phone_number: req.body.phone_number || "+10000000000",
-    formatted_phone: req.body.formatted_phone || req.body.phone_number || "+1 (000) 000-0000",
-    name: req.body.name || "New Contact",
-    email: req.body.email,
-    tags: req.body.tags || ["Direct_Contact"],
-    custom_fields: req.body.custom_fields || {},
-    lifecycle_stage: req.body.lifecycle_stage || "lead",
-    created_at: (/* @__PURE__ */ new Date()).toISOString(),
-    last_activity_at: (/* @__PURE__ */ new Date()).toISOString(),
-    notes: req.body.notes
-  };
-  whatsappStore2.saveContact(newContact);
-  return res.json({ success: true, data: newContact });
+whatsappRouter.post("/api/whatsapp/broadcasts", async (req, res) => {
+  try {
+    const { userId } = await resolveUserProfileId(req);
+    const { title, template_name, target_tags, scheduled_at } = req.body;
+    const allContacts = whatsappStore2.getContacts(userId);
+    const matched = target_tags && target_tags.length > 0 ? allContacts.filter((c) => target_tags.some((t) => c.tags.includes(t))) : allContacts;
+    const total = matched.length;
+    const newBroadcast = {
+      id: `bc_${Date.now()}`,
+      title: title || "WhatsApp Broadcast Campaign",
+      template_name: template_name || "lead_welcome_v1",
+      target_tags: target_tags || ["All_Contacts"],
+      total_recipients: total,
+      sent_count: total,
+      delivered_count: total,
+      read_count: 0,
+      failed_count: 0,
+      status: scheduled_at ? "scheduled" : "completed",
+      scheduled_at,
+      created_at: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    whatsappStore2.saveBroadcast(newBroadcast, userId);
+    try {
+      const supabase = getBackendSupabaseClient();
+      await supabase.from("whatsapp_campaigns").insert({
+        id: newBroadcast.id,
+        user_id: userId,
+        name: newBroadcast.title,
+        channel: "whatsapp",
+        template_name: newBroadcast.template_name,
+        status: newBroadcast.status,
+        total_recipients: total,
+        sent_count: total,
+        delivered_count: total,
+        read_count: 0,
+        failed_count: 0,
+        scheduled_for: scheduled_at || null
+      });
+    } catch {
+    }
+    await cacheService.invalidateUser(userId);
+    return res.json({ success: true, data: newBroadcast });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+whatsappRouter.get("/api/whatsapp/contacts", async (req, res) => {
+  try {
+    const { userId } = await resolveUserProfileId(req);
+    const contacts = whatsappStore2.getContacts(userId);
+    return res.json({ data: contacts });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+whatsappRouter.post("/api/whatsapp/contacts", async (req, res) => {
+  try {
+    const { userId } = await resolveUserProfileId(req);
+    const newContact = {
+      id: `cnt_${Date.now()}`,
+      phone_number: req.body.phone_number || "+10000000000",
+      formatted_phone: req.body.formatted_phone || req.body.phone_number || "+1 (000) 000-0000",
+      name: req.body.name || "New Contact",
+      email: req.body.email,
+      tags: req.body.tags || ["Direct_Contact"],
+      custom_fields: req.body.custom_fields || {},
+      lifecycle_stage: req.body.lifecycle_stage || "lead",
+      created_at: (/* @__PURE__ */ new Date()).toISOString(),
+      last_activity_at: (/* @__PURE__ */ new Date()).toISOString(),
+      notes: req.body.notes
+    };
+    whatsappStore2.saveContact(newContact, userId);
+    return res.json({ success: true, data: newContact });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 whatsappRouter.put("/api/whatsapp/contacts/:id", (req, res) => {
   const { id } = req.params;
@@ -2135,13 +2555,50 @@ async function resolveUserProfileId(req) {
 whatsappRouter.get("/api/whatsapp/account", async (req, res) => {
   try {
     const { userId, profileId } = await resolveUserProfileId(req);
+    const cacheKey = cacheService.getUserKey(userId, "account");
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
+      return res.json({
+        connected: Boolean(cached && cached.status !== "disconnected"),
+        account: cached,
+        sandbox: whatsappStore2.getSandboxSession(userId) || null,
+        profileId,
+        cached: true
+      });
+    }
     let account = whatsappStore2.getAccount(userId);
     const sandbox = whatsappStore2.getSandboxSession(userId);
-    if (!account && process.env.ZERNIO_API_KEY) {
+    if (!account) {
+      try {
+        const supabase = getBackendSupabaseClient();
+        const { data: dbAcc } = await supabase.from("whatsapp_accounts").select("*").eq("user_id", userId).maybeSingle();
+        if (dbAcc) {
+          account = whatsappStore2.setAccount({
+            id: dbAcc.id,
+            platform: dbAcc.platform || "whatsapp",
+            name: dbAcc.name || "Connected WhatsApp Account",
+            phone_number: dbAcc.phone_number,
+            phone_number_id: dbAcc.phone_number_id,
+            waba_id: dbAcc.waba_id,
+            status: dbAcc.status || "connected",
+            mode: dbAcc.mode || "production",
+            quality_rating: dbAcc.quality_rating || "GREEN",
+            messaging_limit_tier: dbAcc.messaging_limit_tier || "TIER_100K_DAILY",
+            verified_name: dbAcc.verified_name,
+            connected_at: dbAcc.connected_at
+          }, userId);
+        }
+      } catch {
+      }
+    }
+    if (!account && process.env.ZERNIO_API_KEY && process.env.ZERNIO_API_KEY !== "dummy_dev_key") {
       const liveAccounts = await ZernioWhatsAppService2.listWhatsAppAccounts(profileId);
       if (liveAccounts.length > 0) {
         account = whatsappStore2.setAccount(liveAccounts[0], userId);
       }
+    }
+    if (account) {
+      await cacheService.set(cacheKey, account, 30);
     }
     return res.json({
       connected: Boolean(account && account.status !== "disconnected"),
@@ -2160,6 +2617,12 @@ whatsappRouter.post("/api/whatsapp/account/disconnect", async (req, res) => {
   try {
     const { userId } = await resolveUserProfileId(req);
     whatsappStore2.disconnectAccount(userId);
+    try {
+      const supabase = getBackendSupabaseClient();
+      await supabase.from("whatsapp_accounts").delete().eq("user_id", userId);
+    } catch {
+    }
+    await cacheService.invalidateUser(userId);
     return res.json({ success: true, message: "WhatsApp account disconnected" });
   } catch (err) {
     return res.status(401).json({ error: "unauthorized", message: err.message });
@@ -2340,8 +2803,10 @@ whatsappRouter.get("/api/whatsapp/connect/headless/numbers", async (req, res) =>
 });
 whatsappRouter.post("/api/whatsapp/connect/headless/select", async (req, res) => {
   try {
+    const { userId, profileId: userProfileId } = await resolveUserProfileId(req);
     const { profileId, phoneNumberId, wabaId, tempToken } = req.body;
-    if (!profileId || !phoneNumberId || !wabaId || !tempToken) {
+    const targetProfileId = profileId || userProfileId;
+    if (!targetProfileId || !phoneNumberId || !wabaId || !tempToken) {
       return res.status(400).json({ error: "Missing required selection parameters" });
     }
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
@@ -2351,11 +2816,11 @@ whatsappRouter.post("/api/whatsapp/connect/headless/select", async (req, res) =>
         "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ profileId, phoneNumberId, wabaId, tempToken })
+      body: JSON.stringify({ profileId: targetProfileId, phoneNumberId, wabaId, tempToken })
     });
     const data = await zRes.json();
     if (zRes.ok && data.account) {
-      whatsappStore2.setAccount({
+      const newAcc = {
         id: data.account.accountId || `acc_waba_${wabaId.substring(0, 8)}`,
         platform: "whatsapp",
         name: data.account.displayName || "Connected WhatsApp Business Account",
@@ -2367,7 +2832,27 @@ whatsappRouter.post("/api/whatsapp/connect/headless/select", async (req, res) =>
         quality_rating: "GREEN",
         messaging_limit_tier: "TIER_100K_DAILY",
         connected_at: (/* @__PURE__ */ new Date()).toISOString()
-      });
+      };
+      whatsappStore2.setAccount(newAcc, userId);
+      try {
+        const supabase = getBackendSupabaseClient();
+        await supabase.from("whatsapp_accounts").upsert({
+          id: newAcc.id,
+          user_id: userId,
+          platform: "whatsapp",
+          name: newAcc.name,
+          phone_number: newAcc.phone_number,
+          phone_number_id: phoneNumberId,
+          waba_id: wabaId,
+          status: "connected",
+          mode: "production",
+          quality_rating: "GREEN",
+          messaging_limit_tier: "TIER_100K_DAILY",
+          connected_at: (/* @__PURE__ */ new Date()).toISOString()
+        });
+      } catch {
+      }
+      await cacheService.invalidateUser(userId);
     }
     return res.status(zRes.status).json(data);
   } catch (err) {
@@ -2376,13 +2861,9 @@ whatsappRouter.post("/api/whatsapp/connect/headless/select", async (req, res) =>
 });
 whatsappRouter.post("/api/whatsapp/connect/credentials", async (req, res) => {
   try {
+    const { userId, profileId: defaultProfileId } = await resolveUserProfileId(req);
     const { profileId: reqProf, waba_id, phone_number_id, access_token, pin, name, phone_number } = req.body;
-    let targetProfileId = reqProf;
-    try {
-      const resolved = await resolveUserProfileId(req);
-      if (!targetProfileId) targetProfileId = resolved.profileId;
-    } catch {
-    }
+    const targetProfileId = reqProf || defaultProfileId;
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if (apiKey && apiKey !== "dummy_dev_key" && targetProfileId) {
       try {
@@ -2415,7 +2896,27 @@ whatsappRouter.post("/api/whatsapp/connect/credentials", async (req, res) => {
             messaging_limit_tier: "TIER_100K_DAILY",
             connected_at: (/* @__PURE__ */ new Date()).toISOString()
           };
-          whatsappStore2.setAccount(account2);
+          whatsappStore2.setAccount(account2, userId);
+          try {
+            const supabase = getBackendSupabaseClient();
+            await supabase.from("whatsapp_accounts").upsert({
+              id: account2.id,
+              user_id: userId,
+              platform: "whatsapp",
+              name: account2.name,
+              phone_number: account2.phone_number,
+              phone_number_id: account2.phone_number_id,
+              waba_id: account2.waba_id,
+              access_token,
+              status: "connected",
+              mode: "production",
+              quality_rating: "GREEN",
+              messaging_limit_tier: "TIER_100K_DAILY",
+              connected_at: (/* @__PURE__ */ new Date()).toISOString()
+            });
+          } catch {
+          }
+          await cacheService.invalidateUser(userId);
           return res.json({ success: true, account: account2 });
         }
       } catch (upstreamErr) {
@@ -2436,7 +2937,27 @@ whatsappRouter.post("/api/whatsapp/connect/credentials", async (req, res) => {
       verified_name: name || "Verified WABA",
       connected_at: (/* @__PURE__ */ new Date()).toISOString()
     };
-    whatsappStore2.setAccount(account);
+    whatsappStore2.setAccount(account, userId);
+    try {
+      const supabase = getBackendSupabaseClient();
+      await supabase.from("whatsapp_accounts").upsert({
+        id: account.id,
+        user_id: userId,
+        platform: "whatsapp",
+        name: account.name,
+        phone_number: account.phone_number,
+        phone_number_id: account.phone_number_id,
+        waba_id: account.waba_id,
+        access_token: access_token || null,
+        status: "connected",
+        mode: "production",
+        quality_rating: "GREEN",
+        messaging_limit_tier: "TIER_100K_DAILY",
+        connected_at: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    } catch {
+    }
+    await cacheService.invalidateUser(userId);
     return res.json({
       success: true,
       account
@@ -2548,12 +3069,12 @@ function startServer() {
   if (redisHost) {
     try {
       if (process.env.REDIS_URL) {
-        redisClient = new Redis(process.env.REDIS_URL, {
+        redisClient = new Redis2(process.env.REDIS_URL, {
           lazyConnect: true,
           maxRetriesPerRequest: 2
         });
       } else {
-        redisClient = new Redis({
+        redisClient = new Redis2({
           host: process.env.REDIS_HOST || "127.0.0.1",
           port: Number(process.env.REDIS_PORT) || 6379,
           password: process.env.REDIS_PASSWORD || void 0,

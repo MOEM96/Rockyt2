@@ -54,7 +54,6 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
   const [connectorsExpanded, setConnectorsExpanded] = useState(true);
   const [settingsExpanded, setSettingsExpanded] = useState(false);
   const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
-  const [previewSampleData, setPreviewSampleData] = useState(true);
   const [plannerView, setPlannerView] = useState<'calendar' | 'list'>('calendar');
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const [chatWidgetOpen, setChatWidgetOpen] = useState(false);
@@ -63,9 +62,12 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
   ]);
   const [inputChatText, setInputChatText] = useState('');
 
-  // Account and API states
+  // Account and Live Real-Time API states
   const [account, setAccount] = useState<any>(null);
   const [isLoadingAccount, setIsLoadingAccount] = useState(true);
+  const [campaignOverview, setCampaignOverview] = useState<any>(null);
+  const [scheduledCampaigns, setScheduledCampaigns] = useState<any[]>([]);
+  const [isRefreshingMetrics, setIsRefreshingMetrics] = useState(false);
   const [oauthBanner, setOauthBanner] = useState<string | null>(null);
   const [completedSteps, setCompletedSteps] = useState<{ [key: number]: boolean }>({
     1: false,
@@ -92,8 +94,10 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
       if (res.ok) {
         const data = await res.json();
         setAccount(data.account || null);
-        if (data.account) {
+        if (data.account && data.account.status !== 'disconnected') {
           setCompletedSteps(prev => ({ ...prev, 1: true }));
+        } else {
+          setCompletedSteps(prev => ({ ...prev, 1: false }));
         }
       }
     } catch (e) {
@@ -103,20 +107,52 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
     }
   };
 
+  const fetchCampaignMetrics = async () => {
+    try {
+      setIsRefreshingMetrics(true);
+      const [ovRes, schedRes] = await Promise.all([
+        fetch('/api/whatsapp/campaigns/overview', { headers: getHeaders() }),
+        fetch('/api/whatsapp/campaigns/scheduled', { headers: getHeaders() }),
+      ]);
+      if (ovRes.ok) {
+        const ovData = await ovRes.json();
+        setCampaignOverview(ovData.overview || null);
+      }
+      if (schedRes.ok) {
+        const schedData = await schedRes.json();
+        setScheduledCampaigns(schedData.data || []);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch campaign metrics:', err);
+    } finally {
+      setIsRefreshingMetrics(false);
+    }
+  };
+
   useEffect(() => {
     fetchAccountStatus();
+    fetchCampaignMetrics();
+
+    // Live Real-Time refresh interval (every 4 seconds)
+    const interval = setInterval(() => {
+      fetchAccountStatus();
+      fetchCampaignMetrics();
+    }, 4000);
 
     // Detect return from Meta Headless OAuth
     const searchParams = new URLSearchParams(window.location.search);
     if (searchParams.get('waba') === 'connected' || searchParams.get('connected') === 'true') {
       setOauthBanner('🎉 WhatsApp Business Account successfully authenticated via Meta Headless OAuth (Zero 3rd-party branding)!');
       fetchAccountStatus();
+      fetchCampaignMetrics();
       setCompletedSteps(prev => ({ ...prev, 1: true }));
       window.history.replaceState({}, document.title, window.location.pathname);
       setTimeout(() => setOauthBanner(null), 8000);
     } else if (searchParams.get('tempToken')) {
       setIsConnectModalOpen(true);
     }
+
+    return () => clearInterval(interval);
   }, [userSession?.id]);
 
   const handleSendChat = (e: React.FormEvent) => {
@@ -908,33 +944,20 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
                     <ChevronDown size={14} className="text-gray-400" />
                   </div>
 
-                  <button className="p-2 bg-white border border-gray-300 rounded-xl hover:bg-gray-50 text-gray-600 transition-colors shadow-xs">
-                    <RefreshCw size={14} />
+                  <button 
+                    onClick={fetchCampaignMetrics}
+                    disabled={isRefreshingMetrics}
+                    className="p-2 bg-white border border-gray-300 rounded-xl hover:bg-gray-50 text-gray-600 transition-colors shadow-xs cursor-pointer disabled:opacity-50"
+                    title="Refresh live metrics"
+                  >
+                    <RefreshCw size={14} className={isRefreshingMetrics ? 'animate-spin text-emerald-600' : ''} />
                   </button>
                 </div>
 
-                {/* Right: Preview with sample data toggle */}
-                <div className="flex flex-col sm:items-end gap-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-gray-600 font-medium">Preview with sample data</span>
-                    <button
-                      onClick={() => setPreviewSampleData(!previewSampleData)}
-                      className={`w-9 h-5 rounded-full transition-colors relative cursor-pointer ${
-                        previewSampleData ? 'bg-[#00D084]' : 'bg-gray-300'
-                      }`}
-                    >
-                      <span className={`w-4 h-4 rounded-full bg-white absolute top-0.5 transition-transform ${
-                        previewSampleData ? 'right-0.5' : 'left-0.5'
-                      }`} />
-                    </button>
-                  </div>
-
-                  {previewSampleData && (
-                    <div className="px-3 py-1 bg-amber-50 border border-amber-200 text-amber-800 text-[11px] rounded-lg font-medium flex items-center gap-1.5">
-                      <AlertTriangle size={12} className="text-amber-600" />
-                      <span>Data shown is for representation purpose only</span>
-                    </div>
-                  )}
+                {/* Right: Live Real-Time Telemetry Badge */}
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-[#00D084] animate-pulse"></span>
+                  <span className="text-xs text-gray-600 font-semibold">Live Real-Time Telemetry</span>
                 </div>
               </div>
 
@@ -953,25 +976,30 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
                     </div>
 
                     <div className="text-sm font-bold text-gray-900 mt-2">
-                      {previewSampleData ? '957/2000 unique contacts' : '0/250 unique contacts'}
+                      {account ? `${campaignOverview?.daily_limit?.used || 0}/${campaignOverview?.daily_limit?.total || (account.messaging_limit_tier === 'TIER_100K_DAILY' ? 100000 : 250)} unique contacts` : '0/0 unique contacts'}
                     </div>
 
                     {/* Progress Bar */}
                     <div className="w-full h-2 bg-gray-100 rounded-full mt-2 overflow-hidden">
-                      <div className={`h-full rounded-full transition-all duration-500 ${
-                        previewSampleData ? 'w-[48%] bg-[#00D084]' : 'w-0 bg-[#00D084]'
-                      }`}></div>
+                      <div 
+                        className="h-full rounded-full bg-[#00D084] transition-all duration-500"
+                        style={{
+                          width: account && campaignOverview?.daily_limit?.total 
+                            ? `${Math.min(100, Math.round(((campaignOverview.daily_limit.used || 0) / campaignOverview.daily_limit.total) * 100))}%`
+                            : '0%'
+                        }}
+                      ></div>
                     </div>
 
                     <div className="mt-2 text-right">
                       <a href="#limits" className="text-xs text-blue-600 hover:underline font-medium">
-                        What are limits?
+                        {account ? (account.messaging_limit_tier || 'TIER_100K_DAILY') : 'Connect WhatsApp to unlock limits'}
                       </a>
                     </div>
                   </div>
 
                   <div className="pt-3 border-t border-gray-100 text-[11px] text-gray-400">
-                    Sample data, turn off preview for actuals
+                    {account ? 'Meta Official Cloud API Tier' : 'No account connected'}
                   </div>
                 </div>
 
@@ -986,21 +1014,24 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
 
                     {/* 7 Day Status Circles */}
                     <div className="flex items-center gap-2.5 my-4">
-                      {[1, 2, 3, 4, 5, 6, 7].map((day) => (
-                        <div
-                          key={day}
-                          className={`w-4 h-4 rounded-full border-2 transition-all ${
-                            previewSampleData && day <= 3
-                              ? 'border-amber-500 bg-amber-100'
-                              : 'border-amber-400 bg-transparent'
-                          }`}
-                        />
-                      ))}
+                      {[1, 2, 3, 4, 5, 6, 7].map((day) => {
+                        const activeDays = campaignOverview?.consecutive_days || 0;
+                        return (
+                          <div
+                            key={day}
+                            className={`w-4 h-4 rounded-full border-2 transition-all ${
+                              day <= activeDays
+                                ? 'border-amber-500 bg-amber-100'
+                                : 'border-gray-200 bg-transparent'
+                            }`}
+                          />
+                        );
+                      })}
                     </div>
                   </div>
 
                   <div className="pt-3 border-t border-gray-100 text-[11px] text-gray-400">
-                    Sample data, turn off preview for actuals
+                    {campaignOverview?.consecutive_days ? `${campaignOverview.consecutive_days} consecutive days active` : '0 consecutive active days'}
                   </div>
                 </div>
 
@@ -1015,31 +1046,31 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
 
                     <div className="flex items-center gap-2 my-3">
                       <div className="flex items-end gap-1 h-5">
-                        <div className="w-1.5 h-2 bg-[#00D084] rounded-xs"></div>
-                        <div className="w-1.5 h-3.5 bg-[#00D084] rounded-xs"></div>
-                        <div className="w-1.5 h-5 bg-[#00D084] rounded-xs"></div>
+                        <div className={`w-1.5 h-2 rounded-xs ${account ? 'bg-[#00D084]' : 'bg-gray-300'}`}></div>
+                        <div className={`w-1.5 h-3.5 rounded-xs ${account ? 'bg-[#00D084]' : 'bg-gray-300'}`}></div>
+                        <div className={`w-1.5 h-5 rounded-xs ${account ? 'bg-[#00D084]' : 'bg-gray-300'}`}></div>
                       </div>
-                      <span className="text-sm font-bold text-emerald-700">
-                        {previewSampleData ? 'High' : 'Pending Verification'}
+                      <span className={`text-sm font-bold ${account ? 'text-emerald-700' : 'text-gray-400'}`}>
+                        {account ? (account.quality_rating || 'High (GREEN)') : 'Not Connected'}
                       </span>
                     </div>
                   </div>
 
                   <div className="pt-3 border-t border-gray-100 text-[11px] text-gray-400">
-                    Sample data, turn off preview for actuals
+                    {account ? 'Meta WABA Quality Rating' : 'Connect account to check quality'}
                   </div>
                 </div>
 
               </div>
 
-              {/* 8 Analytics Metrics Grid (Exact Match to Image 2) */}
+              {/* 8 Analytics Metrics Grid (Live Real-Time Data) */}
               <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3.5">
                 
                 {/* 1. Sent */}
                 <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex items-center justify-between">
                   <div>
                     <div className="text-2xl font-extrabold text-gray-900 font-display">
-                      {previewSampleData ? '600' : '0'}
+                      {campaignOverview?.sent ?? 0}
                     </div>
                     <div className="text-xs text-gray-500 font-medium flex items-center gap-1 mt-0.5">
                       <span>Sent</span>
@@ -1055,7 +1086,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
                 <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex items-center justify-between">
                   <div>
                     <div className="text-2xl font-extrabold text-gray-900 font-display">
-                      {previewSampleData ? '590' : '0'}
+                      {campaignOverview?.delivered ?? 0}
                     </div>
                     <div className="text-xs text-gray-500 font-medium flex items-center gap-1 mt-0.5">
                       <span>Delivered</span>
@@ -1071,7 +1102,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
                 <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex items-center justify-between">
                   <div>
                     <div className="text-2xl font-extrabold text-gray-900 font-display">
-                      {previewSampleData ? '582' : '0'}
+                      {campaignOverview?.read ?? 0}
                     </div>
                     <div className="text-xs text-gray-500 font-medium flex items-center gap-1 mt-0.5">
                       <span>Read</span>
@@ -1087,7 +1118,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
                 <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex items-center justify-between">
                   <div>
                     <div className="text-2xl font-extrabold text-gray-900 font-display">
-                      {previewSampleData ? '227' : '0'}
+                      {campaignOverview?.replied ?? 0}
                     </div>
                     <div className="text-xs text-gray-500 font-medium flex items-center gap-1 mt-0.5">
                       <span>Replied</span>
@@ -1103,7 +1134,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
                 <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex items-center justify-between">
                   <div>
                     <div className="text-2xl font-extrabold text-gray-900 font-display">
-                      {previewSampleData ? '0' : '0'}
+                      0
                     </div>
                     <div className="text-xs text-gray-500 font-medium flex items-center gap-1 mt-0.5">
                       <span>Sending</span>
@@ -1119,7 +1150,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
                 <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex items-center justify-between">
                   <div>
                     <div className="text-2xl font-extrabold text-gray-900 font-display">
-                      {previewSampleData ? '59' : '0'}
+                      {campaignOverview?.failed ?? 0}
                     </div>
                     <div className="text-xs text-gray-500 font-medium flex items-center gap-1 mt-0.5">
                       <span>Failed</span>
@@ -1131,41 +1162,41 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
                   </div>
                 </div>
 
-                {/* 7. Processing */}
+                {/* 7. Read Rate */}
                 <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex items-center justify-between">
                   <div>
                     <div className="text-2xl font-extrabold text-gray-900 font-display">
-                      {previewSampleData ? '1' : '0'}
+                      {campaignOverview?.read_rate ? `${campaignOverview.read_rate}%` : '0%'}
                     </div>
                     <div className="text-xs text-gray-500 font-medium flex items-center gap-1 mt-0.5">
-                      <span>Processing</span>
+                      <span>Read Rate</span>
                       <HelpCircle size={11} className="text-gray-300" />
                     </div>
                   </div>
                   <div className="w-6 h-6 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                    <RefreshCw size={14} />
+                    <Eye size={14} />
                   </div>
                 </div>
 
-                {/* 8. Queued */}
+                {/* 8. Reply Rate */}
                 <div className="p-4 rounded-2xl bg-white border border-gray-200 shadow-xs flex items-center justify-between">
                   <div>
                     <div className="text-2xl font-extrabold text-gray-900 font-display">
-                      {previewSampleData ? '2' : '0'}
+                      {campaignOverview?.reply_rate ? `${campaignOverview.reply_rate}%` : '0%'}
                     </div>
                     <div className="text-xs text-gray-500 font-medium flex items-center gap-1 mt-0.5">
-                      <span>Queued</span>
+                      <span>Reply Rate</span>
                       <HelpCircle size={11} className="text-gray-300" />
                     </div>
                   </div>
                   <div className="w-6 h-6 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                    <Layers size={14} />
+                    <CornerDownLeft size={14} />
                   </div>
                 </div>
 
               </div>
 
-              {/* Campaign Planner Section */}
+              {/* Campaign Planner Section (Live Real-Time) */}
               <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-xs">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                   <div>
@@ -1200,47 +1231,74 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
                       </button>
                     </div>
 
-                    <label className="flex items-center gap-2 text-xs text-gray-600 font-medium cursor-pointer">
-                      <input type="checkbox" defaultChecked className="rounded text-emerald-600 focus:ring-emerald-500" />
-                      <span>Set as default</span>
-                    </label>
+                    <button
+                      onClick={() => setCampaignSubView('templates')}
+                      className="px-3.5 py-1.5 rounded-xl bg-[#00D084] hover:bg-[#00be77] text-[#07301f] text-xs font-bold transition-all"
+                    >
+                      + Schedule Campaign
+                    </button>
                   </div>
                 </div>
 
-                {/* Planner Calendar / List View */}
-                {plannerView === 'calendar' ? (
-                  <div className="border border-gray-200 rounded-xl p-4 overflow-x-auto">
-                    <div className="grid grid-cols-7 gap-2 min-w-[600px] text-center text-xs">
-                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
-                        <div key={d} className="font-bold text-gray-500 py-1.5">{d}</div>
-                      ))}
-                      {[30, 31, 1, 2, 3, 4, 5].map((d, i) => (
-                        <div key={i} className={`p-3 rounded-xl border min-h-[90px] text-left transition-all ${
-                          i === 6 ? 'border-emerald-500 bg-emerald-50/30' : 'border-gray-100 bg-gray-50/50'
-                        }`}>
-                          <div className="font-bold text-xs text-gray-700">{d}</div>
-                          {i === 6 && (
-                            <div className="mt-2 p-1.5 bg-white rounded-lg border border-emerald-200 text-[10px] text-emerald-900 shadow-xs">
-                              <div className="font-bold truncate">📢 VIP Weekend Sale</div>
-                              <div className="text-gray-400">12,450 recipients</div>
-                            </div>
-                          )}
-                        </div>
-                      ))}
+                {/* If user has no scheduled campaigns, display clean empty state */}
+                {scheduledCampaigns.length === 0 ? (
+                  <div className="p-12 text-center bg-gray-50/50 rounded-xl border border-dashed border-gray-200 space-y-2">
+                    <div className="w-12 h-12 rounded-2xl bg-gray-100 flex items-center justify-center text-gray-400 mx-auto mb-3">
+                      <Megaphone size={20} />
+                    </div>
+                    <h4 className="text-sm font-bold text-gray-800">No scheduled campaigns</h4>
+                    <p className="text-xs text-gray-500 max-w-sm mx-auto">
+                      You haven't scheduled any WhatsApp broadcasts yet. Create a campaign to start messaging in real-time.
+                    </p>
+                    <div className="pt-2">
+                      <button
+                        onClick={() => setCampaignSubView('templates')}
+                        className="px-4 py-2 rounded-xl border border-[#00D084] text-[#00945e] hover:bg-emerald-50 text-xs font-bold transition-all cursor-pointer"
+                      >
+                        Create New Broadcast
+                      </button>
                     </div>
                   </div>
                 ) : (
-                  <div className="divide-y divide-gray-100 border border-gray-200 rounded-xl overflow-hidden">
-                    <div className="p-4 flex items-center justify-between text-xs">
-                      <div>
-                        <div className="font-bold text-gray-900">VIP Weekend Flash Sale</div>
-                        <div className="text-gray-500">Target Segment: Active Buyers • 12,450 contacts</div>
+                  plannerView === 'calendar' ? (
+                    <div className="border border-gray-200 rounded-xl p-4 overflow-x-auto">
+                      <div className="grid grid-cols-7 gap-2 min-w-[600px] text-center text-xs">
+                        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
+                          <div key={d} className="font-bold text-gray-500 py-1.5">{d}</div>
+                        ))}
+                        {[...Array(7)].map((_, i) => {
+                          const item = scheduledCampaigns[i];
+                          return (
+                            <div key={i} className={`p-3 rounded-xl border min-h-[90px] text-left transition-all ${
+                              item ? 'border-emerald-500 bg-emerald-50/30' : 'border-gray-100 bg-gray-50/50'
+                            }`}>
+                              <div className="font-bold text-xs text-gray-700">Day {i + 1}</div>
+                              {item && (
+                                <div className="mt-2 p-1.5 bg-white rounded-lg border border-emerald-200 text-[10px] text-emerald-900 shadow-xs">
+                                  <div className="font-bold truncate">{item.name || item.title}</div>
+                                  <div className="text-gray-400">{item.total_recipients || 0} recipients</div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
-                      <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px]">
-                        Scheduled: Sep 5, 2:00 PM
-                      </span>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="divide-y divide-gray-100 border border-gray-200 rounded-xl overflow-hidden">
+                      {scheduledCampaigns.map((sc, idx) => (
+                        <div key={idx} className="p-4 flex items-center justify-between text-xs hover:bg-gray-50 transition-colors">
+                          <div>
+                            <div className="font-bold text-gray-900">{sc.name || sc.title}</div>
+                            <div className="text-gray-500">Template: {sc.template_name} • {sc.total_recipients || 0} recipients</div>
+                          </div>
+                          <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px]">
+                            {sc.status || 'scheduled'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )
                 )}
               </div>
 

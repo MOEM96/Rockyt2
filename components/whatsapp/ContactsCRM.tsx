@@ -4,6 +4,7 @@ import {
   Tag, Megaphone, ArrowUpRight, RefreshCw, MessageSquare 
 } from 'lucide-react';
 import { WhatsAppContact } from '../../lib/whatsappTypes';
+import { getAuthHeaders } from '../../lib/frontendAuth';
 
 interface ContactsCRMProps {
   onSelectContactChat?: (phone: string, name?: string) => void;
@@ -26,7 +27,7 @@ export const ContactsCRM: React.FC<ContactsCRMProps> = ({ onSelectContactChat })
   const loadContacts = async () => {
     try {
       setIsLoading(true);
-      const res = await fetch('/api/whatsapp/contacts');
+      const res = await fetch('/api/whatsapp/contacts', { headers: getAuthHeaders() });
       if (res.ok) {
         const data = await res.json();
         if (data.data) setContacts(data.data);
@@ -49,7 +50,7 @@ export const ContactsCRM: React.FC<ContactsCRMProps> = ({ onSelectContactChat })
     try {
       const res = await fetch('/api/whatsapp/contacts', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({
           name,
           phone_number: phone,
@@ -71,7 +72,10 @@ export const ContactsCRM: React.FC<ContactsCRMProps> = ({ onSelectContactChat })
   const handleDeleteContact = async (id: string) => {
     if (!confirm('Are you sure you want to remove this contact?')) return;
     try {
-      await fetch(`/api/whatsapp/contacts/${id}`, { method: 'DELETE' });
+      await fetch(`/api/whatsapp/contacts/${id}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+      });
       setContacts((prev) => prev.filter((c) => c.id !== id));
       if (selectedContact?.id === id) setSelectedContact(null);
     } catch (e) {}
