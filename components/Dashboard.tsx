@@ -2240,7 +2240,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
               </div>
 
               <p className="text-xs text-white/70 leading-relaxed">
-                Paste this script tag into the <code className="text-brand font-bold">&lt;head&gt;</code> of your website or store. It automatically catches all <code className="text-emerald-400 font-bold">window.fbq('track', ...)</code> calls (Purchase, AddToCart, Lead, PageView) and relays them to your database and Zernio Conversion API.
+                Paste this script tag into the <code className="text-brand font-bold">&lt;head&gt;</code> of your website or store. It automatically catches all <code className="text-emerald-400 font-bold">window.fbq('track', ...)</code> calls (Purchase, AddToCart, Lead, PageView) and relays them to your database and Rockyt Conversion API.
               </p>
 
               <div className="bg-black p-4 border border-white/20 rounded-lg font-mono text-xs text-emerald-400 relative">
@@ -2695,9 +2695,9 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
             <div className="flex items-center justify-between border-b border-white/10 pb-4 shrink-0">
               <div>
                 <h3 className="font-bold text-lg text-white uppercase tracking-wider flex items-center gap-2">
-                  <Sparkles size={20} className="text-brand animate-pulse" /> Zernio Ads API &amp; Deep Analysis Explorer
+                  <Sparkles size={20} className="text-brand animate-pulse" /> Rockyt Ads API &amp; Deep Analysis Explorer
                 </h3>
-                <p className="text-xs text-white/50 mt-1">Execute, test, and inspect all Zernio Ads endpoints live across connected ad accounts</p>
+                <p className="text-xs text-white/50 mt-1">Execute, test, and inspect all Rockyt Ads endpoints live across connected ad accounts</p>
               </div>
               <button onClick={() => setShowAdsApiExplorerModal(false)} className="text-white/60 hover:text-white p-1 cursor-pointer">
                 <X size={20} />
@@ -2946,7 +2946,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
 
             {selectedCampaignAnalyticsModal.loading ? (
               <div className="p-8 text-center text-white/50 text-xs animate-pulse">
-                Fetching campaign summary metrics, timeline, and demographic breakdowns from Zernio Ads API...
+                Fetching campaign summary metrics, timeline, and demographic breakdowns from Rockyt Ads API...
               </div>
             ) : (
               <div className="overflow-y-auto space-y-4 text-xs pr-1">
@@ -2995,7 +2995,7 @@ const Dashboard: React.FC<DashboardProps> = ({ userSession, onBackHome, onSignOu
                       <h4 className="font-bold text-white uppercase text-xs tracking-wider flex items-center gap-1.5">
                         <Sparkles size={14} className="text-brand" /> Live Demographic &amp; Placement Breakdowns
                       </h4>
-                      <span className="text-[10px] text-white/40">Powered by Zernio Ads API</span>
+                      <span className="text-[10px] text-white/40">Powered by Rockyt Ads Engine</span>
                     </div>
 
                     <div className="space-y-4">

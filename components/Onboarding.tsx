@@ -94,7 +94,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onCancel, initialMode = 'signup
           </div>
           
           <h2 className="font-display font-extrabold text-2xl text-gray-900 tracking-tight">
-            {authMode === 'signup' ? 'Start your 7-day free trial' : 'Welcome back to Wati'}
+            {authMode === 'signup' ? 'Start your 7-day free trial' : 'Welcome back to Rockyt'}
           </h2>
           <p className="text-xs text-gray-500 mt-1">
             {authMode === 'signup' 

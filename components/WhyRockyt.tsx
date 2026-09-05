@@ -18,7 +18,7 @@ const WhyRockyt: React.FC = () => {
             Designed for revenue teams who demand scale and speed
           </h2>
           <p className="mt-4 text-base sm:text-lg text-gray-600">
-            Wati replaces fragmented chat tools with a unified customer engagement engine built on the official Meta WhatsApp Business Cloud infrastructure.
+            Rockyt replaces fragmented chat tools with a unified customer engagement engine built on the official Meta WhatsApp Business Cloud infrastructure.
           </p>
         </div>
 
@@ -91,15 +91,15 @@ const WhyRockyt: React.FC = () => {
 
         </div>
 
-        {/* 2-COLUMN COMPARISON (WATI VS LEGACY / IN-HOUSE) */}
+        {/* 2-COLUMN COMPARISON (ROCKYT VS LEGACY / IN-HOUSE) */}
         <div className="grid gap-6 md:grid-cols-2 max-w-5xl mx-auto">
           
-          {/* LEFT: WATI */}
+          {/* LEFT: ROCKYT */}
           <div className="rounded-3xl border-2 border-[#00D084] bg-white p-7 sm:p-9 shadow-lg relative overflow-hidden">
             <div className="flex items-center justify-between gap-4 mb-6 pb-4 border-b border-gray-100">
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="font-sans font-black text-2xl tracking-tight text-gray-900">wati</span>
+                  <span className="font-sans font-black text-2xl tracking-tight text-gray-900">rockyt</span>
                   <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">RECOMMENDED</span>
                 </div>
                 <p className="text-xs text-gray-500 mt-0.5">Turnkey AI Customer Engagement Platform</p>

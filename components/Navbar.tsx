@@ -56,9 +56,8 @@ const Navbar: React.FC<NavbarProps> = ({
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-6">
             <a 
-              href="https://support.wati.io" 
-              target="_blank" 
-              rel="noreferrer" 
+              href="/docs" 
+              onClick={(e) => handleRouteClick(e, '/docs')} 
               className="hover:text-white transition-colors flex items-center gap-1"
             >
               Help Center
@@ -115,7 +114,7 @@ const Navbar: React.FC<NavbarProps> = ({
           }}
           className="flex items-center gap-2.5 cursor-pointer select-none"
         >
-          {/* Wati Chat Bubble Icon */}
+          {/* Rockyt Chat Bubble Icon */}
           <div className="w-9 h-9 rounded-2xl bg-[#00D084] flex items-center justify-center text-white shadow-md shadow-emerald-500/20">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
               <path d="M12 2C6.48 2 2 6.48 2 12c0 1.82.49 3.53 1.35 5L2 22l5.12-1.33c1.43.83 3.09 1.33 4.88 1.33 5.52 0 10-4.48 10-10S17.52 2 12 2zm-1 14h-2v-2h2v2zm0-4h-2V7h2v5z"/>
@@ -123,7 +122,7 @@ const Navbar: React.FC<NavbarProps> = ({
           </div>
           <div className="flex items-baseline">
             <span className="font-sans font-black text-2xl tracking-tight text-gray-900">
-              wati
+              rockyt
             </span>
             <span className="w-1.5 h-1.5 rounded-full bg-[#00D084] ml-0.5"></span>
           </div>

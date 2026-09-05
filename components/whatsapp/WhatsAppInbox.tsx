@@ -411,7 +411,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
                 onClick={handleBackfill}
                 disabled={isBackfilling}
                 className="p-1.5 text-zinc-400 hover:text-emerald-400 rounded-lg hover:bg-zinc-900 transition-colors disabled:opacity-50"
-                title="Backfill History from Zernio"
+                title="Backfill History from WhatsApp"
               >
                 <ArrowUpRight className={`w-3.5 h-3.5 ${isBackfilling ? 'animate-spin' : ''}`} />
               </button>

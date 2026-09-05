@@ -12,7 +12,7 @@ const Hero: React.FC<HeroProps> = ({ onStart }) => {
   const [activeTab, setActiveTab] = useState<'marketing' | 'sales' | 'support'>('marketing');
 
   return (
-    <section id="wati-hero" className="pt-32 pb-20 md:pt-40 md:pb-28 overflow-hidden bg-gradient-to-b from-[#f4fbf7]/60 via-white to-white">
+    <section id="rockyt-hero" className="pt-32 pb-20 md:pt-40 md:pb-28 overflow-hidden bg-gradient-to-b from-[#f4fbf7]/60 via-white to-white">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 text-center">
         
         {/* TOP PILL BADGE */}
@@ -37,7 +37,7 @@ const Hero: React.FC<HeroProps> = ({ onStart }) => {
         {/* SUBTITLE */}
         <p className="mt-6 text-lg sm:text-xl text-gray-600 max-w-2xl mx-auto leading-relaxed font-normal">
           From the first marketing touchpoint through the sales cycle to ongoing customer success, 
-          Wati drives faster ROI with an easy-to-use, scalable AI-powered customer engagement platform.
+          Rockyt drives faster ROI with an easy-to-use, scalable AI-powered customer engagement platform.
         </p>
 
         {/* TRUST BADGES */}
@@ -167,11 +167,11 @@ const Hero: React.FC<HeroProps> = ({ onStart }) => {
                     <div className="flex items-center justify-between pb-3 border-b border-gray-100 mb-3">
                       <div className="flex items-center gap-2">
                         <div className="w-7 h-7 rounded-full bg-emerald-500 text-white font-bold text-xs flex items-center justify-center">
-                          W
+                          R
                         </div>
                         <div>
                           <div className="text-xs font-bold text-gray-900 flex items-center gap-1">
-                            Wati Official Store
+                            Rockyt Official Store
                             <CheckCheck size={12} className="text-blue-500" />
                           </div>
                           <div className="text-[10px] text-emerald-600">Online • Official Business</div>
@@ -326,7 +326,7 @@ const Hero: React.FC<HeroProps> = ({ onStart }) => {
                         <Bot size={10} /> Astra AI Agent
                       </div>
                       <p className="mt-1">
-                        "Your package is out for delivery! I have updated your delivery slot to <strong>Friday, 2 PM - 5 PM</strong> with courier tracking link: wati.delivery/9481"
+                        "Your package is out for delivery! I have updated your delivery slot to <strong>Friday, 2 PM - 5 PM</strong> with courier tracking link: rockyt.delivery/9481"
                       </p>
                     </div>
 

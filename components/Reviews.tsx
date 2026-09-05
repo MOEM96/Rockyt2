@@ -3,7 +3,7 @@ import { Plus, X, Star, Quote, Award, CheckCircle2 } from 'lucide-react';
 
 const testimonials = [
   {
-    quote: "Wati transformed our customer engagement. Our WhatsApp broadcast open rates consistently hit 98%, and our lead-to-sale velocity improved by 3.5x within the first month.",
+    quote: "Rockyt transformed our customer engagement. Our WhatsApp broadcast open rates consistently hit 98%, and our lead-to-sale velocity improved by 3.5x within the first month.",
     author: "Karim Mansour",
     role: "Head of Growth, RetailHub",
     avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&h=120&fit=crop&crop=faces",
@@ -19,7 +19,7 @@ const testimonials = [
     metric: "3.2s Response Time"
   },
   {
-    quote: "Setting up Meta WhatsApp Business Account took literally 3 minutes with Wati's embedded signup. Zero waiting for approval, and our entire sales team was onboarded the same day.",
+    quote: "Setting up Meta WhatsApp Business Account took literally 3 minutes with Rockyt's embedded signup. Zero waiting for approval, and our entire sales team was onboarded the same day.",
     author: "Marcus Chen",
     role: "Founder, OmniCommerce",
     avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=120&h=120&fit=crop&crop=faces",
@@ -30,24 +30,24 @@ const testimonials = [
 
 const faqData = [
   {
-    question: "Do I need technical expertise or coding skills to use Wati?",
-    answer: "Not at all! Wati provides an intuitive no-code interface for broadcasts, team inbox, chatbots, and contact management. You can connect your WhatsApp number and launch campaigns in minutes."
+    question: "Do I need technical expertise or coding skills to use Rockyt?",
+    answer: "Not at all! Rockyt provides an intuitive no-code interface for broadcasts, team inbox, chatbots, and contact management. You can connect your WhatsApp number and launch campaigns in minutes."
   },
   {
-    question: "Does Wati connect to the official WhatsApp Business Cloud API?",
-    answer: "Yes. Wati is an official Meta Business Solution Provider (BSP). All messaging uses official WhatsApp Cloud infrastructure, ensuring 100% compliance, maximum delivery rates, and green tick verification support."
+    question: "Does Rockyt connect to the official WhatsApp Business Cloud API?",
+    answer: "Yes. Rockyt is an official Meta Business Solution Provider (BSP). All messaging uses official WhatsApp Cloud infrastructure, ensuring 100% compliance, maximum delivery rates, and green tick verification support."
   },
   {
     question: "Can multiple team members use the same WhatsApp phone number?",
-    answer: "Yes! Wati's multi-agent shared inbox allows dozens or hundreds of team members to chat with customers simultaneously from one verified WhatsApp Business number, with automatic round-robin routing."
+    answer: "Yes! Rockyt's multi-agent shared inbox allows dozens or hundreds of team members to chat with customers simultaneously from one verified WhatsApp Business number, with automatic round-robin routing."
   },
   {
     question: "How does the Astra AI agent work with our existing business data?",
     answer: "You simply paste your website URL or upload your product catalog and support docs (PDF, Word, CSV). Astra uses advanced LLMs to answer customer queries with grounded accuracy and escalates to human agents when needed."
   },
   {
-    question: "Can I connect Wati to Shopify, HubSpot, or our CRM?",
-    answer: "Yes. Wati has native integrations with HubSpot, Salesforce, Shopify, WooCommerce, Zoho, Zapier, Make, and full REST API webhooks for seamless customer data synchronization."
+    question: "Can I connect Rockyt to Shopify, HubSpot, or our CRM?",
+    answer: "Yes. Rockyt has native integrations with HubSpot, Salesforce, Shopify, WooCommerce, Zoho, Zapier, Make, and full REST API webhooks for seamless customer data synchronization."
   }
 ];
 
@@ -71,7 +71,7 @@ const Reviews: React.FC = () => {
             Loved by 16,000+ businesses in 190+ countries
           </h2>
           <p className="mt-4 text-base sm:text-lg text-gray-600">
-            See how high-performing commerce and support teams accelerate growth with Wati.
+            See how high-performing commerce and support teams accelerate growth with Rockyt.
           </p>
         </div>
 
@@ -121,7 +121,7 @@ const Reviews: React.FC = () => {
               Frequently Asked Questions
             </h3>
             <p className="text-xs sm:text-sm text-gray-500 mt-1">
-              Everything you need to know about getting started with Wati.
+              Everything you need to know about getting started with Rockyt.
             </p>
           </div>
 

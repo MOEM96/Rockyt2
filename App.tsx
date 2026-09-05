@@ -195,7 +195,7 @@ const App: React.FC = () => {
   };
 
   const isPlatformRoute = validPlatformPaths.includes(currentPath);
-  const isDashboardRoute = currentPath === '/dashboard' && !!userSession;
+  const isDashboardRoute = currentPath === '/dashboard';
   const docsTab = docsPaths[currentPath];
 
   return (
@@ -211,16 +211,10 @@ const App: React.FC = () => {
       )}
 
       {/* MAIN VIEW / ONBOARDING / PLATFORM ROUTE / DOCS ROUTE / DASHBOARD ROUTE */}
-      <Suspense fallback={<div className="min-h-screen bg-white flex items-center justify-center font-sans text-emerald-600 text-sm font-bold">LOADING WATI WORKSPACE...</div>}>
+      <Suspense fallback={<div className="min-h-screen bg-white flex items-center justify-center font-sans text-emerald-600 text-sm font-bold">LOADING ROCKYT WORKSPACE...</div>}>
         {isDashboardRoute ? (
           <WhatsAppDashboard 
-            userSession={userSession} 
-            onBackHome={() => navigateTo('/')} 
-            onSignOut={handleSignOut}
-          />
-        ) : (currentPath === '/dashboard' && !userSession) ? (
-          <WhatsAppDashboard 
-            userSession={{ name: 'Moamen', email: 'moamen@company.com' }} 
+            userSession={userSession || { name: 'Moamen', email: 'moamen@company.com' }} 
             onBackHome={() => navigateTo('/')} 
             onSignOut={handleSignOut}
           />

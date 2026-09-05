@@ -143,7 +143,7 @@ const Services: React.FC<ServicesProps> = ({ onStartOnboarding }) => {
         <div className="mt-16 p-8 rounded-3xl bg-emerald-50 border border-emerald-200/80 flex flex-col sm:flex-row items-center justify-between gap-6 text-center sm:text-left">
           <div>
             <h4 className="text-xl sm:text-2xl font-bold text-emerald-950">
-              Ready to explore your Wati workspace?
+              Ready to explore your Rockyt workspace?
             </h4>
             <p className="text-sm text-emerald-800 mt-1">
               Join over 16,000 growing companies worldwide. No credit card required.

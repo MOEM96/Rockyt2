@@ -66,6 +66,16 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
   // Account and API states
   const [account, setAccount] = useState<any>(null);
   const [isLoadingAccount, setIsLoadingAccount] = useState(true);
+  const [oauthBanner, setOauthBanner] = useState<string | null>(null);
+  const [completedSteps, setCompletedSteps] = useState<{ [key: number]: boolean }>({
+    1: false,
+    2: true, // Astra pre-configured
+    3: false,
+    4: false,
+    5: false,
+    6: false,
+    7: false,
+  });
 
   const userName = userSession?.name || 'Moamen';
 
@@ -82,6 +92,9 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
       if (res.ok) {
         const data = await res.json();
         setAccount(data.account || null);
+        if (data.account) {
+          setCompletedSteps(prev => ({ ...prev, 1: true }));
+        }
       }
     } catch (e) {
       console.warn('Failed to load WhatsApp account status', e);
@@ -92,6 +105,18 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
 
   useEffect(() => {
     fetchAccountStatus();
+
+    // Detect return from Meta Headless OAuth
+    const searchParams = new URLSearchParams(window.location.search);
+    if (searchParams.get('waba') === 'connected' || searchParams.get('connected') === 'true') {
+      setOauthBanner('🎉 WhatsApp Business Account successfully authenticated via Meta Headless OAuth (Zero 3rd-party branding)!');
+      fetchAccountStatus();
+      setCompletedSteps(prev => ({ ...prev, 1: true }));
+      window.history.replaceState({}, document.title, window.location.pathname);
+      setTimeout(() => setOauthBanner(null), 8000);
+    } else if (searchParams.get('tempToken')) {
+      setIsConnectModalOpen(true);
+    }
   }, [userSession?.id]);
 
   const handleSendChat = (e: React.FormEvent) => {
@@ -116,6 +141,22 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
   return (
     <div className="min-h-screen bg-[#f8fafc] text-gray-800 flex flex-col font-sans selection:bg-[#00D084] selection:text-white">
       
+      {/* ─────────────────────────────────────────────────────────────
+          OAUTH RETURN SUCCESS BANNER
+      ───────────────────────────────────────────────────────────── */}
+      {oauthBanner && (
+        <div className="bg-emerald-600 text-white px-4 py-2.5 text-center text-xs sm:text-sm font-semibold flex items-center justify-center gap-2 shadow-md animate-in slide-in-from-top duration-300">
+          <CheckCircle2 size={18} />
+          <span>{oauthBanner}</span>
+          <button 
+            onClick={() => setOauthBanner(null)} 
+            className="ml-3 text-emerald-100 hover:text-white text-xs underline cursor-pointer"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* ─────────────────────────────────────────────────────────────
           1. TOP TRIAL NOTIFICATION BANNER (Exact Match to Images)
       ───────────────────────────────────────────────────────────── */}
@@ -161,7 +202,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
             </div>
             <div className="flex items-baseline">
               <span className="font-sans font-black text-2xl tracking-tight text-gray-900">
-                wati
+                rockyt
               </span>
               <span className="w-1.5 h-1.5 rounded-full bg-[#00D084] ml-0.5"></span>
             </div>
@@ -182,13 +223,13 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
           >
             <span>Account Setup</span>
             <span className="px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-bold">
-              0/7
+              {Object.values(completedSteps).filter(Boolean).length}/7
             </span>
           </button>
 
           {/* Book a Demo Button */}
           <button
-            onClick={() => alert('Booking demo with a Wati Solutions Specialist...')}
+            onClick={() => alert('Booking demo with a Rockyt Solutions Specialist...')}
             className="px-4 py-1.5 rounded-full border border-[#00D084] text-[#00945e] hover:bg-emerald-50 text-xs font-bold transition-all"
           >
             Book a demo
@@ -553,7 +594,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
                   <p className="text-xs sm:text-sm text-gray-500 mt-2 font-medium">
                     Personalised for Sales on WhatsApp
                     <br />
-                    Just follow these steps and Wati handles the rest
+                    Just follow these steps and Rockyt handles the rest
                   </p>
                 </div>
 
@@ -627,24 +668,53 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
               <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden divide-y divide-gray-100">
                 
                 {/* Step 1: Connect WhatsApp */}
-                <div className="p-5 sm:p-6 bg-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                  <div className="flex items-start gap-4">
-                    <div className="w-8 h-8 rounded-full border-2 border-[#00D084] text-[#00D084] font-bold text-sm flex items-center justify-center shrink-0">
-                      1
+                {account ? (
+                  <div className="p-5 sm:p-6 bg-emerald-50/40 border-l-4 border-l-[#00D084] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                    <div className="flex items-start gap-4">
+                      <div className="w-8 h-8 rounded-full bg-[#00D084] text-[#07301f] font-bold text-sm flex items-center justify-center shrink-0 shadow-sm">
+                        <Check size={18} />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-sm font-bold text-gray-900">WhatsApp Connected (Headless Mode)</h4>
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">LIVE</span>
+                        </div>
+                        <p className="text-xs text-gray-600 mt-0.5 font-mono">
+                          {account.name || 'Connected WABA'} • {account.phone_number || account.phone || '+1 (415) 555-0199'}
+                        </p>
+                        <p className="text-[11px] text-emerald-700 font-medium mt-0.5">
+                          Meta Official Cloud API Tier 100K/day • Quality: {account.quality_rating || 'GREEN'} • Direct Webhooks Active
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <h4 className="text-sm font-bold text-gray-900">Connect WhatsApp</h4>
-                      <p className="text-xs text-gray-500 mt-0.5">Start receiving and resolving customer issues on WhatsApp</p>
-                    </div>
-                  </div>
 
-                  <button
-                    onClick={() => setIsConnectModalOpen(true)}
-                    className="px-5 py-2.5 rounded-xl bg-[#00D084] hover:bg-[#00be77] text-[#07301f] font-bold text-xs shadow-sm transition-all shrink-0 cursor-pointer"
-                  >
-                    Connect WhatsApp
-                  </button>
-                </div>
+                    <button
+                      onClick={() => setIsConnectModalOpen(true)}
+                      className="px-4 py-2 rounded-xl bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-semibold text-xs transition-all shrink-0 cursor-pointer shadow-xs"
+                    >
+                      Manage Connection
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-5 sm:p-6 bg-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                    <div className="flex items-start gap-4">
+                      <div className="w-8 h-8 rounded-full border-2 border-[#00D084] text-[#00D084] font-bold text-sm flex items-center justify-center shrink-0">
+                        1
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-bold text-gray-900">Connect WhatsApp</h4>
+                        <p className="text-xs text-gray-500 mt-0.5">Start receiving and resolving customer issues on WhatsApp in Headless Mode</p>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => setIsConnectModalOpen(true)}
+                      className="px-5 py-2.5 rounded-xl bg-[#00D084] hover:bg-[#00be77] text-[#07301f] font-bold text-xs shadow-sm transition-all shrink-0 cursor-pointer"
+                    >
+                      Connect WhatsApp
+                    </button>
+                  </div>
+                )}
 
                 {/* Step 2: Preview and deploy your AI agent */}
                 <div 
@@ -690,7 +760,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
 
                 {/* Divider Label */}
                 <div className="bg-gray-50/80 px-6 py-3 text-xs text-gray-500 font-semibold uppercase tracking-wider">
-                  After set up, explore more of Wati
+                  After set up, explore more of Rockyt
                 </div>
 
                 {/* Step 5: Sync your CRM */}
@@ -767,7 +837,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
 
                   {/* Watch Tutorial */}
                   <button 
-                    onClick={() => alert('Launching video tutorial: "How to run your first WhatsApp broadcast in Wati"')}
+                    onClick={() => alert('Launching video tutorial: "How to run your first WhatsApp broadcast in Rockyt"')}
                     className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 font-semibold px-2 py-1"
                   >
                     <Play size={13} fill="currentColor" />
@@ -1242,7 +1312,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
                   <label className="block text-xs font-semibold text-gray-700 mb-1">System Instructions</label>
                   <textarea
                     rows={4}
-                    defaultValue="You are the friendly, helpful customer engagement assistant for Wati. Answer user queries concisely, provide product catalog links when requested, and escalate to human agent if the user asks for refund or human support."
+                    defaultValue="You are the friendly, helpful customer engagement assistant for Rockyt. Answer user queries concisely, provide product catalog links when requested, and escalate to human agent if the user asks for refund or human support."
                     className="w-full text-xs p-3 rounded-xl border border-gray-300 focus:outline-none focus:border-emerald-500"
                   />
                 </div>

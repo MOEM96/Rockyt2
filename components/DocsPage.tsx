@@ -213,7 +213,7 @@ window.RockytPixel.trackLead('Enterprise Demo Request');`}</code>
               <h3 className="font-display font-bold text-2xl text-white uppercase">DUAL-DISPATCH CONVERSION API (CAPI)</h3>
             </div>
             <p className="text-xs text-white/70 leading-relaxed">
-              Dispatch conversion events directly from your backend or serverless functions. Rockyt automatically formats and relays events to Meta CAPI, Google Ads CAPI, and TikTok Ads CAPI via Zernio.
+              Dispatch conversion events directly from your backend or serverless functions. Rockyt automatically formats and relays events to Meta CAPI, Google Ads CAPI, and TikTok Ads CAPI via Rockyt Edge Engine.
             </p>
 
             <pre className="bg-black p-4 border border-white/15 text-[11px] text-zinc-300 overflow-x-auto">

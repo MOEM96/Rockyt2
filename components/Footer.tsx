@@ -72,11 +72,11 @@ const Footer: React.FC<FooterProps> = ({ onStartOnboarding, onNavigateToPath }) 
           {/* COL 1: BRAND */}
           <div className="col-span-2 md:col-span-1 space-y-4">
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-[#00D084] flex items-center justify-center text-white font-black text-sm">
-                W
+              <div className="w-8 h-8 rounded-xl bg-[#00D084] flex items-center justify-center text-[#07301f] font-black text-sm">
+                R
               </div>
               <span className="font-sans font-black text-2xl tracking-tight text-white">
-                wati
+                rockyt
               </span>
             </div>
             <p className="text-xs text-gray-400 leading-relaxed">
@@ -114,12 +114,12 @@ const Footer: React.FC<FooterProps> = ({ onStartOnboarding, onNavigateToPath }) 
           <div>
             <p className="text-xs font-bold text-white uppercase tracking-wider mb-4">Resources</p>
             <ul className="space-y-2.5 text-xs text-gray-400">
-              <li><a href="https://support.wati.io" target="_blank" rel="noreferrer" className="hover:text-white transition-colors">Help Center</a></li>
+              <li><a href="/docs" onClick={(e) => handleLinkClick(e, '/docs')} className="hover:text-white transition-colors">Help Center &amp; Guides</a></li>
               <li><a href="/docs" onClick={(e) => handleLinkClick(e, '/docs')} className="hover:text-white transition-colors">API Documentation</a></li>
               <li><a href="#reviews" className="hover:text-white transition-colors">Customer Stories</a></li>
               <li><a href="#faq" className="hover:text-white transition-colors">WhatsApp FAQs</a></li>
               <li><a href="#partners" className="hover:text-white transition-colors">Partner Directory</a></li>
-              <li><a href="https://status.wati.io" target="_blank" rel="noreferrer" className="hover:text-white transition-colors">System Status</a></li>
+              <li><a href="https://status.rockyt.io" target="_blank" rel="noreferrer" className="hover:text-white transition-colors">System Status</a></li>
             </ul>
           </div>
 
@@ -127,7 +127,7 @@ const Footer: React.FC<FooterProps> = ({ onStartOnboarding, onNavigateToPath }) 
           <div>
             <p className="text-xs font-bold text-white uppercase tracking-wider mb-4">Company</p>
             <ul className="space-y-2.5 text-xs text-gray-400">
-              <li><a href="#about" className="hover:text-white transition-colors">About Wati</a></li>
+              <li><a href="#about" className="hover:text-white transition-colors">About Rockyt</a></li>
               <li><a href="#careers" className="hover:text-white transition-colors">Careers</a></li>
               <li><a href="#partners" className="hover:text-white transition-colors">Partner with Us</a></li>
               <li><a href="#security" className="hover:text-white transition-colors">Security &amp; Privacy</a></li>
@@ -141,7 +141,7 @@ const Footer: React.FC<FooterProps> = ({ onStartOnboarding, onNavigateToPath }) 
         {/* BOTTOM COPYRIGHT */}
         <div className="mt-12 pt-8 border-t border-gray-800 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-gray-500">
           <div>
-            © {new Date().getFullYear()} Wati.io. All rights reserved. Meta Official WhatsApp Business Solution Provider.
+            © {new Date().getFullYear()} Rockyt.io. All rights reserved. Official Meta WhatsApp Business Partner.
           </div>
           <div className="flex items-center gap-6">
             <a href="#privacy" className="hover:text-gray-300 transition-colors">Privacy Policy</a>

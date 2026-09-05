@@ -110,8 +110,8 @@ const Showcase: React.FC<ShowcaseProps> = ({ onStartOnboarding }) => {
                   <span className="text-emerald-400">POST /api/whatsapp/messages/send</span>
                 </div>
                 <div className="text-gray-400"># Send high-speed WhatsApp template message</div>
-                <div className="text-emerald-400">curl -X POST https://api.wati.io/v1/messages \</div>
-                <div className="pl-4 text-gray-300">-H "Authorization: Bearer wati_key_live" \</div>
+                <div className="text-emerald-400">curl -X POST https://api.rockyt.io/v1/messages \</div>
+                <div className="pl-4 text-gray-300">-H "Authorization: Bearer rockyt_key_live" \</div>
                 <div className="pl-4 text-gray-300">-H "Content-Type: application/json" \</div>
                 <div className="pl-4 text-amber-300">-d '&#123; "to": "+12029087457", "template": "order_confirmed" &#125;'</div>
                 <div className="text-gray-500 pt-2 border-t border-gray-800">
