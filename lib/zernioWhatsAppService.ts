@@ -479,12 +479,23 @@ export class ZernioWhatsAppService {
    */
   public static async listConversations(profileId?: string, limit: number = 50): Promise<any[]> {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
-    if (apiKey && apiKey !== 'dummy_dev_key') {
+    if (!apiKey || apiKey === 'dummy_dev_key') return [];
+
+    const allConversations: any[] = [];
+    const seenIds = new Set<string>();
+    let nextCursor: string | undefined = undefined;
+    let page = 0;
+    const maxPages = 20; // Paginates through up to 1,000 conversations
+
+    do {
+      page++;
       try {
         const url = new URL('https://zernio.com/api/v1/inbox/conversations');
-        url.searchParams.set('platform', 'whatsapp');
         if (profileId) url.searchParams.set('profileId', profileId);
         url.searchParams.set('limit', String(limit));
+        if (nextCursor) {
+          url.searchParams.set('cursor', nextCursor);
+        }
 
         let res = await fetch(url.toString(), {
           headers: {
@@ -504,16 +515,31 @@ export class ZernioWhatsAppService {
           });
         }
 
-        if (res.ok) {
-          const json = await res.json();
-          const list = json.data || json.conversations || [];
-          return Array.isArray(list) ? list : [];
+        if (!res.ok) {
+          console.warn(`[Zernio listConversations] Page ${page} returned ${res.status}`);
+          break;
         }
+
+        const json = await res.json();
+        const list = json.data || json.conversations || [];
+        if (Array.isArray(list)) {
+          for (const item of list) {
+            const id = item.id || item._id;
+            if (id && !seenIds.has(id)) {
+              seenIds.add(id);
+              allConversations.push(item);
+            }
+          }
+        }
+
+        nextCursor = json.pagination?.nextCursor || json.nextCursor || undefined;
       } catch (err: any) {
-        console.warn('[Zernio SDK listConversations Notice]:', err.message);
+        console.warn(`[Zernio SDK listConversations error on page ${page}]:`, err.message);
+        break;
       }
-    }
-    return [];
+    } while (nextCursor && page < maxPages);
+
+    return allConversations;
   }
 
   /**
@@ -521,10 +547,23 @@ export class ZernioWhatsAppService {
    */
   public static async listMessages(conversationId: string, accountId?: string): Promise<any[]> {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
-    if (apiKey && apiKey !== 'dummy_dev_key' && /^[0-9a-fA-F]{24}$/.test(conversationId)) {
+    if (!apiKey || apiKey === 'dummy_dev_key' || !conversationId) return [];
+
+    const allMessages: any[] = [];
+    const seenMsgIds = new Set<string>();
+    let nextCursor: string | undefined = undefined;
+    let page = 0;
+    const maxPages = 10; // Up to 500 messages per thread
+
+    do {
+      page++;
       try {
-        const url = new URL(`https://zernio.com/api/v1/inbox/conversations/${conversationId}/messages`);
+        const url = new URL(`https://zernio.com/api/v1/inbox/conversations/${encodeURIComponent(conversationId)}/messages`);
         if (accountId) url.searchParams.set('accountId', accountId);
+        url.searchParams.set('limit', '50');
+        if (nextCursor) {
+          url.searchParams.set('cursor', nextCursor);
+        }
 
         const res = await fetch(url.toString(), {
           headers: {
@@ -532,15 +571,29 @@ export class ZernioWhatsAppService {
             'Content-Type': 'application/json',
           },
         });
-        if (res.ok) {
-          const json = await res.json();
-          return json.messages || json.data || [];
+
+        if (!res.ok) break;
+
+        const json = await res.json();
+        const list = json.messages || json.data || [];
+        if (Array.isArray(list)) {
+          for (const m of list) {
+            const mid = m.id || m.messageId || m._id;
+            if (mid && !seenMsgIds.has(mid)) {
+              seenMsgIds.add(mid);
+              allMessages.push(m);
+            }
+          }
         }
+
+        nextCursor = json.pagination?.nextCursor || json.nextCursor || undefined;
       } catch (err: any) {
-        console.warn('[Zernio SDK listMessages Notice]:', err.message);
+        console.warn(`[Zernio listMessages error for ${conversationId}]:`, err.message);
+        break;
       }
-    }
-    return [];
+    } while (nextCursor && page < maxPages);
+
+    return allMessages;
   }
 
   /**
@@ -557,7 +610,7 @@ export class ZernioWhatsAppService {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if (apiKey && apiKey !== 'dummy_dev_key') {
       try {
-        if (/^[0-9a-fA-F]{24}$/.test(params.conversationId)) {
+        if (params.conversationId) {
           const res = await fetch(`https://zernio.com/api/v1/inbox/conversations/${params.conversationId}/messages`, {
             method: 'POST',
             headers: {
@@ -586,7 +639,7 @@ export class ZernioWhatsAppService {
    */
   public static async sendTypingIndicator(conversationId: string) {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
-    if (apiKey && apiKey !== 'dummy_dev_key' && /^[0-9a-fA-F]{24}$/.test(conversationId)) {
+    if (apiKey && apiKey !== 'dummy_dev_key' && conversationId) {
       try {
         await fetch(`https://zernio.com/api/v1/inbox/conversations/${conversationId}/typing`, {
           method: 'POST',
@@ -605,7 +658,7 @@ export class ZernioWhatsAppService {
    */
   public static async markConversationRead(conversationId: string) {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
-    if (apiKey && apiKey !== 'dummy_dev_key' && /^[0-9a-fA-F]{24}$/.test(conversationId)) {
+    if (apiKey && apiKey !== 'dummy_dev_key' && conversationId) {
       try {
         await fetch(`https://zernio.com/api/v1/inbox/conversations/${conversationId}/read`, {
           method: 'POST',

@@ -217,10 +217,87 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
     }
   };
 
+  // Real-Time Server-Sent Events (SSE) Listener for instant message & status sync
+  useEffect(() => {
+    let eventSource: EventSource | null = null;
+    try {
+      const uid = getStorageUserId();
+      eventSource = new EventSource(`/api/whatsapp/events?userId=${encodeURIComponent(uid)}`);
+
+      eventSource.onmessage = (e) => {
+        try {
+          const event = JSON.parse(e.data);
+          if (event.type === 'connected') return;
+
+          const eventType = event.event || event.type;
+          const msg = event.message;
+          const convId = event.conversationId || msg?.conversationId || msg?.conversation_id;
+
+          if (eventType === 'message.received' || eventType === 'message.sent') {
+            if (msg) {
+              // 1. If currently viewing this conversation, immediately append message to thread
+              if (activeConvId && (convId === activeConvId || msg.conversation_id === activeConvId)) {
+                setMessages((prev) => {
+                  const exists = prev.some((m) => m.id === msg.id || (m.text === msg.text && m.direction === msg.direction && Math.abs(new Date(m.timestamp).getTime() - new Date(msg.timestamp).getTime()) < 5000));
+                  if (exists) return prev;
+                  const next = [...prev, msg].sort(
+                    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+                  );
+                  setStoredMessages(activeConvId, next);
+                  return next;
+                });
+              }
+
+              // 2. Update conversation list preview and move to top
+              setConversations((prev) => {
+                const targetIdx = prev.findIndex((c) => c.id === convId);
+                if (targetIdx !== -1) {
+                  const target = { ...prev[targetIdx] };
+                  target.last_message = msg;
+                  target.updated_at = msg.timestamp || new Date().toISOString();
+                  if (eventType === 'message.received') {
+                    target.unread_count = (target.unread_count || 0) + (activeConvId === convId ? 0 : 1);
+                    target.is_window_open = true;
+                  }
+                  const rest = prev.filter((c) => c.id !== convId);
+                  const updated = [target, ...rest];
+                  setStoredConversations(updated);
+                  return updated;
+                } else {
+                  loadConversations(false);
+                  return prev;
+                }
+              });
+            }
+          } else if (eventType === 'message.delivered' || eventType === 'message.read') {
+            if (msg?.id) {
+              const st = eventType === 'message.read' ? 'read' : 'delivered';
+              setMessages((prev) =>
+                prev.map((m) => (m.id === msg.id ? { ...m, status: st } : m))
+              );
+            }
+          } else if (eventType === 'conversation.started') {
+            loadConversations(false);
+          }
+        } catch (err) {
+          console.warn('[SSE Parse Notice]:', err);
+        }
+      };
+
+      eventSource.onerror = () => {
+        eventSource?.close();
+      };
+    } catch {}
+
+    return () => {
+      eventSource?.close();
+    };
+  }, [activeConvId]);
+
   useEffect(() => {
     loadConversations(true);
     loadTemplates();
-    const interval = setInterval(() => loadConversations(false), 15000);
+    const interval = setInterval(() => loadConversations(false), 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -276,7 +353,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
 
       const msgInterval = setInterval(() => {
         loadMessages(activeConvId, false);
-      }, 3000);
+      }, 2500);
       return () => clearInterval(msgInterval);
     }
   }, [activeConvId]);

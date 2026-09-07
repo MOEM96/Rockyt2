@@ -290,7 +290,13 @@ class WhatsAppStore {
       this.messages.set(msg.conversation_id, []);
     }
 
-    this.messages.get(msg.conversation_id)!.push(msg);
+    const list = this.messages.get(msg.conversation_id)!;
+    const existingIdx = list.findIndex(m => m.id === msg.id);
+    if (existingIdx !== -1) {
+      list[existingIdx] = { ...list[existingIdx], ...msg };
+    } else {
+      list.push(msg);
+    }
 
     if (conv) {
       conv.last_message = msg;
@@ -311,6 +317,18 @@ class WhatsAppStore {
     }
 
     return msg;
+  }
+
+
+  public updateMessageStatus(conversationId: string, messageId: string, status: MessageStatus): boolean {
+    const msgs = this.messages.get(conversationId);
+    if (!msgs) return false;
+    const msg = msgs.find(m => m.id === messageId);
+    if (msg) {
+      msg.status = status;
+      return true;
+    }
+    return false;
   }
 
   // --- Meta Templates ---

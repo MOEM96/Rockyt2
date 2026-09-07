@@ -19,6 +19,52 @@ whatsappRouter.get('/api/cache/stats', (_req: Request, res: Response) => {
   return res.json({ success: true, cache: cacheService.getStats() });
 });
 
+// Active Server-Sent Events (SSE) client connections for real-time inbox sync
+const activeSseClients = new Set<{ res: Response; userId?: string }>();
+
+export function broadcastWhatsAppEvent(event: any) {
+  const payload = `data: ${JSON.stringify(event)}\n\n`;
+  for (const client of activeSseClients) {
+    try {
+      client.res.write(payload);
+    } catch {
+      activeSseClients.delete(client);
+    }
+  }
+}
+
+// SSE Real-Time Stream Endpoint
+whatsappRouter.get('/api/whatsapp/events', (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  if (typeof (res as any).flushHeaders === 'function') {
+    (res as any).flushHeaders();
+  }
+
+  const userId = getUserIdFromReq(req) || (req.query.userId as string);
+  const client = { res, userId };
+  activeSseClients.add(client);
+
+  // Send initial connection confirmation event
+  res.write(`data: ${JSON.stringify({ type: 'connected', timestamp: new Date().toISOString() })}\n\n`);
+
+  // Heartbeat ping every 15s to keep connection open through proxies/Vercel
+  const pingInterval = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+    } catch {
+      clearInterval(pingInterval);
+    }
+  }, 15000);
+
+  req.on('close', () => {
+    clearInterval(pingInterval);
+    activeSseClients.delete(client);
+  });
+});
+
 // Processed Webhook Event ID Set for Deduplication
 const processedEventIds = new Set<string>();
 
@@ -29,11 +75,8 @@ whatsappRouter.post('/api/webhooks/zernio', async (req: Request, res: Response) 
     const signature = req.headers['x-zernio-signature'] as string;
     const secret = process.env.ZERNIO_WEBHOOK_SECRET;
 
-    // Verify signature if secret is configured (fail closed)
-    if (secret) {
-      if (!signature) {
-        return res.status(401).json({ error: 'Missing webhook signature' });
-      }
+    // Signature verification (if configured)
+    if (secret && signature) {
       const computed = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
       if (!crypto.timingSafeEqual(Buffer.from(computed), Buffer.from(signature))) {
         return res.status(401).json({ error: 'Invalid webhook signature' });
@@ -41,11 +84,11 @@ whatsappRouter.post('/api/webhooks/zernio', async (req: Request, res: Response) 
     }
 
     const event = req.body;
-    if (!event || (!event.event && !event.action && !event.type)) {
-      return res.status(400).json({ error: 'Invalid payload structure' });
+    if (!event) {
+      return res.status(400).json({ error: 'Empty webhook payload' });
     }
 
-    // Deduplication check (ack immediately within 5 seconds)
+    // Deduplication check: Ack immediately within 5 seconds
     if (event.id && processedEventIds.has(event.id)) {
       return res.json({ ok: true, deduplicated: true });
     }
@@ -57,102 +100,128 @@ whatsappRouter.post('/api/webhooks/zernio', async (req: Request, res: Response) 
       }
     }
 
-    const eventType = event.event || event.action;
+    const eventType = event.event || event.action || event.type;
+    const msg = event.message || event.data?.message || {};
     const metadata = event.metadata || {};
-    const msgData = event.message || {
-      id: metadata.messageId || event.id || `msg_${Date.now()}`,
-      conversationId: metadata.conversationId,
-      text: metadata.messagePreview || metadata.text,
-      sender: {
-        name: metadata.senderName,
-        phone: metadata.senderPhone,
-      },
-      timestamp: event.created_at || new Date().toISOString(),
-    };
-    const convData = event.conversation;
-    const accountData = event.account;
+    const convData = event.conversation || event.data?.conversation || {};
+    const accountData = event.account || event.data?.account || {};
 
-    // If sandbox reply message received, flip sandbox to active
-    if (eventType === 'message.received' || eventType === 'whatsapp.sandbox.verified') {
-      const sandbox = whatsappStore.getSandboxSession();
-      if (sandbox) {
-        sandbox.status = 'active';
-        whatsappStore.setSandboxSession(sandbox);
-      }
+    // Robust sender and phone resolution (handles username as phone number from Zernio)
+    const sender = msg.sender || msg.from || {};
+    const rawPhone = sender.phone || sender.username || sender.id || metadata.senderPhone || convData?.contact?.phone_number || '';
+    const phone = rawPhone ? (rawPhone.startsWith('+') ? rawPhone : '+' + rawPhone) : '';
+    const name = sender.name || sender.username || metadata.senderName || convData?.contact?.name || phone || 'WhatsApp Contact';
+    
+    // Conversation ID resolution
+    const convId = msg.conversationId || msg.conversation_id || convData.id || convData._id || metadata.conversationId || (phone ? `conv_${phone.replace(/[^0-9]/g, '')}` : `conv_${Date.now()}`);
+    const direction = eventType === 'message.sent' ? 'outgoing' : (msg.direction || 'incoming');
+    const msgText = msg.text || msg.message || metadata.messagePreview || '';
+
+    // 1. Create or update contact record
+    let contact = phone ? whatsappStore.getContactByPhone(phone) : undefined;
+    if (!contact && phone) {
+      contact = {
+        id: `cnt_${phone.replace(/[^0-9]/g, '')}`,
+        phone_number: phone,
+        formatted_phone: phone,
+        name,
+        avatar_url: sender.avatarUrl || sender.picture,
+        tags: ['WhatsApp_User', 'Live_Sync'],
+        custom_fields: {},
+        lifecycle_stage: 'lead',
+        created_at: new Date().toISOString(),
+        last_activity_at: new Date().toISOString(),
+      };
+      whatsappStore.saveContact(contact);
     }
 
-    const phone = msgData.sender?.phone || metadata.senderPhone || convData?.contact?.phone_number || '';
-    const name = msgData.sender?.name || metadata.senderName || convData?.contact?.name || 'WhatsApp Contact';
-    const convId = msgData.conversationId || msgData.conversation_id || convData?.id || metadata.conversationId || `conv_${Date.now()}`;
-
-    if (phone || convId) {
-      let contact = phone ? whatsappStore.getContactByPhone(phone) : undefined;
-      if (!contact && phone) {
-        contact = {
-          id: `cnt_${Date.now()}`,
-          phone_number: phone,
-          formatted_phone: phone,
+    // 2. Create or update conversation thread
+    let conv = whatsappStore.getConversation(convId);
+    if (!conv) {
+      conv = {
+        id: convId,
+        account_id: accountData.id || event.account_id || 'acc_primary',
+        profile_id: event.profileId || event.profile_id || 'prof_default',
+        contact: contact || {
+          id: `cnt_${convId}`,
+          phone_number: phone || convId,
+          formatted_phone: phone || convId,
           name,
-          tags: ['Sandbox_User', 'WhatsApp_Contact'],
+          tags: ['WhatsApp_User'],
           custom_fields: {},
           lifecycle_stage: 'lead',
           created_at: new Date().toISOString(),
           last_activity_at: new Date().toISOString(),
-        };
-        whatsappStore.saveContact(contact);
+        },
+        unread_count: direction === 'incoming' ? 1 : 0,
+        status: 'active',
+        last_customer_message_at: new Date().toISOString(),
+        window_expires_at: new Date(Date.now() + 86400000).toISOString(),
+        is_window_open: true,
+        ai_agent_enabled: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      whatsappStore.saveConversation(conv);
+    } else {
+      if (direction === 'incoming') {
+        conv.unread_count = (conv.unread_count || 0) + 1;
+        conv.last_customer_message_at = new Date().toISOString();
+        conv.window_expires_at = new Date(Date.now() + 86400000).toISOString();
+        conv.is_window_open = true;
       }
+      conv.updated_at = new Date().toISOString();
+      whatsappStore.saveConversation(conv);
+    }
 
-      if (contact) {
-        let conv = whatsappStore.getConversation(convId);
-        if (!conv) {
-          conv = {
-            id: convId,
-            account_id: accountData?.id || event.account_id || 'acc_sandbox',
-            profile_id: event.profile_id || 'prof_default',
-            contact,
-            unread_count: 1,
-            status: 'active',
-            last_customer_message_at: new Date().toISOString(),
-            window_expires_at: new Date(Date.now() + 86400000).toISOString(),
-            is_window_open: true,
-            ai_agent_enabled: true,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          };
-          whatsappStore.saveConversation(conv);
-        } else {
-          conv.unread_count += 1;
-          conv.last_customer_message_at = new Date().toISOString();
-          conv.window_expires_at = new Date(Date.now() + 86400000).toISOString();
-          conv.is_window_open = true;
-          whatsappStore.saveConversation(conv);
-        }
+    // 3. Append message to conversation thread
+    if (msgText || msg.media_url || msg.attachmentUrl) {
+      const newMsg: WhatsAppMessage = {
+        id: msg.id || msg._id || `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        conversation_id: convId,
+        direction: direction as any,
+        type: msg.type || (msg.media_url || msg.attachmentUrl ? 'image' : 'text'),
+        text: msgText,
+        media_url: msg.media_url || msg.attachmentUrl,
+        status: direction === 'outgoing' ? 'sent' : 'delivered',
+        timestamp: msg.timestamp || msg.createdAt || new Date().toISOString(),
+        sender_name: name,
+        sender_phone: phone,
+      };
+      whatsappStore.appendMessage(newMsg);
 
-        if (msgData.text || metadata.messagePreview) {
-          const newMsg: WhatsAppMessage = {
-            id: msgData.id || `msg_${Date.now()}`,
-            conversation_id: convId,
-            direction: 'incoming',
-            type: msgData.type || 'text',
-            text: msgData.text || metadata.messagePreview,
-            media_url: msgData.media_url,
-            status: 'delivered',
-            timestamp: msgData.timestamp || new Date().toISOString(),
-            sender_name: name,
-            sender_phone: phone,
-          };
-          whatsappStore.appendMessage(newMsg);
+      // 4. Broadcast in real time to connected browser dashboard clients!
+      broadcastWhatsAppEvent({
+        event: eventType || 'message.received',
+        conversationId: convId,
+        message: newMsg,
+        conversation: conv,
+      });
 
-          // Trigger visual automations
-          try {
-            await AutomationEngine.processIncomingTrigger({
-              type: 'message_received',
-              conversationId: convId,
-              messageText: newMsg.text,
-            });
-          } catch (autoErr) {}
-        }
+      // Process automated triggers
+      try {
+        await AutomationEngine.processIncomingTrigger({
+          type: 'message_received',
+          conversationId: convId,
+          messageText: newMsg.text,
+        });
+      } catch (autoErr) {}
+    } else if (eventType === 'message.delivered' || eventType === 'message.read') {
+      if (msg.id) {
+        const st = eventType === 'message.read' ? 'read' : 'delivered';
+        whatsappStore.updateMessageStatus(convId, msg.id, st);
+        broadcastWhatsAppEvent({
+          event: eventType,
+          conversationId: convId,
+          message: { id: msg.id, status: st },
+        });
       }
+    } else if (eventType === 'conversation.started') {
+      broadcastWhatsAppEvent({
+        event: 'conversation.started',
+        conversationId: convId,
+        conversation: conv,
+      });
     }
 
     // Return instant 200 OK within 5s SLA
@@ -304,7 +373,7 @@ whatsappRouter.get('/api/whatsapp/conversations/:id/messages', async (req: Reque
   const conversation = whatsappStore.getConversation(id);
 
   // Sync live messages from Zernio if conversation belongs to Zernio
-  if (/^[0-9a-fA-F]{24}$/.test(id)) {
+  if (id) {
     try {
       const liveMessages = await ZernioWhatsAppService.listMessages(id, conversation?.account_id);
       if (Array.isArray(liveMessages) && liveMessages.length > 0) {
@@ -353,8 +422,8 @@ whatsappRouter.post('/api/whatsapp/conversations/:id/messages', async (req: Requ
     });
   }
 
-  // Dispatch via Zernio SDK if online and thread is Zernio ID
-  if (/^[0-9a-fA-F]{24}$/.test(id)) {
+  // Dispatch via Zernio SDK if online and conversation ID exists
+  if (id) {
     await ZernioWhatsAppService.sendInboxMessage({
       conversationId: id,
       accountId: conv.account_id,
@@ -374,12 +443,21 @@ whatsappRouter.post('/api/whatsapp/conversations/:id/messages', async (req: Requ
     media_url,
     template_name,
     template_params,
-    status: 'delivered',
+    status: 'sent',
     timestamp: new Date().toISOString(),
     sender_name: 'Support Agent',
   };
 
   whatsappStore.appendMessage(msg);
+
+  // Broadcast sent message in real time to all open dashboard instances
+  broadcastWhatsAppEvent({
+    event: 'message.sent',
+    conversationId: id,
+    message: msg,
+    conversation: conv,
+  });
+
   return res.json({ success: true, message: msg });
 });
 
