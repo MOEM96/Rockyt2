@@ -18,6 +18,28 @@ interface WhatsAppInboxProps {
   userSession?: any;
 }
 
+// Deduplicate messages by ID or direction + text + timestamp proximity (120s)
+const deduplicateMessages = (msgs: WhatsAppMessage[]): WhatsAppMessage[] => {
+  const result: WhatsAppMessage[] = [];
+  for (const msg of msgs) {
+    const isDup = result.some((existing) => {
+      if (existing.id === msg.id) return true;
+      if (
+        existing.direction === msg.direction &&
+        (existing.text || '').trim().toLowerCase() === (msg.text || '').trim().toLowerCase() &&
+        Math.abs(new Date(existing.timestamp).getTime() - new Date(msg.timestamp).getTime()) < 120000
+      ) {
+        return true;
+      }
+      return false;
+    });
+    if (!isDup) {
+      result.push(msg);
+    }
+  }
+  return result.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+};
+
 export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onTriggerCapi, onOpenConnect, initialPhone, initialName }) => {
   const [conversations, setConversations] = useState<WhatsAppConversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string>('');
@@ -173,17 +195,9 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onTriggerCapi, onO
       if (res.ok) {
         const data = await res.json();
         if (data.data && Array.isArray(data.data)) {
-          setMessages((prev) => {
-            // Check if messages changed before resetting to avoid unnecessary DOM reflows
-            const map = new Map<string, WhatsAppMessage>();
-            prev.forEach((m) => map.set(m.id, m));
-            data.data.forEach((m: WhatsAppMessage) => map.set(m.id, m));
-            const merged = Array.from(map.values()).sort(
-              (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-            );
-            setStoredMessages(convId, merged);
-            return merged;
-          });
+          const clean = deduplicateMessages(data.data);
+          setMessages(clean);
+          setStoredMessages(convId, clean);
           if (isInitial) {
             setTimeout(() => scrollToBottom(false), 50);
           }
@@ -274,11 +288,14 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onTriggerCapi, onO
               // 1. If currently viewing this conversation, immediately append message to thread
               if (activeConvId && (convId === activeConvId || msg.conversation_id === activeConvId)) {
                 setMessages((prev) => {
-                  const exists = prev.some((m) => m.id === msg.id || (m.text === msg.text && m.direction === msg.direction && Math.abs(new Date(m.timestamp).getTime() - new Date(msg.timestamp).getTime()) < 4000));
-                  if (exists) return prev;
-                  const next = [...prev, msg].sort(
-                    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+                  const exists = prev.some((m) =>
+                    m.id === msg.id ||
+                    (m.direction === msg.direction &&
+                     (m.text || '').trim().toLowerCase() === (msg.text || '').trim().toLowerCase() &&
+                     Math.abs(new Date(m.timestamp).getTime() - new Date(msg.timestamp).getTime()) < 120000)
                   );
+                  if (exists) return prev;
+                  const next = deduplicateMessages([...prev, msg]);
                   setStoredMessages(activeConvId, next);
                   return next;
                 });
@@ -713,8 +730,15 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onTriggerCapi, onO
           {/* Messages Stream (Container-managed scroll, NO page jumping!) */}
           <div
             ref={messagesContainerRef}
-            className="flex-1 overflow-y-auto p-5 space-y-3.5 bg-zinc-950/40"
+            className="flex-1 overflow-y-auto p-5 space-y-3 bg-zinc-950/40"
           >
+            {messages.length > 0 && (
+              <div className="flex justify-center my-2">
+                <span className="px-3 py-1 bg-zinc-900 border border-zinc-800 text-[11px] font-medium text-zinc-400 rounded-full shadow-xs">
+                  Today
+                </span>
+              </div>
+            )}
             {messages.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center p-6 text-zinc-500 text-xs">
                 <MessageSquare className="w-8 h-8 text-zinc-700 mb-2" />
@@ -731,18 +755,13 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onTriggerCapi, onO
                     className={`flex flex-col ${isOutgoing ? 'items-end' : 'items-start'}`}
                   >
                     <div
-                      className={`max-w-[80%] rounded-2xl p-3.5 text-xs shadow-sm ${
+                      className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-xs shadow-sm ${
                         isOutgoing
-                          ? 'bg-emerald-600 text-white rounded-br-none'
-                          : 'bg-zinc-900 text-zinc-200 border border-zinc-800 rounded-bl-none'
+                          ? 'bg-[#005c4b] text-white rounded-br-sm'
+                          : 'bg-zinc-800 text-zinc-100 border border-zinc-700/50 rounded-bl-sm'
                       }`}
                     >
-                      {msg.sender_name && isOutgoing && (
-                        <div className="text-[10px] text-emerald-200 font-semibold mb-1 flex items-center gap-1">
-                          <Sparkles className="w-2.5 h-2.5" />
-                          {msg.sender_name}
-                        </div>
-                      )}
+                      
 
                       {msg.template_name && (
                         <div className="mb-1 text-[10px] uppercase font-bold text-emerald-200/90 bg-emerald-700/50 px-1.5 py-0.5 rounded w-max">
@@ -773,7 +792,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onTriggerCapi, onO
                         {isOutgoing && (
                           <span>
                             {msg.status === 'read' ? (
-                              <CheckCheck className="w-3 h-3 text-cyan-200" />
+                              <CheckCheck className="w-3 h-3 text-[#53bdeb]" />
                             ) : msg.status === 'delivered' ? (
                               <CheckCheck className="w-3 h-3 text-emerald-200" />
                             ) : (

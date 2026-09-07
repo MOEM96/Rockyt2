@@ -291,9 +291,33 @@ class WhatsAppStore {
     }
 
     const list = this.messages.get(msg.conversation_id)!;
-    const existingIdx = list.findIndex(m => m.id === msg.id);
+    const msgText = (msg.text || '').trim().toLowerCase();
+    const msgTime = new Date(msg.timestamp || new Date()).getTime();
+
+    // 1. Check exact ID match OR content+direction match within 120 seconds
+    const existingIdx = list.findIndex(m => {
+      if (m.id === msg.id) return true;
+      if (m.direction === msg.direction) {
+        const existingText = (m.text || '').trim().toLowerCase();
+        const existingTime = new Date(m.timestamp).getTime();
+        // If same text and sent within 120s, it's the exact same message!
+        if (msgText && existingText === msgText && Math.abs(msgTime - existingTime) < 120000) {
+          return true;
+        }
+      }
+      return false;
+    });
+
     if (existingIdx !== -1) {
-      list[existingIdx] = { ...list[existingIdx], ...msg };
+      // Merge into existing message, preferring official Zernio ID over temporary optimistic ID
+      const existing = list[existingIdx];
+      const isOfficialId = !msg.id.startsWith('opt_') && !msg.id.startsWith('msg_out_');
+      list[existingIdx] = {
+        ...existing,
+        ...msg,
+        id: isOfficialId ? msg.id : existing.id,
+        status: msg.status || existing.status,
+      };
     } else {
       list.push(msg);
     }
@@ -305,18 +329,53 @@ class WhatsAppStore {
       if (msg.direction === 'incoming') {
         conv.unread_count += 1;
         conv.last_customer_message_at = msg.timestamp || new Date().toISOString();
-        // Reset 24-hour customer service window on every incoming message
-        const newExpiry = new Date(new Date(conv.last_customer_message_at).getTime() + 24 * 60 * 60 * 1000);
-        conv.window_expires_at = newExpiry.toISOString();
+        // Reset 24-hour customer service window
+        const expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+        conv.window_expires_at = expires.toISOString();
         conv.is_window_open = true;
-
-        if (msg.referral && !conv.ctwa_referral) {
-          conv.ctwa_referral = msg.referral;
-        }
       }
     }
 
     return msg;
+  }
+
+  public cleanDuplicates(conversationId: string): void {
+    const list = this.messages.get(conversationId);
+    if (!list || list.length <= 1) return;
+
+    const cleaned: WhatsAppMessage[] = [];
+    for (const m of list) {
+      const mText = (m.text || '').trim().toLowerCase();
+      const mTime = new Date(m.timestamp).getTime();
+
+      const dupIdx = cleaned.findIndex(c => {
+        if (c.id === m.id) return true;
+        if (c.direction === m.direction) {
+          const cText = (c.text || '').trim().toLowerCase();
+          const cTime = new Date(c.timestamp).getTime();
+          if (mText && cText === mText && Math.abs(mTime - cTime) < 120000) {
+            return true;
+          }
+        }
+        return false;
+      });
+
+      if (dupIdx !== -1) {
+        // Prefer official ID and newest status
+        const existing = cleaned[dupIdx];
+        const isOfficial = !m.id.startsWith('opt_') && !m.id.startsWith('msg_out_');
+        cleaned[dupIdx] = {
+          ...existing,
+          ...m,
+          id: isOfficial ? m.id : existing.id,
+          status: m.status === 'read' ? 'read' : (m.status === 'delivered' ? 'delivered' : existing.status),
+        };
+      } else {
+        cleaned.push(m);
+      }
+    }
+
+    this.messages.set(conversationId, cleaned);
   }
 
 

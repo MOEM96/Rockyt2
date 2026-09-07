@@ -205,14 +205,7 @@ whatsappRouter.post('/api/webhooks/zernio', async (req: Request, res: Response) 
         conversation: conv,
       });
 
-      // Process automated triggers
-      try {
-        await AutomationEngine.processIncomingTrigger({
-          type: 'message_received',
-          conversationId: convId,
-          messageText: newMsg.text,
-        });
-      } catch (autoErr) {}
+// Automated trigger processing disabled as no agent is deployed
     } else if (eventType === 'message.delivered' || eventType === 'message.read') {
       if (msg.id) {
         const st = eventType === 'message.read' ? 'read' : 'delivered';
@@ -489,6 +482,10 @@ whatsappRouter.get('/api/whatsapp/conversations/:id/messages', async (req: Reque
     }
   }
 
+  // Ensure all duplicate outgoing/incoming messages are collapsed
+  whatsappStore.cleanDuplicates(id);
+  messages = whatsappStore.getMessages(id);
+
   return res.json({ data: messages, conversation });
 });
 
@@ -520,20 +517,29 @@ whatsappRouter.post('/api/whatsapp/conversations/:id/messages', async (req: Requ
     }
   }
 
+  let officialMsgId = `msg_out_${Date.now()}`;
+
   // Dispatch via Zernio SDK if online and conversation ID exists
   if (id) {
-    await ZernioWhatsAppService.sendInboxMessage({
-      conversationId: id,
-      accountId,
-      text,
-      mediaUrl: media_url,
-      participantId: conv.contact.phone_number,
-      templateName: template_name,
-    });
+    try {
+      const zernioRes = await ZernioWhatsAppService.sendInboxMessage({
+        conversationId: id,
+        accountId,
+        text,
+        mediaUrl: media_url,
+        participantId: conv.contact.phone_number,
+        templateName: template_name,
+      });
+      if (zernioRes?.message?.id || zernioRes?.id) {
+        officialMsgId = zernioRes.message?.id || zernioRes.id;
+      }
+    } catch (sendErr: any) {
+      console.warn('[Zernio send notice]:', sendErr.message);
+    }
   }
 
   const msg: WhatsAppMessage = {
-    id: `msg_out_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
+    id: officialMsgId,
     conversation_id: id,
     direction: 'outgoing',
     type: template_name ? 'template' : media_url ? 'image' : 'text',
@@ -543,7 +549,6 @@ whatsappRouter.post('/api/whatsapp/conversations/:id/messages', async (req: Requ
     template_params,
     status: 'sent',
     timestamp: new Date().toISOString(),
-    sender_name: 'Support Agent',
   };
 
   whatsappStore.appendMessage(msg);
