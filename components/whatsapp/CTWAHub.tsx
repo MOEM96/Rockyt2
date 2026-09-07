@@ -13,7 +13,7 @@ export const CTWAHub: React.FC = () => {
   const [filterType, setFilterType] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [testModalOpen, setTestModalOpen] = useState(false);
-  const [testPhone, setTestPhone] = useState('+14155552671');
+  const [testPhone, setTestPhone] = useState('+971503102740');
   const [testEventName, setTestEventName] = useState<'Lead' | 'Schedule' | 'Purchase'>('Lead');
   const [testValue, setTestValue] = useState(45);
   const [isTriggering, setIsTriggering] = useState(false);

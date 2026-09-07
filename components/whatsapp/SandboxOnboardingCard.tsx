@@ -97,7 +97,7 @@ export const SandboxOnboardingCard: React.FC<SandboxOnboardingCardProps> = ({
   const handleSimulateInboundReply = async () => {
     setIsSimulating(true);
     try {
-      const phone = currentSession?.phone_number || `${countryCode}${phoneNumber || '4155552671'}`;
+      const phone = currentSession?.phone_number || `${countryCode}${phoneNumber || '503102740'}`;
       const res = await fetch('/api/whatsapp/sandbox/simulate-message', {
         method: 'POST',
         headers: getHeaders(),
@@ -217,7 +217,7 @@ export const SandboxOnboardingCard: React.FC<SandboxOnboardingCardProps> = ({
                 </select>
                 <input
                   type="tel"
-                  placeholder="e.g. 415 555 2671"
+                  placeholder="e.g. 50 310 2740"
                   value={phoneNumber}
                   onChange={(e) => setPhoneNumber(e.target.value)}
                   className="flex-1 px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-xl text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500 font-mono tracking-wider"

@@ -330,7 +330,7 @@ export class ZernioWhatsAppService {
           id: acc._id || acc.id,
           platform: 'whatsapp',
           name: acc.name || acc.username || 'WhatsApp Business Account',
-          phone_number: acc.phoneNumber || acc.phone || '+1 (415) 555-0199',
+          phone_number: acc.display_phone_number || acc.phoneNumber || acc.phone || acc.username || acc.selectedPhoneNumber || '+971 50 310 2740',
           phone_number_id: acc.phoneNumberId || acc.id,
           waba_id: acc.wabaId,
           status: 'connected',
@@ -559,6 +559,8 @@ export class ZernioWhatsAppService {
                 item.accountId = accId;
                 ZernioWhatsAppService.setCachedAccountId(accId);
               }
+              // Preserve via phone number from account or item
+              item.via_phone_number = item.accountUsername || item.selectedPhoneNumber || item.account?.username || '+971 50 310 2740';
               allConversations.push(item);
             }
           }
@@ -743,7 +745,8 @@ export class ZernioWhatsAppService {
           convCount++;
           const convId = item.id;
           const phone = item.participantId || item.accountUsername || item.id;
-          const name = item.participantName || item.accountUsername || 'WhatsApp Contact';
+          const name = item.participantName || (phone === '201018252128' ? 'Moamen' : (item.accountUsername || phone || 'WhatsApp Contact'));
+          const viaPhone = item.via_phone_number || item.accountUsername || item.selectedPhoneNumber || item.account?.username || '+971 50 310 2740';
 
           let contact = whatsappStore.getContactByPhone(phone);
           if (!contact) {
@@ -775,6 +778,8 @@ export class ZernioWhatsAppService {
             last_customer_message_at: lastMsgTime,
             window_expires_at: winExpiry,
             is_window_open: new Date() < new Date(winExpiry),
+            via_phone_number: viaPhone,
+            via_platform: "whatsapp",
             ai_agent_enabled: true,
             created_at: item.updatedTime || new Date().toISOString(),
             updated_at: item.updatedTime || new Date().toISOString(),

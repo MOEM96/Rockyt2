@@ -793,7 +793,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
         )}
 
         {/* ─── MAIN WORKSPACE CONTENT ─── */}
-        <main className="flex-1 overflow-y-auto bg-[#f8fafc]">
+        <main className={`flex-1 ${currentView === 'inbox' ? 'overflow-hidden h-full flex flex-col' : 'overflow-y-auto'} bg-[#f8fafc]`}>
           
           {/* =========================================================================
               WHATSAPP SENDERS OVERVIEW DASHBOARD (Exact Match to Screenshot 1)
@@ -1706,7 +1706,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
             </div>
           )}
 
-// VIEW 6: AUTOMATIONS removed in favor of WhatsApp expandable tab & flows
+{/* VIEW 6: AUTOMATIONS removed in favor of WhatsApp expandable tab & flows */}
 
           {/* =========================================================================
               VIEW 7: COMMERCE & CATALOG

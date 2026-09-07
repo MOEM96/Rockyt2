@@ -218,7 +218,7 @@ export const ContactsCRM: React.FC<ContactsCRMProps> = ({ onSelectContactChat })
                 <label className="block text-xs font-semibold text-zinc-400 mb-1">Phone Number (E.164 with Country Code)</label>
                 <input
                   type="text"
-                  placeholder="e.g. +14155552671"
+                  placeholder="e.g. +971503102740"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
                   className="w-full px-3.5 py-2 bg-zinc-900 border border-zinc-800 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500 font-mono"

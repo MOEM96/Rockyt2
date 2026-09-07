@@ -60,6 +60,8 @@ export interface WhatsAppConversation {
   last_customer_message_at: string; // Used to calculate 24-hour customer service window
   window_expires_at: string; // ISO timestamp
   is_window_open: boolean;
+  via_phone_number?: string;
+  via_platform?: string;
   ctwa_referral?: CTWAReferral;
   ai_agent_enabled: boolean;
   created_at: string;

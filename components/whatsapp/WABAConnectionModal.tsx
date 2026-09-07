@@ -17,7 +17,7 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
   onConnected,
 }) => {
   const [activeTab, setActiveTab] = useState<'headless_oauth' | 'credentials' | 'sandbox'>('headless_oauth');
-  const [sandboxPhone, setSandboxPhone] = useState('+14155552671');
+  const [sandboxPhone, setSandboxPhone] = useState('+971503102740');
   const [sandboxSession, setSandboxSession] = useState<any>(null);
   const [wabaId, setWabaId] = useState('');
   const [phoneNumberId, setPhoneNumberId] = useState('');
@@ -104,7 +104,7 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
   const handleCreateSandbox = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!sandboxPhone) {
-      setErrorMsg('Please enter a valid phone number (e.g. +14155552671)');
+      setErrorMsg('Please enter a valid phone number (e.g. +971503102740)');
       return;
     }
 
@@ -390,7 +390,7 @@ const WABAConnectionModal: React.FC<WABAConnectionModalProps> = ({
                   </label>
                   <input
                     type="text"
-                    placeholder="+1 (415) 555-2671"
+                    placeholder="+971 50 310 2740"
                     value={sandboxPhone}
                     onChange={(e) => setSandboxPhone(e.target.value)}
                     className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-gray-300 focus:outline-none focus:border-emerald-500 font-mono"

@@ -142,10 +142,13 @@ whatsappRouter.post('/api/webhooks/zernio', async (req: Request, res: Response) 
     // 2. Create or update conversation thread
     let conv = whatsappStore.getConversation(convId);
     if (!conv) {
+      const viaNumber = accountData.username || accountData.display_phone_number || accountData.phone || '+971 50 310 2740';
       conv = {
         id: convId,
         account_id: accountData.id || event.account_id || 'acc_primary',
         profile_id: event.profileId || event.profile_id || 'prof_default',
+        via_phone_number: viaNumber,
+        via_platform: 'whatsapp',
         contact: contact || {
           id: `cnt_${convId}`,
           phone_number: phone || convId,
@@ -240,22 +243,89 @@ whatsappRouter.post('/api/webhooks/zernio', async (req: Request, res: Response) 
 whatsappRouter.get('/api/whatsapp/conversations', async (req: Request, res: Response) => {
   try {
     const { userId, profileId } = await resolveUserProfileId(req);
-    let localConversations = whatsappStore.getConversations(profileId);
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
 
-    // Auto-sync from Zernio if memory is empty (e.g. serverless cold start)
-    if (localConversations.length === 0) {
-      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
-      if (apiKey && apiKey !== 'dummy_dev_key') {
-        try {
-          await ZernioWhatsAppService.backfillTenantHistory(profileId);
-          localConversations = whatsappStore.getConversations(profileId);
-        } catch (syncErr: any) {
-          console.warn('[Auto-sync conversations notice]:', syncErr.message);
+    // Sync live conversations from Zernio API to keep inbox 100% updated with all threads
+    if (apiKey && apiKey !== 'dummy_dev_key') {
+      try {
+        let liveConvs = await ZernioWhatsAppService.listConversations(profileId);
+        if (!liveConvs || liveConvs.length === 0) {
+          // Fallback: Query all conversations without profile filter in case of profile mismatch
+          liveConvs = await ZernioWhatsAppService.listConversations();
         }
+
+        if (Array.isArray(liveConvs) && liveConvs.length > 0) {
+          const defaultAccId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
+          for (const item of liveConvs) {
+            const rawPhone = item.participantId || item.accountUsername || item.id || '';
+            const phone = rawPhone ? (rawPhone.startsWith('+') ? rawPhone : '+' + rawPhone) : '';
+            const name = item.participantName || (rawPhone.includes('201018252128') ? 'Moamen' : (item.accountUsername || phone || 'WhatsApp User'));
+            const accId = item.account?.id || item.accountId || item.account_id || defaultAccId || 'acc_primary';
+            const viaPhone = item.accountUsername || item.selectedPhoneNumber || item.account?.username || '+971 50 310 2740';
+
+            if (accId && accId !== 'acc_primary') {
+              ZernioWhatsAppService.setCachedAccountId(accId);
+            }
+
+            let contact = phone ? whatsappStore.getContactByPhone(phone) : undefined;
+            if (!contact) {
+              contact = {
+                id: `cnt_${item.id}`,
+                phone_number: phone || rawPhone,
+                formatted_phone: phone || rawPhone,
+                name,
+                avatar_url: item.participantPicture || undefined,
+                tags: ['WhatsApp_Contact', 'Live_Sync'],
+                custom_fields: {},
+                lifecycle_stage: 'lead',
+                created_at: item.updatedTime || new Date().toISOString(),
+                last_activity_at: item.updatedTime || new Date().toISOString(),
+              };
+              whatsappStore.saveContact(contact, userId);
+            }
+
+            const lastMsgTime = item.updatedTime || new Date().toISOString();
+            const winExpiry = new Date(new Date(lastMsgTime).getTime() + 24 * 60 * 60 * 1000).toISOString();
+            const isWindowOpen = new Date() < new Date(winExpiry);
+
+            const conv: WhatsAppConversation = {
+              id: item.id,
+              account_id: accId,
+              profile_id: profileId,
+              contact,
+              unread_count: item.unreadCount || 0,
+              status: item.status || 'active',
+              last_customer_message_at: lastMsgTime,
+              window_expires_at: winExpiry,
+              is_window_open: isWindowOpen,
+              via_phone_number: viaPhone,
+              via_platform: 'whatsapp',
+              ai_agent_enabled: true,
+              created_at: item.updatedTime || new Date().toISOString(),
+              updated_at: item.updatedTime || new Date().toISOString(),
+              last_message: item.lastMessage ? {
+                id: `msg_sync_${item.id}_${Date.now()}`,
+                conversation_id: item.id,
+                direction: 'incoming',
+                type: 'text',
+                text: item.lastMessage,
+                status: 'delivered',
+                timestamp: lastMsgTime,
+                sender_name: name,
+                sender_phone: phone,
+              } : undefined,
+            };
+
+            whatsappStore.saveConversation(conv);
+          }
+        }
+      } catch (syncErr: any) {
+        console.warn('[Auto-sync conversations notice]:', syncErr.message);
       }
     }
 
-    return res.json({ data: localConversations });
+    const conversations = whatsappStore.getConversations(profileId);
+    return res.json({ data: conversations });
   } catch (err: any) {
     return res.status(401).json({ error: 'unauthorized', message: err.message });
   }
@@ -287,10 +357,8 @@ const handleSyncChatsAndContacts = async (req: Request, res: Response) => {
               ZernioWhatsAppService.setCachedAccountId(itemAccId);
             }
             const phone = item.participantId || item.accountUsername || item.id;
-            if (phone === '201018252128' || item.id === '6a909f88a41a576343bece53') {
-              continue;
-            }
-            const name = item.participantName || item.accountUsername || 'WhatsApp User';
+            // Accepted all tenant conversations including Moamen
+            const name = item.participantName || (phone.includes('201018252128') ? 'Moamen' : (item.accountUsername || phone || 'WhatsApp User'));
             
             let contact = whatsappStore.getContactByPhone(phone);
             if (!contact) {
@@ -633,7 +701,7 @@ whatsappRouter.post('/api/whatsapp/automations/:id/test', async (req: Request<Id
 
   const sampleConv = whatsappStore.getConversations(userId)[0] || {
     id: 'test_conv',
-    contact: { id: 'c_test', phone_number: '+14155552671', name: 'Test Contact', formatted_phone: '+1 415-555-2671', tags: [], lifecycle_stage: 'lead', unread_count: 0, last_activity_at: new Date().toISOString() },
+    contact: { id: 'c_test', phone_number: '+971503102740', name: 'Test Contact', formatted_phone: '+971 50 310 2740', tags: [], lifecycle_stage: 'lead', unread_count: 0, last_activity_at: new Date().toISOString() },
     unread_count: 0,
     status: 'open',
     last_message: { id: 'm_test', conversation_id: 'test_conv', direction: 'incoming', type: 'text', text: 'price test', timestamp: new Date().toISOString(), status: 'delivered' },
@@ -1328,7 +1396,7 @@ whatsappRouter.post('/api/whatsapp/sandbox/simulate-message', async (req: Reques
   try {
     const { userId, profileId } = await resolveUserProfileId(req);
     const session = whatsappStore.getSandboxSession(userId);
-    const phone = req.body.phone_number || session?.phone_number || '+14155552671';
+    const phone = req.body.phone_number || session?.phone_number || '+971503102740';
     const text = req.body.text || 'Hi! Testing WhatsApp sandbox automation and CRM response.';
     const name = req.body.name || 'Sandbox Tester';
 
@@ -1507,7 +1575,7 @@ whatsappRouter.post('/api/whatsapp/connect/headless/select', async (req: Request
         id: data.account.accountId || `acc_waba_${wabaId.substring(0, 8)}`,
         platform: 'whatsapp',
         name: data.account.displayName || 'Connected WhatsApp Business Account',
-        phone_number: data.account.username || data.account.selectedPhoneNumber || '+1 (415) 555-0199',
+        phone_number: data.account.username || data.account.selectedPhoneNumber || '+971 50 310 2740',
         phone_number_id: phoneNumberId,
         waba_id: wabaId,
         status: 'connected',
@@ -1574,7 +1642,7 @@ whatsappRouter.post('/api/whatsapp/connect/credentials', async (req: Request, re
             id: zData.account?.accountId || `acc_waba_${waba_id.substring(0, 8)}`,
             platform: 'whatsapp',
             name: name || zData.account?.displayName || 'Connected WhatsApp Business Account',
-            phone_number: phone_number || zData.account?.username || '+1 (415) 555-0199',
+            phone_number: phone_number || zData.account?.username || '+971 50 310 2740',
             phone_number_id,
             waba_id,
             status: 'connected',
@@ -1616,7 +1684,7 @@ whatsappRouter.post('/api/whatsapp/connect/credentials', async (req: Request, re
       id: `acc_waba_${waba_id.substring(0, 8)}`,
       platform: 'whatsapp',
       name: name || 'Connected WhatsApp Business Account',
-      phone_number: phone_number || '+1 (415) 555-0199',
+      phone_number: phone_number || '+971 50 310 2740',
       phone_number_id,
       waba_id,
       status: 'connected',
@@ -1669,7 +1737,7 @@ whatsappRouter.post('/api/whatsapp/connect/headless', (req: Request, res: Respon
     id: `acc_waba_${waba_id.substring(0, 8)}`,
     platform: 'whatsapp',
     name: name || 'Connected WhatsApp Business Account',
-    phone_number: phone_number || '+1 (415) 555-0199',
+    phone_number: phone_number || '+971 50 310 2740',
     phone_number_id,
     waba_id,
     status: 'connected',
