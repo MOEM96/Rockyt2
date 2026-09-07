@@ -961,16 +961,22 @@ async function resolveUserProfileId(req: Request): Promise<{ userId: string; pro
 whatsappRouter.get('/api/whatsapp/account', async (req: Request, res: Response) => {
   try {
     const { userId, profileId } = await resolveUserProfileId(req);
+    const force = req.query.force === 'true' || req.headers['x-force-refresh'] === 'true';
     const cacheKey = cacheService.getUserKey(userId, 'account');
-    const cached = await cacheService.get<any>(cacheKey);
-    if (cached) {
-      return res.json({
-        connected: Boolean(cached && cached.status !== 'disconnected'),
-        account: cached,
-        sandbox: whatsappStore.getSandboxSession(userId) || null,
-        profileId,
-        cached: true,
-      });
+
+    if (!force) {
+      const cached = await cacheService.get<any>(cacheKey);
+      if (cached) {
+        return res.json({
+          connected: Boolean(cached && cached.status !== 'disconnected'),
+          account: cached,
+          sandbox: whatsappStore.getSandboxSession(userId) || null,
+          profileId,
+          cached: true,
+        });
+      }
+    } else {
+      await cacheService.invalidateUser(userId);
     }
 
     let account = whatsappStore.getAccount(userId);
@@ -1002,14 +1008,19 @@ whatsappRouter.get('/api/whatsapp/account', async (req: Request, res: Response) 
             connected_at: dbAcc.connected_at
           }, userId);
         }
-      } catch {}
+      } catch (dbErr: any) {
+        console.warn('[GET /api/whatsapp/account] Supabase lookup notice:', dbErr?.message);
+      }
     }
 
-    // 2. If no account stored yet, attempt to discover live accounts from Zernio if API key exists
-    if (!account && process.env.ZERNIO_API_KEY && process.env.ZERNIO_API_KEY !== 'dummy_dev_key') {
+    // 2. If no account stored yet or forcing refresh, attempt to discover live accounts from Zernio
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if ((!account || force) && apiKey && apiKey !== 'dummy_dev_key') {
       const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId);
       if (liveAccounts.length > 0) {
         account = whatsappStore.setAccount(liveAccounts[0], userId);
+        // Persist to Supabase so stateless serverless functions can read it immediately
+        await ZernioWhatsAppService.saveWhatsAppAccountToDb(userId, liveAccounts[0]);
       }
     }
 
@@ -1029,6 +1040,54 @@ whatsappRouter.get('/api/whatsapp/account', async (req: Request, res: Response) 
       error: 'unauthorized',
       message: err.message || 'Unable to resolve tenant profile. Please sign in again.',
     });
+  }
+});
+
+whatsappRouter.post('/api/whatsapp/account/sync', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const { accountId, username, name, phone_number } = req.body || {};
+
+    let account: any = null;
+
+    // 1. If account connection details were passed directly (e.g. from OAuth redirect query params)
+    if (accountId || username || phone_number) {
+      account = {
+        id: accountId ? String(accountId) : `waba_${Date.now()}`,
+        platform: 'whatsapp',
+        name: name || username || 'Connected WhatsApp Account',
+        phone_number: phone_number || username || '',
+        phone_number_id: accountId ? String(accountId) : '',
+        status: 'connected',
+        mode: 'production',
+        quality_rating: 'GREEN',
+        messaging_limit_tier: 'TIER_100K_DAILY',
+        connected_at: new Date().toISOString()
+      };
+      whatsappStore.setAccount(account, userId);
+      await ZernioWhatsAppService.saveWhatsAppAccountToDb(userId, account);
+    }
+
+    // 2. Query upstream Zernio for live accounts
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey && apiKey !== 'dummy_dev_key') {
+      const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId);
+      if (liveAccounts.length > 0) {
+        account = whatsappStore.setAccount(liveAccounts[0], userId);
+        await ZernioWhatsAppService.saveWhatsAppAccountToDb(userId, liveAccounts[0]);
+      }
+    }
+
+    // Invalidate cached account so fresh state is returned
+    await cacheService.invalidateUser(userId);
+
+    return res.json({
+      success: true,
+      connected: Boolean(account && account.status !== 'disconnected'),
+      account: account || null
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
   }
 });
 
@@ -1193,15 +1252,17 @@ whatsappRouter.post('/api/whatsapp/sandbox/simulate-message', async (req: Reques
 
 whatsappRouter.post('/api/whatsapp/connect/oauth', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
+    let { userId, profileId } = await resolveUserProfileId(req);
 
-    const host = req.get('host') || 'rockyt.io';
+    const host = req.get('x-forwarded-host') || req.get('host') || 'rockyt.io';
     const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
-    // Headless mode: Meta redirects directly back to Rockyt dashboard without showing Zernio screens
-    const redirectUri = encodeURIComponent(`${protocol}://${host}/dashboard?waba=connected`);
-    const zernioConnectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${encodeURIComponent(profileId)}&redirect_url=${redirectUri}&headless=true&reconnect=true&prompt=consent`;
+    const appBaseUrl = `${protocol}://${host}`;
     
-    // Fetch authUrl directly from Zernio API so end-user is sent straight to Facebook/Meta Dialog
+    // Redirect through /oauth/callback so server immediately stores account in DB and updates connected state
+    const callbackUrl = `${appBaseUrl}/oauth/callback`;
+    const redirectUri = encodeURIComponent(callbackUrl);
+    let zernioConnectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${encodeURIComponent(profileId)}&redirect_url=${redirectUri}&headless=true&reconnect=true&prompt=consent`;
+    
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (apiKey && apiKey !== 'dummy_dev_key') {
@@ -1209,7 +1270,20 @@ whatsappRouter.post('/api/whatsapp/connect/oauth', async (req: Request, res: Res
     }
 
     try {
-      const zernioRes = await fetch(zernioConnectUrl, { headers });
+      let zernioRes = await fetch(zernioConnectUrl, { headers });
+      
+      // Self-healing: If Zernio returns 404 Profile not found, re-verify and re-create profile on Zernio and retry
+      if (!zernioRes.ok && zernioRes.status === 404) {
+        console.warn(`[POST /api/whatsapp/connect/oauth] Profile "${profileId}" returned 404 on Zernio. Refreshing profile...`);
+        const userEmail = (req.headers['x-user-email'] as string) || (userId.includes('@') ? userId : undefined);
+        const freshProfileId = await ZernioWhatsAppService.verifyAndRecreateProfile(userId, userEmail);
+        if (freshProfileId) {
+          profileId = freshProfileId;
+          zernioConnectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${encodeURIComponent(profileId)}&redirect_url=${redirectUri}&headless=true&reconnect=true&prompt=consent`;
+          zernioRes = await fetch(zernioConnectUrl, { headers });
+        }
+      }
+
       if (zernioRes.ok) {
         const data = await zernioRes.json();
         if (data.authUrl || data.url) {
@@ -1221,12 +1295,15 @@ whatsappRouter.post('/api/whatsapp/connect/oauth', async (req: Request, res: Res
             headless: true
           });
         }
+      } else {
+        const errJson = await zernioRes.json().catch(() => ({}));
+        console.warn('[Zernio connect/whatsapp response notice]:', zernioRes.status, errJson);
       }
     } catch (fetchErr: any) {
       console.warn('[Rockyt WhatsApp connect fetch notice]:', fetchErr.message);
     }
 
-    // Direct Meta Facebook Embedded Signup Dialog URL (100% white-labeled Rockyt headless mode)
+    // Direct Meta Facebook Embedded Signup Dialog URL (100% white-labeled Rockyt headless mode fallback)
     const metaDialogUrl = `https://www.facebook.com/v22.0/dialog/oauth?client_id=712341431446535&redirect_uri=${encodeURIComponent('https://zernio.com/api/v1/connect/whatsapp/callback')}&scope=whatsapp_business_management%2Cwhatsapp_business_messaging%2Cwhatsapp_business_manage_events%2Cbusiness_management&response_type=code&config_id=920007930882314&override_default_response_type=true&state=${profileId}-${Date.now()}-${redirectUri}&extras=${encodeURIComponent(JSON.stringify({ sessionInfoVersion: '3', featureType: 'whatsapp_business_app_onboarding' }))}`;
 
     return res.json({ url: metaDialogUrl, authUrl: metaDialogUrl, profileId, headless: true });

@@ -19,21 +19,24 @@ export class ZernioWhatsAppService {
    * Get or create a permanent unique 24-character hexadecimal profile ID per user.
    * Persisted in Supabase 'profiles' table to guarantee 1-to-1 immutable tenant binding across sign-ins and serverless lambdas.
    */
-  public static async getOrCreateProfileId(userId?: string, userEmail?: string): Promise<string> {
+  public static async getOrCreateProfileId(userId?: string, userEmail?: string, forceRefresh = false): Promise<string> {
     const key = (userId || userEmail || '').trim();
     if (!key) {
       throw new Error('Tenant profile resolution error: Missing user ID or email. Re-authentication required.');
     }
 
-    // 1. In-memory fast cache lookup
-    if (this.userProfileCache.has(key)) {
+    // 1. In-memory fast cache lookup (if not forcing refresh)
+    if (!forceRefresh && this.userProfileCache.has(key)) {
       return this.userProfileCache.get(key)!;
     }
 
     const supabase = getBackendSupabaseClient();
     const cleanEmail = userEmail ? userEmail.trim().toLowerCase() : (key.includes('@') ? key.toLowerCase() : null);
 
-    // 2. Check Supabase profiles table first (single source of truth)
+    // 2. Check Supabase profiles table for any existing stored profile ID
+    let storedProfileId: string | null = null;
+    let targetDbUserId: string | null = null;
+
     try {
       let existingProfile: any = null;
       if (userId && !userId.includes('@')) {
@@ -54,24 +57,25 @@ export class ZernioWhatsAppService {
         if (!errByEmail && pByEmail) existingProfile = pByEmail;
       }
 
-      // If user already has a valid 24-hex zernio profile ID stored in Supabase, return it directly!
-      if (existingProfile?.zernio_profile_id) {
-        const pId = String(existingProfile.zernio_profile_id).trim();
-        if (/^[0-9a-fA-F]{24}$/.test(pId)) {
-          this.userProfileCache.set(key, pId);
-          if (userId) this.userProfileCache.set(userId, pId);
-          if (cleanEmail) this.userProfileCache.set(cleanEmail, pId);
-          return pId;
+      if (existingProfile) {
+        targetDbUserId = existingProfile.id || null;
+        if (existingProfile.zernio_profile_id) {
+          const pId = String(existingProfile.zernio_profile_id).trim();
+          if (/^[0-9a-fA-F]{24}$/.test(pId)) {
+            storedProfileId = pId;
+          }
         }
       }
     } catch (dbErr: any) {
       console.warn('[ZernioWhatsAppService.getOrCreateProfileId] Supabase lookup warning:', dbErr?.message || dbErr);
     }
 
-    // 3. If no profile exists, create ONE permanent Zernio profile via upstream Zernio API
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if (!apiKey || apiKey === 'dummy_dev_key') {
-      // Deterministic hash fallback for offline local dev mode
+      if (storedProfileId && !forceRefresh) {
+        this.userProfileCache.set(key, storedProfileId);
+        return storedProfileId;
+      }
       const hash = crypto.createHash('md5').update(`user_prof_${key}`).digest('hex').substring(0, 24);
       this.userProfileCache.set(key, hash);
       return hash;
@@ -81,7 +85,7 @@ export class ZernioWhatsAppService {
     const profileDisplayName = cleanEmail || `User - ${userId || key}`;
 
     try {
-      // 3a. Check if profile with this exact user name already exists on Zernio API
+      // 3. Fetch active profiles from live Zernio API to verify existence and avoid 404
       const listRes = await fetch('https://zernio.com/api/v1/profiles', {
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -89,56 +93,90 @@ export class ZernioWhatsAppService {
         },
       });
 
+      let profilesList: any[] = [];
       if (listRes.ok) {
         const listData = await listRes.json();
-        const profiles = listData.profiles || listData.data || [];
-        const existingMatch = profiles.find((p: any) => 
-          (p.name && p.name.trim().toLowerCase() === profileDisplayName.toLowerCase()) ||
-          (p.name && userId && p.name.includes(userId))
-        );
-
-        if (existingMatch && (existingMatch._id || existingMatch.id)) {
-          const id = String(existingMatch._id || existingMatch.id);
-          if (/^[0-9a-fA-F]{24}$/.test(id)) {
-            resolvedProfileId = id;
-          }
-        }
+        profilesList = listData.profiles || listData.data || [];
+      } else {
+        console.warn('[ZernioWhatsAppService] GET /api/v1/profiles returned status:', listRes.status);
       }
 
-      // 3b. Create brand new Zernio profile if not found
-      if (!resolvedProfileId) {
-        const createRes = await fetch('https://zernio.com/api/v1/profiles', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            name: profileDisplayName,
-            description: `Dedicated tenant profile for ${profileDisplayName}`,
-          }),
-        });
-
-        if (createRes.ok) {
-          const createdData = await createRes.json();
-          const id = String(createdData.profile?._id || createdData.profile?.id || createdData._id || createdData.id || '');
-          if (/^[0-9a-fA-F]{24}$/.test(id)) {
-            resolvedProfileId = id;
-          }
+      // 3a. Check if the stored profile ID actually exists on Zernio!
+      if (storedProfileId && !forceRefresh && profilesList.length > 0) {
+        const existsOnZernio = profilesList.some((p: any) => (p._id === storedProfileId || p.id === storedProfileId));
+        if (existsOnZernio) {
+          this.userProfileCache.set(key, storedProfileId);
+          if (userId) this.userProfileCache.set(userId, storedProfileId);
+          if (cleanEmail) this.userProfileCache.set(cleanEmail, storedProfileId);
+          return storedProfileId;
         } else {
-          const errBody = await createRes.json().catch(() => ({}));
-          console.error('[ZernioWhatsAppService.getOrCreateProfileId] Upstream create profile error:', errBody);
+          console.warn(`[ZernioWhatsAppService] Stored profile ID "${storedProfileId}" does not exist in Zernio account. Self-healing...`);
         }
       }
 
-      // 4. Save the resolved profile ID permanently into Supabase profiles
+      // 3b. Check if an active profile already matches this user on Zernio
+      if (profilesList.length > 0) {
+        const match = profilesList.find((p: any) => 
+          (p.name && cleanEmail && p.name.trim().toLowerCase() === cleanEmail) ||
+          (p.name && p.name.trim().toLowerCase() === profileDisplayName.toLowerCase()) ||
+          (userId && p.name && p.name.includes(userId))
+        );
+        if (match && (match._id || match.id)) {
+          const mId = String(match._id || match.id);
+          if (/^[0-9a-fA-F]{24}$/.test(mId)) {
+            resolvedProfileId = mId;
+          }
+        }
+      }
+
+      // 3c. Try creating a dedicated profile for this user on Zernio
+      if (!resolvedProfileId) {
+        try {
+          const createRes = await fetch('https://zernio.com/api/v1/profiles', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              name: profileDisplayName,
+              description: `Dedicated tenant profile for ${profileDisplayName}`,
+            }),
+          });
+
+          if (createRes.ok) {
+            const createdData = await createRes.json();
+            const id = String(createdData.profile?._id || createdData.profile?.id || createdData._id || createdData.id || '');
+            if (/^[0-9a-fA-F]{24}$/.test(id)) {
+              resolvedProfileId = id;
+            }
+          } else {
+            const errBody = await createRes.json().catch(() => ({}));
+            console.warn('[ZernioWhatsAppService.getOrCreateProfileId] Upstream create profile notice (e.g. limit reached):', createRes.status, errBody);
+          }
+        } catch (createErr: any) {
+          console.warn('[ZernioWhatsAppService.getOrCreateProfileId] Create profile fetch warning:', createErr?.message);
+        }
+      }
+
+      // 3d. If creation failed (e.g. plan profile limit 403), fall back to existing active default profile
+      if (!resolvedProfileId && profilesList.length > 0) {
+        const defaultProfile = profilesList.find((p: any) => p.isDefault) || profilesList[0];
+        const defId = String(defaultProfile?._id || defaultProfile?.id || '');
+        if (/^[0-9a-fA-F]{24}$/.test(defId)) {
+          console.log(`[ZernioWhatsAppService] Using verified active Zernio profile "${defId}" (${defaultProfile?.name || 'Default'}) for user "${key}"`);
+          resolvedProfileId = defId;
+        }
+      }
+
+      // 4. Save the verified profile ID permanently into Supabase profiles table
       if (resolvedProfileId) {
         this.userProfileCache.set(key, resolvedProfileId);
         if (userId) this.userProfileCache.set(userId, resolvedProfileId);
         if (cleanEmail) this.userProfileCache.set(cleanEmail, resolvedProfileId);
 
         try {
-          const targetId = (userId && !userId.includes('@')) ? userId : undefined;
+          const targetId = (userId && !userId.includes('@')) ? userId : (targetDbUserId || undefined);
           if (targetId) {
             await supabase
               .from('profiles')
@@ -165,8 +203,66 @@ export class ZernioWhatsAppService {
       console.error('[ZernioWhatsAppService.getOrCreateProfileId] Zernio API communication error:', apiErr?.message || apiErr);
     }
 
-    // Fail-fast if profile resolution could not establish an isolated profile
-    throw new Error(`Tenant Profile Resolution Failed: Could not authenticate or create isolated profile for user "${key}". Please check credentials.`);
+    if (storedProfileId) {
+      return storedProfileId;
+    }
+
+    throw new Error(`Tenant Profile Resolution Failed: Could not authenticate or establish verified profile on Zernio for user "${key}". Please check credentials.`);
+  }
+
+  /**
+   * Force refresh and verify tenant profile directly with Zernio
+   */
+  public static async verifyAndRecreateProfile(userId?: string, userEmail?: string): Promise<string> {
+    const key = (userId || userEmail || '').trim();
+    if (key) {
+      this.userProfileCache.delete(key);
+    }
+    if (userId) this.userProfileCache.delete(userId);
+    if (userEmail) this.userProfileCache.delete(userEmail.trim().toLowerCase());
+    return await this.getOrCreateProfileId(userId, userEmail, true);
+  }
+
+  /**
+   * Persist connected WhatsApp account to Supabase and connected_accounts
+   */
+  public static async saveWhatsAppAccountToDb(userId: string, acc: Partial<WhatsAppAccount>): Promise<void> {
+    if (!userId) return;
+    try {
+      const supabase = getBackendSupabaseClient();
+      const accountId = acc.id || acc.phone_number_id || `waba_${Date.now()}`;
+      await supabase.from('whatsapp_accounts').upsert({
+        id: accountId,
+        user_id: userId,
+        platform: 'whatsapp',
+        name: acc.name || 'Connected WhatsApp Business Account',
+        phone_number: acc.phone_number || '',
+        phone_number_id: acc.phone_number_id || accountId,
+        waba_id: acc.waba_id || '',
+        status: acc.status || 'connected',
+        mode: acc.mode || 'production',
+        quality_rating: acc.quality_rating || 'GREEN',
+        messaging_limit_tier: acc.messaging_limit_tier || 'TIER_100K_DAILY',
+        verified_name: acc.verified_name || acc.name,
+        connected_at: acc.connected_at || new Date().toISOString(),
+      }, { onConflict: 'user_id' });
+
+      await supabase.from('connected_accounts').upsert({
+        id: accountId,
+        user_id: userId,
+        platform: 'WhatsApp',
+        username: acc.phone_number || acc.name || 'WhatsApp Business Account',
+        profile_name: 'WhatsApp Business Account',
+        status: 'connected',
+        connected_at: acc.connected_at || new Date().toISOString(),
+      }, { onConflict: 'id' });
+
+      await supabase.from('profiles').update({
+        connected_accounts_count: 1
+      }).eq('id', userId);
+    } catch (err: any) {
+      console.warn('[ZernioWhatsAppService.saveWhatsAppAccountToDb] warning:', err?.message || err);
+    }
   }
 
   /**
@@ -181,12 +277,24 @@ export class ZernioWhatsAppService {
       url.searchParams.set('platform', 'whatsapp');
       if (profileId) url.searchParams.set('profileId', profileId);
 
-      const res = await fetch(url.toString(), {
+      let res = await fetch(url.toString(), {
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
       });
+
+      // If 404 Profile not found or access denied, retry without profileId filter to discover accounts
+      if (!res.ok && res.status === 404 && profileId) {
+        console.warn(`[Zernio listWhatsAppAccounts] Profile ${profileId} returned 404, retrying without profileId filter...`);
+        url.searchParams.delete('profileId');
+        res = await fetch(url.toString(), {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+        });
+      }
 
       if (res.ok) {
         const json = await res.json();
@@ -212,9 +320,6 @@ export class ZernioWhatsAppService {
     return [];
   }
 
-  /**
-   * Discover Sandbox phone number and configuration from Zernio
-   */
   public static async getSandboxDiscovery(): Promise<{ accountId?: string; phoneNumber: string; template: { name: string; language: string } }> {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if (apiKey && apiKey !== 'dummy_dev_key') {

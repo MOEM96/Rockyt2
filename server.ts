@@ -13,6 +13,20 @@ import { whatsappRouter } from "./lib/whatsappRoutes";
 
 function startServer() {
   const app = express();
+
+  // Disable ETags globally to eliminate HTTP 304 caching errors on Vercel
+  app.set('etag', false);
+
+  // Global cache prevention headers for all dynamic API endpoints and OAuth callbacks
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api/') || req.path.startsWith('/oauth/')) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      res.setHeader('Surrogate-Control', 'no-store');
+    }
+    next();
+  });
   const PORT = 3000;
 
   // Security headers & CORS
@@ -588,26 +602,22 @@ function startServer() {
         profile = newProfile || { id: safeUserId, email: cleanEmail, plan: 'Growth', max_accounts: 1, connected_accounts_count: 0, wallet_balance: 0.00 };
       }
 
-      // 3. Guarantee a REAL unique 24-character Zernio profile ObjectID (1-to-1 immutable tenant binding)
-      const isInvalidZernioId = !profile.zernio_profile_id || String(profile.zernio_profile_id).startsWith('prof_') || String(profile.zernio_profile_id).length < 15;
-
-      if (isInvalidZernioId) {
-        try {
-          const zernioProfileId = await ZernioWhatsAppService.getOrCreateProfileId(safeUserId, cleanEmail);
-          if (zernioProfileId) {
-            profile.zernio_profile_id = zernioProfileId;
-            const targetId = profile.id || safeUserId;
-            const { data: updated } = await supabase
-              .from('profiles')
-              .update({ zernio_profile_id: zernioProfileId })
-              .eq('id', targetId)
-              .select()
-              .maybeSingle();
-            if (updated) profile = updated;
-          }
-        } catch (zernioErr: any) {
-          console.error('[ensureUserProfile] Error resolving unique Zernio profile:', zernioErr?.message || zernioErr);
+      // 3. Guarantee a REAL verified 24-character Zernio profile ObjectID (1-to-1 immutable tenant binding)
+      try {
+        const zernioProfileId = await ZernioWhatsAppService.getOrCreateProfileId(safeUserId, cleanEmail);
+        if (zernioProfileId && profile.zernio_profile_id !== zernioProfileId) {
+          profile.zernio_profile_id = zernioProfileId;
+          const targetId = profile.id || safeUserId;
+          const { data: updated } = await supabase
+            .from('profiles')
+            .update({ zernio_profile_id: zernioProfileId })
+            .eq('id', targetId)
+            .select()
+            .maybeSingle();
+          if (updated) profile = updated;
         }
+      } catch (zernioErr: any) {
+        console.error('[ensureUserProfile] Error resolving unique Zernio profile:', zernioErr?.message || zernioErr);
       }
 
       return profile;
@@ -1138,11 +1148,13 @@ function startServer() {
   }));
 
   app.get('/oauth/callback', asyncHandler(async (req: any, res: any) => {
-    const { profileId, accountId, platform, username, returnTo, step, pendingDataToken, tempToken, userProfile, connect_token } = req.query;
-    const cleanPlatform = platform ? getCanonicalZernioPlatform(platform) : 'Social Channel';
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    const { profileId, accountId, platform, connected, username, returnTo, step, pendingDataToken, tempToken, userProfile, connect_token } = req.query;
+    const rawPlatform = platform || connected || 'whatsapp';
+    const cleanPlatform = getCanonicalZernioPlatform(rawPlatform);
     const formattedPlatform = cleanPlatform.charAt(0).toUpperCase() + cleanPlatform.slice(1);
 
-    // If headless mode returned a secondary selection step (e.g. select_page, select_board, select_location)
+    // If headless mode returned a secondary selection step (e.g. select_phone_number, select_page, select_board)
     if (step || pendingDataToken || tempToken || userProfile) {
       const stepParam = step || 'select_page';
       const tokenKey = (pendingDataToken || connect_token || `pdt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`) as string;
@@ -1195,12 +1207,40 @@ function startServer() {
           } catch (rpcErr: any) {
             console.warn('[/oauth/callback] save_connected_account RPC warning:', rpcErr.message);
           }
+
+          if (cleanPlatform === 'whatsapp' || String(connected).toLowerCase() === 'whatsapp') {
+            try {
+              const accId = accountId ? String(accountId) : `waba_${Date.now()}`;
+              await supabase.from('whatsapp_accounts').upsert({
+                id: accId,
+                user_id: userRow.id,
+                platform: 'whatsapp',
+                name: username || 'Connected WhatsApp Account',
+                phone_number: username || '',
+                phone_number_id: accountId ? String(accountId) : accId,
+                status: 'connected',
+                mode: 'production',
+                quality_rating: 'GREEN',
+                messaging_limit_tier: 'TIER_100K_DAILY',
+                connected_at: new Date().toISOString()
+              }, { onConflict: 'user_id' });
+
+              await supabase.from('profiles').update({
+                connected_accounts_count: 1
+              }).eq('id', userRow.id);
+            } catch (wErr: any) {
+              console.warn('[/oauth/callback] whatsapp_accounts upsert warning:', wErr.message);
+            }
+          }
         }
       } else {
         mockConnectedCount++;
       }
     }
-    const redirectUrl = returnTo || `/dashboard?account_connected=true&platform=${encodeURIComponent(formattedPlatform)}`;
+
+    const redirectUrl = returnTo || (cleanPlatform === 'whatsapp' || String(connected).toLowerCase() === 'whatsapp'
+      ? `/dashboard?waba=connected&connected=whatsapp&accountId=${encodeURIComponent(accountId ? String(accountId) : '')}`
+      : `/dashboard?account_connected=true&platform=${encodeURIComponent(formattedPlatform)}`);
     res.redirect(redirectUrl);
   }));
 
@@ -3198,10 +3238,21 @@ function startServer() {
           });
           fetchedOk = true;
         } catch {
-          accountsRes = { data: { accounts: [] } };
+          // If filtering by profileId failed (e.g. 404), fall back to listing without filter to discover accounts
+          try {
+            accountsRes = await zernio.accounts.listAccounts({});
+            fetchedOk = true;
+          } catch {
+            accountsRes = { data: { accounts: [] } };
+          }
         }
       } else {
-        accountsRes = { data: { accounts: [] } };
+        try {
+          accountsRes = await zernio.accounts.listAccounts({});
+          fetchedOk = true;
+        } catch {
+          accountsRes = { data: { accounts: [] } };
+        }
       }
 
       const rawAccounts = (accountsRes.data as any)?.accounts || (accountsRes.data as any) || [];

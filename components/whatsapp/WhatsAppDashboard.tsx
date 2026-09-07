@@ -88,9 +88,13 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
     return headers;
   };
 
-  const fetchAccountStatus = async () => {
+  const fetchAccountStatus = async (force = false) => {
     try {
-      const res = await fetch('/api/whatsapp/account', { headers: getHeaders() });
+      const url = force ? '/api/whatsapp/account?force=true' : '/api/whatsapp/account';
+      const res = await fetch(url, { 
+        headers: getHeaders(),
+        cache: 'no-store' 
+      });
       if (res.ok) {
         const data = await res.json();
         setAccount(data.account || null);
@@ -111,8 +115,8 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
     try {
       setIsRefreshingMetrics(true);
       const [ovRes, schedRes] = await Promise.all([
-        fetch('/api/whatsapp/campaigns/overview', { headers: getHeaders() }),
-        fetch('/api/whatsapp/campaigns/scheduled', { headers: getHeaders() }),
+        fetch('/api/whatsapp/campaigns/overview', { headers: getHeaders(), cache: 'no-store' }),
+        fetch('/api/whatsapp/campaigns/scheduled', { headers: getHeaders(), cache: 'no-store' }),
       ]);
       if (ovRes.ok) {
         const ovData = await ovRes.json();
@@ -139,12 +143,32 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
       fetchCampaignMetrics();
     }, 4000);
 
-    // Detect return from Meta Headless OAuth
+    // Detect return from Meta / Zernio Headless OAuth
     const searchParams = new URLSearchParams(window.location.search);
-    if (searchParams.get('waba') === 'connected' || searchParams.get('connected') === 'true') {
-      setOauthBanner('🎉 WhatsApp Business Account successfully authenticated via Meta Headless OAuth (Zero 3rd-party branding)!');
-      fetchAccountStatus();
-      fetchCampaignMetrics();
+    const isOAuthReturn = searchParams.get('waba') === 'connected' || 
+                          searchParams.get('connected') === 'whatsapp' || 
+                          searchParams.get('connected') === 'true' || 
+                          searchParams.get('account_connected') === 'true';
+
+    if (isOAuthReturn) {
+      setOauthBanner('🎉 WhatsApp Business Account successfully authenticated and connected to your Rockyt Workspace!');
+      const accountId = searchParams.get('accountId');
+      const profileId = searchParams.get('profileId');
+      const username = searchParams.get('username') || searchParams.get('phone_number');
+
+      // Immediate sync to ensure DB and cache are updated
+      fetch('/api/whatsapp/account/sync', {
+        method: 'POST',
+        headers: getHeaders(),
+        cache: 'no-store',
+        body: JSON.stringify({ accountId, profileId, username, platform: 'whatsapp' }),
+      }).then(() => {
+        fetchAccountStatus(true);
+        fetchCampaignMetrics();
+      }).catch(() => {
+        fetchAccountStatus(true);
+      });
+
       setCompletedSteps(prev => ({ ...prev, 1: true }));
       window.history.replaceState({}, document.title, window.location.pathname);
       setTimeout(() => setOauthBanner(null), 8000);

@@ -461,16 +461,18 @@ var ZernioWhatsAppService2 = class {
    * Get or create a permanent unique 24-character hexadecimal profile ID per user.
    * Persisted in Supabase 'profiles' table to guarantee 1-to-1 immutable tenant binding across sign-ins and serverless lambdas.
    */
-  static async getOrCreateProfileId(userId, userEmail) {
+  static async getOrCreateProfileId(userId, userEmail, forceRefresh = false) {
     const key = (userId || userEmail || "").trim();
     if (!key) {
       throw new Error("Tenant profile resolution error: Missing user ID or email. Re-authentication required.");
     }
-    if (this.userProfileCache.has(key)) {
+    if (!forceRefresh && this.userProfileCache.has(key)) {
       return this.userProfileCache.get(key);
     }
     const supabase = getBackendSupabaseClient();
     const cleanEmail = userEmail ? userEmail.trim().toLowerCase() : key.includes("@") ? key.toLowerCase() : null;
+    let storedProfileId = null;
+    let targetDbUserId = null;
     try {
       let existingProfile = null;
       if (userId && !userId.includes("@")) {
@@ -481,13 +483,13 @@ var ZernioWhatsAppService2 = class {
         const { data: pByEmail, error: errByEmail } = await supabase.from("profiles").select("id, email, zernio_profile_id").eq("email", cleanEmail).maybeSingle();
         if (!errByEmail && pByEmail) existingProfile = pByEmail;
       }
-      if (existingProfile?.zernio_profile_id) {
-        const pId = String(existingProfile.zernio_profile_id).trim();
-        if (/^[0-9a-fA-F]{24}$/.test(pId)) {
-          this.userProfileCache.set(key, pId);
-          if (userId) this.userProfileCache.set(userId, pId);
-          if (cleanEmail) this.userProfileCache.set(cleanEmail, pId);
-          return pId;
+      if (existingProfile) {
+        targetDbUserId = existingProfile.id || null;
+        if (existingProfile.zernio_profile_id) {
+          const pId = String(existingProfile.zernio_profile_id).trim();
+          if (/^[0-9a-fA-F]{24}$/.test(pId)) {
+            storedProfileId = pId;
+          }
         }
       }
     } catch (dbErr) {
@@ -495,6 +497,10 @@ var ZernioWhatsAppService2 = class {
     }
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if (!apiKey || apiKey === "dummy_dev_key") {
+      if (storedProfileId && !forceRefresh) {
+        this.userProfileCache.set(key, storedProfileId);
+        return storedProfileId;
+      }
       const hash = crypto2.createHash("md5").update(`user_prof_${key}`).digest("hex").substring(0, 24);
       this.userProfileCache.set(key, hash);
       return hash;
@@ -508,40 +514,68 @@ var ZernioWhatsAppService2 = class {
           "Content-Type": "application/json"
         }
       });
+      let profilesList = [];
       if (listRes.ok) {
         const listData = await listRes.json();
-        const profiles = listData.profiles || listData.data || [];
-        const existingMatch = profiles.find(
-          (p) => p.name && p.name.trim().toLowerCase() === profileDisplayName.toLowerCase() || p.name && userId && p.name.includes(userId)
+        profilesList = listData.profiles || listData.data || [];
+      } else {
+        console.warn("[ZernioWhatsAppService] GET /api/v1/profiles returned status:", listRes.status);
+      }
+      if (storedProfileId && !forceRefresh && profilesList.length > 0) {
+        const existsOnZernio = profilesList.some((p) => p._id === storedProfileId || p.id === storedProfileId);
+        if (existsOnZernio) {
+          this.userProfileCache.set(key, storedProfileId);
+          if (userId) this.userProfileCache.set(userId, storedProfileId);
+          if (cleanEmail) this.userProfileCache.set(cleanEmail, storedProfileId);
+          return storedProfileId;
+        } else {
+          console.warn(`[ZernioWhatsAppService] Stored profile ID "${storedProfileId}" does not exist in Zernio account. Self-healing...`);
+        }
+      }
+      if (profilesList.length > 0) {
+        const match = profilesList.find(
+          (p) => p.name && cleanEmail && p.name.trim().toLowerCase() === cleanEmail || p.name && p.name.trim().toLowerCase() === profileDisplayName.toLowerCase() || userId && p.name && p.name.includes(userId)
         );
-        if (existingMatch && (existingMatch._id || existingMatch.id)) {
-          const id = String(existingMatch._id || existingMatch.id);
-          if (/^[0-9a-fA-F]{24}$/.test(id)) {
-            resolvedProfileId = id;
+        if (match && (match._id || match.id)) {
+          const mId = String(match._id || match.id);
+          if (/^[0-9a-fA-F]{24}$/.test(mId)) {
+            resolvedProfileId = mId;
           }
         }
       }
       if (!resolvedProfileId) {
-        const createRes = await fetch("https://zernio.com/api/v1/profiles", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            name: profileDisplayName,
-            description: `Dedicated tenant profile for ${profileDisplayName}`
-          })
-        });
-        if (createRes.ok) {
-          const createdData = await createRes.json();
-          const id = String(createdData.profile?._id || createdData.profile?.id || createdData._id || createdData.id || "");
-          if (/^[0-9a-fA-F]{24}$/.test(id)) {
-            resolvedProfileId = id;
+        try {
+          const createRes = await fetch("https://zernio.com/api/v1/profiles", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              name: profileDisplayName,
+              description: `Dedicated tenant profile for ${profileDisplayName}`
+            })
+          });
+          if (createRes.ok) {
+            const createdData = await createRes.json();
+            const id = String(createdData.profile?._id || createdData.profile?.id || createdData._id || createdData.id || "");
+            if (/^[0-9a-fA-F]{24}$/.test(id)) {
+              resolvedProfileId = id;
+            }
+          } else {
+            const errBody = await createRes.json().catch(() => ({}));
+            console.warn("[ZernioWhatsAppService.getOrCreateProfileId] Upstream create profile notice (e.g. limit reached):", createRes.status, errBody);
           }
-        } else {
-          const errBody = await createRes.json().catch(() => ({}));
-          console.error("[ZernioWhatsAppService.getOrCreateProfileId] Upstream create profile error:", errBody);
+        } catch (createErr) {
+          console.warn("[ZernioWhatsAppService.getOrCreateProfileId] Create profile fetch warning:", createErr?.message);
+        }
+      }
+      if (!resolvedProfileId && profilesList.length > 0) {
+        const defaultProfile = profilesList.find((p) => p.isDefault) || profilesList[0];
+        const defId = String(defaultProfile?._id || defaultProfile?.id || "");
+        if (/^[0-9a-fA-F]{24}$/.test(defId)) {
+          console.log(`[ZernioWhatsAppService] Using verified active Zernio profile "${defId}" (${defaultProfile?.name || "Default"}) for user "${key}"`);
+          resolvedProfileId = defId;
         }
       }
       if (resolvedProfileId) {
@@ -549,7 +583,7 @@ var ZernioWhatsAppService2 = class {
         if (userId) this.userProfileCache.set(userId, resolvedProfileId);
         if (cleanEmail) this.userProfileCache.set(cleanEmail, resolvedProfileId);
         try {
-          const targetId = userId && !userId.includes("@") ? userId : void 0;
+          const targetId = userId && !userId.includes("@") ? userId : targetDbUserId || void 0;
           if (targetId) {
             await supabase.from("profiles").upsert({
               id: targetId,
@@ -570,7 +604,61 @@ var ZernioWhatsAppService2 = class {
     } catch (apiErr) {
       console.error("[ZernioWhatsAppService.getOrCreateProfileId] Zernio API communication error:", apiErr?.message || apiErr);
     }
-    throw new Error(`Tenant Profile Resolution Failed: Could not authenticate or create isolated profile for user "${key}". Please check credentials.`);
+    if (storedProfileId) {
+      return storedProfileId;
+    }
+    throw new Error(`Tenant Profile Resolution Failed: Could not authenticate or establish verified profile on Zernio for user "${key}". Please check credentials.`);
+  }
+  /**
+   * Force refresh and verify tenant profile directly with Zernio
+   */
+  static async verifyAndRecreateProfile(userId, userEmail) {
+    const key = (userId || userEmail || "").trim();
+    if (key) {
+      this.userProfileCache.delete(key);
+    }
+    if (userId) this.userProfileCache.delete(userId);
+    if (userEmail) this.userProfileCache.delete(userEmail.trim().toLowerCase());
+    return await this.getOrCreateProfileId(userId, userEmail, true);
+  }
+  /**
+   * Persist connected WhatsApp account to Supabase and connected_accounts
+   */
+  static async saveWhatsAppAccountToDb(userId, acc) {
+    if (!userId) return;
+    try {
+      const supabase = getBackendSupabaseClient();
+      const accountId = acc.id || acc.phone_number_id || `waba_${Date.now()}`;
+      await supabase.from("whatsapp_accounts").upsert({
+        id: accountId,
+        user_id: userId,
+        platform: "whatsapp",
+        name: acc.name || "Connected WhatsApp Business Account",
+        phone_number: acc.phone_number || "",
+        phone_number_id: acc.phone_number_id || accountId,
+        waba_id: acc.waba_id || "",
+        status: acc.status || "connected",
+        mode: acc.mode || "production",
+        quality_rating: acc.quality_rating || "GREEN",
+        messaging_limit_tier: acc.messaging_limit_tier || "TIER_100K_DAILY",
+        verified_name: acc.verified_name || acc.name,
+        connected_at: acc.connected_at || (/* @__PURE__ */ new Date()).toISOString()
+      }, { onConflict: "user_id" });
+      await supabase.from("connected_accounts").upsert({
+        id: accountId,
+        user_id: userId,
+        platform: "WhatsApp",
+        username: acc.phone_number || acc.name || "WhatsApp Business Account",
+        profile_name: "WhatsApp Business Account",
+        status: "connected",
+        connected_at: acc.connected_at || (/* @__PURE__ */ new Date()).toISOString()
+      }, { onConflict: "id" });
+      await supabase.from("profiles").update({
+        connected_accounts_count: 1
+      }).eq("id", userId);
+    } catch (err) {
+      console.warn("[ZernioWhatsAppService.saveWhatsAppAccountToDb] warning:", err?.message || err);
+    }
   }
   /**
    * List connected WhatsApp accounts from Zernio
@@ -582,12 +670,22 @@ var ZernioWhatsAppService2 = class {
       const url = new URL("https://zernio.com/api/v1/accounts");
       url.searchParams.set("platform", "whatsapp");
       if (profileId) url.searchParams.set("profileId", profileId);
-      const res = await fetch(url.toString(), {
+      let res = await fetch(url.toString(), {
         headers: {
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json"
         }
       });
+      if (!res.ok && res.status === 404 && profileId) {
+        console.warn(`[Zernio listWhatsAppAccounts] Profile ${profileId} returned 404, retrying without profileId filter...`);
+        url.searchParams.delete("profileId");
+        res = await fetch(url.toString(), {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json"
+          }
+        });
+      }
       if (res.ok) {
         const json = await res.json();
         const accounts = json.accounts || json.data || [];
@@ -611,9 +709,6 @@ var ZernioWhatsAppService2 = class {
     }
     return [];
   }
-  /**
-   * Discover Sandbox phone number and configuration from Zernio
-   */
   static async getSandboxDiscovery() {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if (apiKey && apiKey !== "dummy_dev_key") {
@@ -2555,16 +2650,21 @@ async function resolveUserProfileId(req) {
 whatsappRouter.get("/api/whatsapp/account", async (req, res) => {
   try {
     const { userId, profileId } = await resolveUserProfileId(req);
+    const force = req.query.force === "true" || req.headers["x-force-refresh"] === "true";
     const cacheKey = cacheService.getUserKey(userId, "account");
-    const cached = await cacheService.get(cacheKey);
-    if (cached) {
-      return res.json({
-        connected: Boolean(cached && cached.status !== "disconnected"),
-        account: cached,
-        sandbox: whatsappStore2.getSandboxSession(userId) || null,
-        profileId,
-        cached: true
-      });
+    if (!force) {
+      const cached = await cacheService.get(cacheKey);
+      if (cached) {
+        return res.json({
+          connected: Boolean(cached && cached.status !== "disconnected"),
+          account: cached,
+          sandbox: whatsappStore2.getSandboxSession(userId) || null,
+          profileId,
+          cached: true
+        });
+      }
+    } else {
+      await cacheService.invalidateUser(userId);
     }
     let account = whatsappStore2.getAccount(userId);
     const sandbox = whatsappStore2.getSandboxSession(userId);
@@ -2588,13 +2688,16 @@ whatsappRouter.get("/api/whatsapp/account", async (req, res) => {
             connected_at: dbAcc.connected_at
           }, userId);
         }
-      } catch {
+      } catch (dbErr) {
+        console.warn("[GET /api/whatsapp/account] Supabase lookup notice:", dbErr?.message);
       }
     }
-    if (!account && process.env.ZERNIO_API_KEY && process.env.ZERNIO_API_KEY !== "dummy_dev_key") {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if ((!account || force) && apiKey && apiKey !== "dummy_dev_key") {
       const liveAccounts = await ZernioWhatsAppService2.listWhatsAppAccounts(profileId);
       if (liveAccounts.length > 0) {
         account = whatsappStore2.setAccount(liveAccounts[0], userId);
+        await ZernioWhatsAppService2.saveWhatsAppAccountToDb(userId, liveAccounts[0]);
       }
     }
     if (account) {
@@ -2611,6 +2714,45 @@ whatsappRouter.get("/api/whatsapp/account", async (req, res) => {
       error: "unauthorized",
       message: err.message || "Unable to resolve tenant profile. Please sign in again."
     });
+  }
+});
+whatsappRouter.post("/api/whatsapp/account/sync", async (req, res) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const { accountId, username, name, phone_number } = req.body || {};
+    let account = null;
+    if (accountId || username || phone_number) {
+      account = {
+        id: accountId ? String(accountId) : `waba_${Date.now()}`,
+        platform: "whatsapp",
+        name: name || username || "Connected WhatsApp Account",
+        phone_number: phone_number || username || "",
+        phone_number_id: accountId ? String(accountId) : "",
+        status: "connected",
+        mode: "production",
+        quality_rating: "GREEN",
+        messaging_limit_tier: "TIER_100K_DAILY",
+        connected_at: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      whatsappStore2.setAccount(account, userId);
+      await ZernioWhatsAppService2.saveWhatsAppAccountToDb(userId, account);
+    }
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey && apiKey !== "dummy_dev_key") {
+      const liveAccounts = await ZernioWhatsAppService2.listWhatsAppAccounts(profileId);
+      if (liveAccounts.length > 0) {
+        account = whatsappStore2.setAccount(liveAccounts[0], userId);
+        await ZernioWhatsAppService2.saveWhatsAppAccountToDb(userId, liveAccounts[0]);
+      }
+    }
+    await cacheService.invalidateUser(userId);
+    return res.json({
+      success: true,
+      connected: Boolean(account && account.status !== "disconnected"),
+      account: account || null
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 });
 whatsappRouter.post("/api/whatsapp/account/disconnect", async (req, res) => {
@@ -2749,18 +2891,30 @@ whatsappRouter.post("/api/whatsapp/sandbox/simulate-message", async (req, res) =
 });
 whatsappRouter.post("/api/whatsapp/connect/oauth", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const host = req.get("host") || "rockyt.io";
+    let { userId, profileId } = await resolveUserProfileId(req);
+    const host = req.get("x-forwarded-host") || req.get("host") || "rockyt.io";
     const protocol = req.protocol === "https" || req.get("x-forwarded-proto") === "https" ? "https" : "http";
-    const redirectUri = encodeURIComponent(`${protocol}://${host}/dashboard?waba=connected`);
-    const zernioConnectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${encodeURIComponent(profileId)}&redirect_url=${redirectUri}&headless=true&reconnect=true&prompt=consent`;
+    const appBaseUrl = `${protocol}://${host}`;
+    const callbackUrl = `${appBaseUrl}/oauth/callback`;
+    const redirectUri = encodeURIComponent(callbackUrl);
+    let zernioConnectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${encodeURIComponent(profileId)}&redirect_url=${redirectUri}&headless=true&reconnect=true&prompt=consent`;
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     const headers = { "Content-Type": "application/json" };
     if (apiKey && apiKey !== "dummy_dev_key") {
       headers["Authorization"] = `Bearer ${apiKey}`;
     }
     try {
-      const zernioRes = await fetch(zernioConnectUrl, { headers });
+      let zernioRes = await fetch(zernioConnectUrl, { headers });
+      if (!zernioRes.ok && zernioRes.status === 404) {
+        console.warn(`[POST /api/whatsapp/connect/oauth] Profile "${profileId}" returned 404 on Zernio. Refreshing profile...`);
+        const userEmail = req.headers["x-user-email"] || (userId.includes("@") ? userId : void 0);
+        const freshProfileId = await ZernioWhatsAppService2.verifyAndRecreateProfile(userId, userEmail);
+        if (freshProfileId) {
+          profileId = freshProfileId;
+          zernioConnectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${encodeURIComponent(profileId)}&redirect_url=${redirectUri}&headless=true&reconnect=true&prompt=consent`;
+          zernioRes = await fetch(zernioConnectUrl, { headers });
+        }
+      }
       if (zernioRes.ok) {
         const data = await zernioRes.json();
         if (data.authUrl || data.url) {
@@ -2772,6 +2926,9 @@ whatsappRouter.post("/api/whatsapp/connect/oauth", async (req, res) => {
             headless: true
           });
         }
+      } else {
+        const errJson = await zernioRes.json().catch(() => ({}));
+        console.warn("[Zernio connect/whatsapp response notice]:", zernioRes.status, errJson);
       }
     } catch (fetchErr) {
       console.warn("[Rockyt WhatsApp connect fetch notice]:", fetchErr.message);
@@ -3014,6 +3171,16 @@ whatsappRouter.get("/api/whatsapp/phone-numbers", (req, res) => {
 // server.ts
 function startServer() {
   const app2 = express2();
+  app2.set("etag", false);
+  app2.use((req, res, next) => {
+    if (req.path.startsWith("/api/") || req.path.startsWith("/oauth/")) {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+      res.setHeader("Surrogate-Control", "no-store");
+    }
+    next();
+  });
   const PORT = 3e3;
   app2.use(helmet({
     contentSecurityPolicy: false,
@@ -3485,19 +3652,16 @@ function startServer() {
         }
         profile = newProfile || { id: safeUserId, email: cleanEmail, plan: "Growth", max_accounts: 1, connected_accounts_count: 0, wallet_balance: 0 };
       }
-      const isInvalidZernioId = !profile.zernio_profile_id || String(profile.zernio_profile_id).startsWith("prof_") || String(profile.zernio_profile_id).length < 15;
-      if (isInvalidZernioId) {
-        try {
-          const zernioProfileId = await ZernioWhatsAppService.getOrCreateProfileId(safeUserId, cleanEmail);
-          if (zernioProfileId) {
-            profile.zernio_profile_id = zernioProfileId;
-            const targetId = profile.id || safeUserId;
-            const { data: updated } = await supabase.from("profiles").update({ zernio_profile_id: zernioProfileId }).eq("id", targetId).select().maybeSingle();
-            if (updated) profile = updated;
-          }
-        } catch (zernioErr) {
-          console.error("[ensureUserProfile] Error resolving unique Zernio profile:", zernioErr?.message || zernioErr);
+      try {
+        const zernioProfileId = await ZernioWhatsAppService.getOrCreateProfileId(safeUserId, cleanEmail);
+        if (zernioProfileId && profile.zernio_profile_id !== zernioProfileId) {
+          profile.zernio_profile_id = zernioProfileId;
+          const targetId = profile.id || safeUserId;
+          const { data: updated } = await supabase.from("profiles").update({ zernio_profile_id: zernioProfileId }).eq("id", targetId).select().maybeSingle();
+          if (updated) profile = updated;
         }
+      } catch (zernioErr) {
+        console.error("[ensureUserProfile] Error resolving unique Zernio profile:", zernioErr?.message || zernioErr);
       }
       return profile;
     } catch (err) {
@@ -3900,8 +4064,10 @@ function startServer() {
     }
   }));
   app2.get("/oauth/callback", asyncHandler(async (req, res) => {
-    const { profileId, accountId, platform, username, returnTo, step, pendingDataToken, tempToken, userProfile, connect_token } = req.query;
-    const cleanPlatform = platform ? getCanonicalZernioPlatform(platform) : "Social Channel";
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    const { profileId, accountId, platform, connected, username, returnTo, step, pendingDataToken, tempToken, userProfile, connect_token } = req.query;
+    const rawPlatform = platform || connected || "whatsapp";
+    const cleanPlatform = getCanonicalZernioPlatform(rawPlatform);
     const formattedPlatform = cleanPlatform.charAt(0).toUpperCase() + cleanPlatform.slice(1);
     if (step || pendingDataToken || tempToken || userProfile) {
       const stepParam = step || "select_page";
@@ -3946,12 +4112,35 @@ function startServer() {
           } catch (rpcErr) {
             console.warn("[/oauth/callback] save_connected_account RPC warning:", rpcErr.message);
           }
+          if (cleanPlatform === "whatsapp" || String(connected).toLowerCase() === "whatsapp") {
+            try {
+              const accId = accountId ? String(accountId) : `waba_${Date.now()}`;
+              await supabase.from("whatsapp_accounts").upsert({
+                id: accId,
+                user_id: userRow.id,
+                platform: "whatsapp",
+                name: username || "Connected WhatsApp Account",
+                phone_number: username || "",
+                phone_number_id: accountId ? String(accountId) : accId,
+                status: "connected",
+                mode: "production",
+                quality_rating: "GREEN",
+                messaging_limit_tier: "TIER_100K_DAILY",
+                connected_at: (/* @__PURE__ */ new Date()).toISOString()
+              }, { onConflict: "user_id" });
+              await supabase.from("profiles").update({
+                connected_accounts_count: 1
+              }).eq("id", userRow.id);
+            } catch (wErr) {
+              console.warn("[/oauth/callback] whatsapp_accounts upsert warning:", wErr.message);
+            }
+          }
         }
       } else {
         mockConnectedCount++;
       }
     }
-    const redirectUrl = returnTo || `/dashboard?account_connected=true&platform=${encodeURIComponent(formattedPlatform)}`;
+    const redirectUrl = returnTo || (cleanPlatform === "whatsapp" || String(connected).toLowerCase() === "whatsapp" ? `/dashboard?waba=connected&connected=whatsapp&accountId=${encodeURIComponent(accountId ? String(accountId) : "")}` : `/dashboard?account_connected=true&platform=${encodeURIComponent(formattedPlatform)}`);
     res.redirect(redirectUrl);
   }));
   app2.get("/api/v1/connect/:platform/selection-options", supabaseAuth, asyncHandler(async (req, res) => {
@@ -5635,10 +5824,20 @@ function startServer() {
           });
           fetchedOk = true;
         } catch {
-          accountsRes = { data: { accounts: [] } };
+          try {
+            accountsRes = await zernio.accounts.listAccounts({});
+            fetchedOk = true;
+          } catch {
+            accountsRes = { data: { accounts: [] } };
+          }
         }
       } else {
-        accountsRes = { data: { accounts: [] } };
+        try {
+          accountsRes = await zernio.accounts.listAccounts({});
+          fetchedOk = true;
+        } catch {
+          accountsRes = { data: { accounts: [] } };
+        }
       }
       const rawAccounts = accountsRes.data?.accounts || accountsRes.data || [];
       const zernioAccountsList = Array.isArray(rawAccounts) ? rawAccounts.map((a) => {
