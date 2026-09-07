@@ -113,6 +113,10 @@ whatsappRouter.post('/api/webhooks/zernio', async (req: Request, res: Response) 
     const name = sender.name || sender.username || metadata.senderName || convData?.contact?.name || phone || 'WhatsApp Contact';
     
     // Conversation ID resolution
+    const resolvedAccId = accountData.id || event.account_id || event.accountId || metadata.accountId;
+    if (resolvedAccId && resolvedAccId !== 'acc_primary') {
+      ZernioWhatsAppService.setCachedAccountId(resolvedAccId);
+    }
     const convId = msg.conversationId || msg.conversation_id || convData.id || convData._id || metadata.conversationId || (phone ? `conv_${phone.replace(/[^0-9]/g, '')}` : `conv_${Date.now()}`);
     const direction = eventType === 'message.sent' ? 'outgoing' : (msg.direction || 'incoming');
     const msgText = msg.text || msg.message || metadata.messagePreview || '';
@@ -278,6 +282,10 @@ const handleSyncChatsAndContacts = async (req: Request, res: Response) => {
           for (const item of liveConversations) {
             // Accept all fetched conversations and associate with active tenant
             item.profileId = profileId;
+            const itemAccId = item.account?.id || item.accountId || item.account_id;
+            if (itemAccId && itemAccId !== 'acc_primary') {
+              ZernioWhatsAppService.setCachedAccountId(itemAccId);
+            }
             const phone = item.participantId || item.accountUsername || item.id;
             if (phone === '201018252128' || item.id === '6a909f88a41a576343bece53') {
               continue;
@@ -375,26 +383,38 @@ whatsappRouter.get('/api/whatsapp/conversations/:id/messages', async (req: Reque
   // Sync live messages from Zernio if conversation belongs to Zernio
   if (id) {
     try {
-      const liveMessages = await ZernioWhatsAppService.listMessages(id, conversation?.account_id);
-      if (Array.isArray(liveMessages) && liveMessages.length > 0) {
-        for (const m of liveMessages) {
-          const isFromContact = m.senderId === conversation?.contact.phone_number || m.source === 'contact';
-          const direction = isFromContact ? 'incoming' : (m.direction || 'incoming');
-          const msg: WhatsAppMessage = {
-            id: m.id || m.messageId || `msg_${Date.now()}`,
-            conversation_id: id,
-            direction: direction as any,
-            type: m.attachmentUrl ? 'image' : 'text',
-            text: m.message || m.text,
-            media_url: m.attachmentUrl,
-            status: m.status || 'delivered',
-            timestamp: m.createdAt || m.timestamp || new Date().toISOString(),
-            sender_name: m.senderName || (direction === 'incoming' ? conversation?.contact.name : 'Support Agent'),
-            sender_phone: m.senderPhone || (direction === 'incoming' ? conversation?.contact.phone_number : undefined),
-          };
-          whatsappStore.appendMessage(msg);
+      let accountId = (conversation?.account_id && conversation.account_id !== 'acc_primary') ? conversation.account_id : undefined;
+      if (!accountId) {
+        accountId = await ZernioWhatsAppService.getDefaultAccountId(conversation?.profile_id);
+        if (accountId && conversation) {
+          conversation.account_id = accountId;
+          whatsappStore.saveConversation(conversation);
         }
-        messages = whatsappStore.getMessages(id);
+      }
+
+      // CRITICAL: Only call Zernio listMessages if a valid accountId exists, preventing 400 accountId query parameter is required errors
+      if (accountId) {
+        const liveMessages = await ZernioWhatsAppService.listMessages(id, accountId);
+        if (Array.isArray(liveMessages) && liveMessages.length > 0) {
+          for (const m of liveMessages) {
+            const isFromContact = m.senderId === conversation?.contact.phone_number || m.source === 'contact';
+            const direction = isFromContact ? 'incoming' : (m.direction || 'incoming');
+            const msg: WhatsAppMessage = {
+              id: m.id || m.messageId || `msg_${Date.now()}`,
+              conversation_id: id,
+              direction: direction as any,
+              type: m.attachmentUrl ? 'image' : 'text',
+              text: m.message || m.text,
+              media_url: m.attachmentUrl,
+              status: m.status || 'delivered',
+              timestamp: m.createdAt || m.timestamp || new Date().toISOString(),
+              sender_name: m.senderName || (direction === 'incoming' ? conversation?.contact.name : 'Support Agent'),
+              sender_phone: m.senderPhone || (direction === 'incoming' ? conversation?.contact.phone_number : undefined),
+            };
+            whatsappStore.appendMessage(msg);
+          }
+          messages = whatsappStore.getMessages(id);
+        }
       }
     } catch (mErr: any) {
       console.warn('[Zernio live messages notice]:', mErr.message);
@@ -422,11 +442,21 @@ whatsappRouter.post('/api/whatsapp/conversations/:id/messages', async (req: Requ
     });
   }
 
+  // Resolve accountId
+  let accountId = (conv.account_id && conv.account_id !== 'acc_primary') ? conv.account_id : undefined;
+  if (!accountId) {
+    accountId = await ZernioWhatsAppService.getDefaultAccountId(conv.profile_id);
+    if (accountId) {
+      conv.account_id = accountId;
+      whatsappStore.saveConversation(conv);
+    }
+  }
+
   // Dispatch via Zernio SDK if online and conversation ID exists
   if (id) {
     await ZernioWhatsAppService.sendInboxMessage({
       conversationId: id,
-      accountId: conv.account_id,
+      accountId,
       text,
       mediaUrl: media_url,
       participantId: conv.contact.phone_number,

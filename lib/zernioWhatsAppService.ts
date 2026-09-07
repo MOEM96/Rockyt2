@@ -4,6 +4,33 @@ import { getBackendSupabaseClient } from './backendSupabase';
 import crypto from 'crypto';
 
 export class ZernioWhatsAppService {
+  private static cachedAccountId?: string;
+
+  public static setCachedAccountId(accountId: string) {
+    if (accountId && accountId !== 'acc_primary') {
+      this.cachedAccountId = accountId;
+    }
+  }
+
+  public static async getDefaultAccountId(profileId?: string): Promise<string | undefined> {
+    if (this.cachedAccountId && this.cachedAccountId !== 'acc_primary') {
+      return this.cachedAccountId;
+    }
+    try {
+      const accounts = await this.listWhatsAppAccounts(profileId);
+      if (Array.isArray(accounts) && accounts.length > 0) {
+        const valid = accounts.find(a => a.id && a.id !== 'acc_primary');
+        if (valid && valid.id) {
+          this.cachedAccountId = valid.id;
+          return valid.id;
+        }
+      }
+    } catch (err: any) {
+      console.warn('[getDefaultAccountId warning]:', err.message);
+    }
+    return undefined;
+  }
+
   private static zernioClient: Zernio | null = null;
   private static userProfileCache = new Map<string, string>();
 
@@ -527,6 +554,11 @@ export class ZernioWhatsAppService {
             const id = item.id || item._id;
             if (id && !seenIds.has(id)) {
               seenIds.add(id);
+              const accId = item.account?.id || item.accountId || item.account_id;
+              if (accId && accId !== 'acc_primary') {
+                item.accountId = accId;
+                ZernioWhatsAppService.setCachedAccountId(accId);
+              }
               allConversations.push(item);
             }
           }
@@ -549,6 +581,18 @@ export class ZernioWhatsAppService {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if (!apiKey || apiKey === 'dummy_dev_key' || !conversationId) return [];
 
+    let effectiveAccountId = (accountId && accountId !== 'acc_primary') ? accountId : undefined;
+    if (!effectiveAccountId) {
+      effectiveAccountId = await this.getDefaultAccountId();
+    }
+
+    // CRITICAL: Zernio's /v1/inbox/conversations/{id}/messages endpoint strictly REQUIRES accountId query parameter!
+    // If no valid accountId is available, DO NOT call Zernio API to avoid repeating 400 Bad Request error.
+    if (!effectiveAccountId) {
+      console.warn(`[Zernio listMessages]: accountId query parameter is required by Zernio, but none could be resolved for conversation ${conversationId}. Skipping remote API fetch.`);
+      return [];
+    }
+
     const allMessages: any[] = [];
     const seenMsgIds = new Set<string>();
     let nextCursor: string | undefined = undefined;
@@ -559,7 +603,7 @@ export class ZernioWhatsAppService {
       page++;
       try {
         const url = new URL(`https://zernio.com/api/v1/inbox/conversations/${encodeURIComponent(conversationId)}/messages`);
-        if (accountId) url.searchParams.set('accountId', accountId);
+        url.searchParams.set('accountId', effectiveAccountId);
         url.searchParams.set('limit', '50');
         if (nextCursor) {
           url.searchParams.set('cursor', nextCursor);
@@ -572,7 +616,11 @@ export class ZernioWhatsAppService {
           },
         });
 
-        if (!res.ok) break;
+        if (!res.ok) {
+          const errText = await res.text().catch(() => '');
+          console.warn(`[Zernio listMessages]: ${res.status} for ${conversationId}:`, errText);
+          break;
+        }
 
         const json = await res.json();
         const list = json.messages || json.data || [];
@@ -608,24 +656,34 @@ export class ZernioWhatsAppService {
     templateName?: string;
   }) {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
-    if (apiKey && apiKey !== 'dummy_dev_key') {
+    if (apiKey && apiKey !== 'dummy_dev_key' && params.conversationId) {
       try {
-        if (params.conversationId) {
-          const res = await fetch(`https://zernio.com/api/v1/inbox/conversations/${params.conversationId}/messages`, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${apiKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              accountId: params.accountId,
-              message: params.text || '',
-              attachmentUrl: params.mediaUrl,
-            }),
-          });
-          if (res.ok) {
-            return await res.json();
-          }
+        let effectiveAccountId = (params.accountId && params.accountId !== 'acc_primary') ? params.accountId : undefined;
+        if (!effectiveAccountId) {
+          effectiveAccountId = await this.getDefaultAccountId();
+        }
+
+        const bodyPayload: any = {
+          message: params.text || '',
+          attachmentUrl: params.mediaUrl,
+        };
+        if (effectiveAccountId) {
+          bodyPayload.accountId = effectiveAccountId;
+        }
+
+        const res = await fetch(`https://zernio.com/api/v1/inbox/conversations/${params.conversationId}/messages`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(bodyPayload),
+        });
+        if (res.ok) {
+          return await res.json();
+        } else {
+          const errText = await res.text().catch(() => '');
+          console.warn(`[Zernio sendInboxMessage]: ${res.status}:`, errText);
         }
       } catch (err: any) {
         console.warn('[Zernio SDK sendInboxMessage Notice]:', err.message);
