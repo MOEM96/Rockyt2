@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { 
+  LayoutGrid, GitBranch, Layout, Copy, Search,
   MessageSquare, Zap, Megaphone, LayoutTemplate, Radio, 
   Bot, Users, Settings, Phone, ShieldCheck, ExternalLink, 
   Plus, LogOut, ArrowLeft, Bell, Sparkles, CheckCircle2,
@@ -10,7 +11,7 @@ import {
 } from 'lucide-react';
 
 import { WhatsAppInbox } from './WhatsAppInbox';
-import { AutomationBuilder } from './AutomationBuilder';
+// AutomationBuilder removed in favor of WhatsApp expandable tab
 import { CTWAHub } from './CTWAHub';
 import { TemplateStudio } from './TemplateStudio';
 import { BroadcastManager } from './BroadcastManager';
@@ -18,6 +19,12 @@ import { MCPGateway } from './MCPGateway';
 import { ContactsCRM } from './ContactsCRM';
 import WABAConnectionModal from './WABAConnectionModal';
 import { getAuthHeaders } from '../../lib/frontendAuth';
+
+const WhatsAppIcon = ({ className = "w-5 h-5" }: { className?: string }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.04 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19.02L7.55 18.84L4.44 19.66L5.27 16.62L5.07 16.31C4.26 15.01 3.81 13.48 3.81 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.04 7.42C8.83 7.42 8.48 7.5 8.19 7.82C7.9 8.13 7.07 8.91 7.07 10.49C7.07 12.07 8.22 13.59 8.38 13.8C8.54 14.01 10.6 17.18 13.77 18.55C14.53 18.88 15.11 19.07 15.57 19.22C16.33 19.46 17.03 19.43 17.58 19.34C18.19 19.25 19.47 18.57 19.73 17.83C20 17.08 20 16.45 19.92 16.31C19.84 16.17 19.63 16.1 19.32 15.94C19.01 15.78 17.47 15.02 17.19 14.92C16.9 14.81 16.69 14.76 16.48 15.08C16.27 15.39 15.68 16.1 15.5 16.31C15.32 16.52 15.14 16.54 14.83 16.39C14.52 16.23 13.52 15.9 12.33 14.84C11.41 14.02 10.79 13.01 10.61 12.7C10.43 12.39 10.59 12.22 10.75 12.07C10.89 11.93 11.06 11.7 11.22 11.52C11.38 11.34 11.43 11.21 11.53 11C11.63 10.79 11.58 10.61 11.5 10.45C11.42 10.29 10.8 8.77 10.55 8.16C10.3 7.56 10.05 7.64 9.87 7.63C9.7 7.62 9.5 7.62 9.29 7.62" />
+  </svg>
+);
 
 interface WhatsAppDashboardProps {
   userSession?: any;
@@ -27,11 +34,15 @@ interface WhatsAppDashboardProps {
 
 export type DashboardView = 
   | 'setup'
+  | 'whatsapp-overview'
+  | 'whatsapp-templates'
+  | 'whatsapp-flows'
+  | 'whatsapp-groups'
+  | 'whatsapp-conversions'
   | 'campaigns'
   | 'inbox'
   | 'contacts'
   | 'astra'
-  | 'automations'
   | 'commerce'
   | 'ads'
   | 'analytics'
@@ -48,6 +59,16 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
   const [campaignSubView, setCampaignSubView] = useState<'overview' | 'templates' | 'scheduled'>('overview');
   const [campaignChannel, setCampaignChannel] = useState<'whatsapp' | 'sms'>('whatsapp');
   const [selectedChannelPill, setSelectedChannelPill] = useState<'whatsapp' | 'instagram' | 'messenger' | 'tiktok'>('whatsapp');
+  
+  // WhatsApp Expandable Sidebar state & Overview sender management
+  const [whatsappMenuExpanded, setWhatsappMenuExpanded] = useState(true);
+  const [isFetchingChats, setIsFetchingChats] = useState(false);
+  const [fetchChatsNotice, setFetchChatsNotice] = useState<{ success: boolean; message: string } | null>(null);
+  const [copiedAccountId, setCopiedAccountId] = useState(false);
+  const [manageSenderDropdownOpen, setManageSenderDropdownOpen] = useState(false);
+  const [senderSearchTerm, setSenderSearchTerm] = useState('');
+  const [senderTypeFilter, setSenderTypeFilter] = useState('all');
+  const [senderStatusFilter, setSenderStatusFilter] = useState('all');
   
   // UI states
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -179,6 +200,53 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
     return () => clearInterval(interval);
   }, [userSession?.id]);
 
+  const handleFetchChatsAndContacts = async () => {
+    setIsFetchingChats(true);
+    setFetchChatsNotice(null);
+    try {
+      const res = await fetch('/api/whatsapp/backfill', {
+        method: 'POST',
+        headers: getHeaders(),
+        cache: 'no-store'
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setFetchChatsNotice({
+          success: true,
+          message: `Successfully synced ${data.count || 0} conversations and ${data.contactsCount || 0} contacts from WhatsApp!`
+        });
+        fetchAccountStatus(true);
+      } else {
+        setFetchChatsNotice({
+          success: false,
+          message: data.message || 'Failed to fetch conversations. Please ensure WhatsApp is connected.'
+        });
+      }
+    } catch (err: any) {
+      setFetchChatsNotice({
+        success: false,
+        message: err.message || 'Error connecting to WhatsApp sync service.'
+      });
+    } finally {
+      setIsFetchingChats(false);
+      setTimeout(() => setFetchChatsNotice(null), 8000);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    if (!confirm('Are you sure you want to disconnect this WhatsApp sender?')) return;
+    try {
+      await fetch('/api/whatsapp/account/disconnect', {
+        method: 'POST',
+        headers: getHeaders(),
+      });
+      setAccount(null);
+      fetchAccountStatus(true);
+    } catch (err) {
+      console.warn('Disconnect error:', err);
+    }
+  };
+
   const handleSendChat = (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputChatText.trim()) return;
@@ -272,20 +340,25 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
         {/* Right Actions */}
         <div className="flex items-center gap-4">
           
-          {/* Account Setup Progress Pill */}
-          <button
-            onClick={() => setCurrentView('setup')}
-            className={`flex items-center gap-2 px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${
-              currentView === 'setup'
-                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                : 'text-gray-700 hover:text-emerald-700 hover:bg-gray-50'
-            }`}
-          >
-            <span>Account Setup</span>
-            <span className="px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-bold">
-              {Object.values(completedSteps).filter(Boolean).length}/7
-            </span>
-          </button>
+          {/* WhatsApp Connection Status Header Badge */}
+          {account && account.status !== 'disconnected' ? (
+            <button
+              onClick={() => setCurrentView('whatsapp-overview')}
+              className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-900 border border-emerald-200 hover:bg-emerald-100 transition-colors cursor-pointer"
+            >
+              <div className="w-2 h-2 rounded-full bg-[#00D084] animate-pulse"></div>
+              <span>WhatsApp Connected</span>
+              <span className="font-mono text-gray-500 text-[11px]">{account.phone_number || '+971 50 310 2740'}</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => setIsConnectModalOpen(true)}
+              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-[#ea3829] text-white hover:bg-[#d82b1d] transition-colors shadow-xs cursor-pointer"
+            >
+              <Plus size={13} />
+              <span>Connect WhatsApp</span>
+            </button>
+          )}
 
           {/* Book a Demo Button */}
           <button
@@ -425,18 +498,97 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
               {!isSidebarCollapsed && <span>Astra</span>}
             </button>
 
-            {/* Automations */}
-            <button
-              onClick={() => setCurrentView('automations')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                currentView === 'automations'
-                  ? 'bg-emerald-50 text-emerald-800 font-bold'
-                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
-              }`}
-            >
-              <Zap size={18} className={currentView === 'automations' ? 'text-emerald-600' : 'text-gray-400'} />
-              {!isSidebarCollapsed && <span>Automations</span>}
-            </button>
+            {/* ── WhatsApp (Expandable Sidebar Section - Screenshot 2) ── */}
+            <div>
+              <button
+                onClick={() => setWhatsappMenuExpanded(!whatsappMenuExpanded)}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                  currentView.startsWith('whatsapp-') || currentView === 'setup'
+                    ? 'bg-gray-100 text-gray-900 font-bold'
+                    : 'text-gray-700 hover:text-gray-900 hover:bg-gray-50'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <WhatsAppIcon className="w-4 h-4 text-emerald-600 shrink-0" />
+                  {!isSidebarCollapsed && <span>WhatsApp</span>}
+                </div>
+                {!isSidebarCollapsed && (
+                  <ChevronDown 
+                    size={14} 
+                    className={`text-gray-500 transition-transform duration-200 ${whatsappMenuExpanded ? 'rotate-180' : ''}`} 
+                  />
+                )}
+              </button>
+
+              {whatsappMenuExpanded && !isSidebarCollapsed && (
+                <div className="pl-4 pr-1 py-1 space-y-0.5">
+                  {/* Overview */}
+                  <button
+                    onClick={() => setCurrentView('whatsapp-overview')}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                      currentView === 'whatsapp-overview' || currentView === 'setup'
+                        ? 'bg-gray-100 text-gray-900 font-semibold'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                    }`}
+                  >
+                    <LayoutGrid size={15} className={currentView === 'whatsapp-overview' || currentView === 'setup' ? 'text-gray-900' : 'text-gray-500'} />
+                    <span>Overview</span>
+                  </button>
+
+                  {/* Templates */}
+                  <button
+                    onClick={() => setCurrentView('whatsapp-templates')}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                      currentView === 'whatsapp-templates'
+                        ? 'bg-gray-100 text-gray-900 font-semibold'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                    }`}
+                  >
+                    <Layout size={15} className={currentView === 'whatsapp-templates' ? 'text-gray-900' : 'text-gray-500'} />
+                    <span>Templates</span>
+                  </button>
+
+                  {/* Flows */}
+                  <button
+                    onClick={() => setCurrentView('whatsapp-flows')}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                      currentView === 'whatsapp-flows'
+                        ? 'bg-gray-100 text-gray-900 font-semibold'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                    }`}
+                  >
+                    <GitBranch size={15} className={currentView === 'whatsapp-flows' ? 'text-gray-900' : 'text-gray-500'} />
+                    <span>Flows</span>
+                  </button>
+
+                  {/* Groups */}
+                  <button
+                    onClick={() => setCurrentView('whatsapp-groups')}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                      currentView === 'whatsapp-groups'
+                        ? 'bg-gray-100 text-gray-900 font-semibold'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                    }`}
+                  >
+                    <Users size={15} className={currentView === 'whatsapp-groups' ? 'text-gray-900' : 'text-gray-500'} />
+                    <span>Groups</span>
+                  </button>
+
+                  {/* Conversions */}
+                  <button
+                    onClick={() => setCurrentView('whatsapp-conversions')}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                      currentView === 'whatsapp-conversions'
+                        ? 'bg-gray-100 text-gray-900 font-semibold'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                    }`}
+                  >
+                    <Target size={15} className={currentView === 'whatsapp-conversions' ? 'text-gray-900' : 'text-gray-500'} />
+                    <span>Conversions</span>
+                  </button>
+                </div>
+              )}
+            </div>
 
             {/* Commerce */}
             <button
@@ -638,238 +790,378 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
         <main className="flex-1 overflow-y-auto bg-[#f8fafc]">
           
           {/* =========================================================================
-              VIEW 1: ONBOARDING & SETUP GUIDE (Exact Match to Image 1)
+              WHATSAPP SENDERS OVERVIEW DASHBOARD (Exact Match to Screenshot 1)
           ========================================================================= */}
-          {currentView === 'setup' && (
-            <div className="max-w-4xl mx-auto px-6 py-10">
-              
-              {/* Main Greeting Banner */}
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
-                <div>
-                  <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">
-                    Hello, <span className="text-[#00D084]">{userName}!</span>
-                    <br />
-                    Let's get you set up
-                  </h1>
-                  <p className="text-xs sm:text-sm text-gray-500 mt-2 font-medium">
-                    Personalised for Sales on WhatsApp
-                    <br />
-                    Just follow these steps and Rockyt handles the rest
-                  </p>
-                </div>
+          {(currentView === 'setup' || currentView === 'whatsapp-overview') && (() => {
+            const senderName = account?.name || 'Rockyt';
+            const senderPhone = account?.phone_number || '+971 50 310 2740';
+            const rawId = account?.id || 'eca6e8_prod_id';
+            const hexMatch = (account?.short_account_id || rawId) ? (account?.short_account_id || rawId).match(/([a-f0-9]{6})/i) : null; const shortId = hexMatch ? hexMatch[1].toLowerCase() : 'eca6e8';
+            const senderType = (account as any)?.type || 'Coexistence';
+            const nameReview = (account as any)?.name_review_status === 'approved' ? 'Approved' : 'Not reviewed';
+            const businessVerification = (account as any)?.business_verification_status === 'verified' ? 'Verified' : 'Not verified';
+            const calling = (account as any)?.calling || 'Off';
+            const hasPaymentIssue = true; // Alerts user of payment method requirement in Meta
 
-                <div className="flex flex-col sm:items-end gap-1.5 text-xs text-gray-500">
-                  <div className="flex items-center gap-1.5 text-gray-700 font-semibold">
-                    <ShieldCheck size={14} className="text-emerald-600" />
-                    <span>Join 16,000+ businesses</span>
-                  </div>
-                  <div className="flex items-center gap-1 text-amber-500">
-                    <span>★</span>
-                    <span className="font-bold text-gray-800">4.6/5</span>
-                    <span className="text-gray-400">rating</span>
-                  </div>
-                </div>
-              </div>
+            const sendersList = [
+              {
+                id: rawId,
+                shortId,
+                rawId,
+                name: senderName,
+                phone: senderPhone,
+                type: senderType,
+                nameReview,
+                businessVerification,
+                calling,
+                hasPaymentIssue,
+              }
+            ];
 
-              {/* Channel Selector Bar */}
-              <div className="mb-6">
-                <div className="text-xs text-gray-500 font-medium mb-2.5">
-                  Choose a channel you'd like to connect
-                </div>
-                <div className="flex flex-wrap gap-2.5">
-                  <button
-                    onClick={() => setSelectedChannelPill('whatsapp')}
-                    className={`px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
-                      selectedChannelPill === 'whatsapp'
-                        ? 'bg-emerald-50 text-emerald-800 border-2 border-[#00D084]'
-                        : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
-                    }`}
-                  >
-                    <span className="w-2 h-2 rounded-full bg-[#00D084]"></span>
-                    <span>WhatsApp</span>
-                  </button>
+            const filtered = sendersList.filter(s => {
+              if (senderSearchTerm.trim()) {
+                const term = senderSearchTerm.toLowerCase();
+                const match = s.name.toLowerCase().includes(term) || s.phone.includes(term) || s.shortId.toLowerCase().includes(term);
+                if (!match) return false;
+              }
+              if (senderTypeFilter !== 'all' && s.type.toLowerCase() !== senderTypeFilter.toLowerCase()) return false;
+              if (senderStatusFilter === 'active' && s.hasPaymentIssue) return false;
+              if (senderStatusFilter === 'cant_start' && !s.hasPaymentIssue) return false;
+              return true;
+            });
 
-                  <button
-                    onClick={() => setSelectedChannelPill('instagram')}
-                    className={`px-4 py-2 rounded-full text-xs font-medium flex items-center gap-2 transition-all cursor-pointer ${
-                      selectedChannelPill === 'instagram'
-                        ? 'bg-emerald-50 text-emerald-800 border-2 border-[#00D084]'
-                        : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
-                    }`}
-                  >
-                    <span>Instagram</span>
-                  </button>
-
-                  <button
-                    onClick={() => setSelectedChannelPill('messenger')}
-                    className={`px-4 py-2 rounded-full text-xs font-medium flex items-center gap-2 transition-all cursor-pointer ${
-                      selectedChannelPill === 'messenger'
-                        ? 'bg-emerald-50 text-emerald-800 border-2 border-[#00D084]'
-                        : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
-                    }`}
-                  >
-                    <span>Messenger</span>
-                  </button>
-
-                  <button
-                    onClick={() => setSelectedChannelPill('tiktok')}
-                    className={`px-4 py-2 rounded-full text-xs font-medium flex items-center gap-2 transition-all cursor-pointer ${
-                      selectedChannelPill === 'tiktok'
-                        ? 'bg-emerald-50 text-emerald-800 border-2 border-[#00D084]'
-                        : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
-                    }`}
-                  >
-                    <span>TikTok</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* 7-Step Setup Checklist Container (Exact Card Layout) */}
-              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden divide-y divide-gray-100">
+            return (
+              <div className="p-6 sm:p-8 max-w-7xl mx-auto space-y-6">
                 
-                {/* Step 1: Connect WhatsApp */}
-                {account ? (
-                  <div className="p-5 sm:p-6 bg-emerald-50/40 border-l-4 border-l-[#00D084] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                    <div className="flex items-start gap-4">
-                      <div className="w-8 h-8 rounded-full bg-[#00D084] text-[#07301f] font-bold text-sm flex items-center justify-center shrink-0 shadow-sm">
-                        <Check size={18} />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h4 className="text-sm font-bold text-gray-900">WhatsApp Connected (Headless Mode)</h4>
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">LIVE</span>
-                        </div>
-                        <p className="text-xs text-gray-600 mt-0.5 font-mono">
-                          {account.name || 'Connected WABA'} • {account.phone_number || account.phone || '+1 (415) 555-0199'}
-                        </p>
-                        <p className="text-[11px] text-emerald-700 font-medium mt-0.5">
-                          Meta Official Cloud API Tier 100K/day • Quality: {account.quality_rating || 'GREEN'} • Direct Webhooks Active
-                        </p>
-                      </div>
-                    </div>
+                {/* Header Row (Screenshot 1) */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">WhatsApp</h1>
+                    <p className="text-xs text-gray-500 mt-1 font-medium">
+                      {filtered.length} live sender
+                    </p>
+                  </div>
 
+                  <div className="flex items-center gap-3">
+                    {/* Fetch Chats & Contacts Trigger Button */}
+                    <button
+                      onClick={handleFetchChatsAndContacts}
+                      disabled={isFetchingChats}
+                      className="px-3.5 py-2 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 text-gray-800 text-xs font-semibold flex items-center gap-2 shadow-2xs transition-all cursor-pointer disabled:opacity-60"
+                      title="Sync live WhatsApp conversations and contacts"
+                    >
+                      <RefreshCw size={13} className={`text-emerald-600 ${isFetchingChats ? 'animate-spin' : ''}`} />
+                      <span>{isFetchingChats ? 'Fetching...' : 'Fetch Chats & Contacts'}</span>
+                    </button>
+
+                    {/* Red Connect WhatsApp Button */}
                     <button
                       onClick={() => setIsConnectModalOpen(true)}
-                      className="px-4 py-2 rounded-xl bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-semibold text-xs transition-all shrink-0 cursor-pointer shadow-xs"
+                      className="px-4 py-2 rounded-lg bg-[#ea3829] hover:bg-[#d82b1d] text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
                     >
-                      Manage Connection
+                      <Plus size={14} />
+                      <span>Connect WhatsApp</span>
                     </button>
                   </div>
-                ) : (
-                  <div className="p-5 sm:p-6 bg-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                    <div className="flex items-start gap-4">
-                      <div className="w-8 h-8 rounded-full border-2 border-[#00D084] text-[#00D084] font-bold text-sm flex items-center justify-center shrink-0">
-                        1
-                      </div>
-                      <div>
-                        <h4 className="text-sm font-bold text-gray-900">Connect WhatsApp</h4>
-                        <p className="text-xs text-gray-500 mt-0.5">Start receiving and resolving customer issues on WhatsApp in Headless Mode</p>
-                      </div>
-                    </div>
+                </div>
 
-                    <button
-                      onClick={() => setIsConnectModalOpen(true)}
-                      className="px-5 py-2.5 rounded-xl bg-[#00D084] hover:bg-[#00be77] text-[#07301f] font-bold text-xs shadow-sm transition-all shrink-0 cursor-pointer"
-                    >
-                      Connect WhatsApp
-                    </button>
+                {/* Fetch Chats Notification Banner */}
+                {fetchChatsNotice && (
+                  <div className={`p-4 rounded-xl border text-xs flex items-center justify-between gap-3 shadow-2xs ${
+                    fetchChatsNotice.success ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-red-50 border-red-200 text-red-900'
+                  }`}>
+                    <div className="flex items-center gap-2.5">
+                      {fetchChatsNotice.success ? (
+                        <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                      ) : (
+                        <AlertTriangle size={16} className="text-red-600 shrink-0" />
+                      )}
+                      <span className="font-semibold">{fetchChatsNotice.message}</span>
+                    </div>
+                    <button onClick={() => setFetchChatsNotice(null)} className="text-gray-400 hover:text-gray-600 font-bold">✕</button>
                   </div>
                 )}
 
-                {/* Step 2: Preview and deploy your AI agent */}
-                <div 
-                  onClick={() => setCurrentView('astra')}
-                  className="p-5 sm:p-6 bg-emerald-50/40 hover:bg-emerald-50/70 border-l-4 border-l-[#00D084] flex items-center justify-between gap-4 cursor-pointer transition-colors"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="w-8 h-8 rounded-full border border-emerald-300 text-emerald-700 font-bold text-sm flex items-center justify-center shrink-0 bg-white">
-                      2
+                {/* Payment Issue Guidance Alert Banner */}
+                {hasPaymentIssue && (
+                  <div className="bg-red-50/70 border border-red-200 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div className="flex items-start gap-3">
+                      <div className="w-2.5 h-2.5 rounded-full bg-[#ea3829] mt-1 shrink-0"></div>
+                      <div>
+                        <p className="text-xs font-bold text-red-950">Payment Issue Requires Attention in Meta Business Suite</p>
+                        <p className="text-[11px] text-red-700 mt-0.5">
+                          There is an error with the payment method. This will prevent sending template messages until updated in Meta Business Suite.
+                        </p>
+                      </div>
                     </div>
-                    <span className="text-sm font-semibold text-gray-900">Preview and deploy your AI agent</span>
+                    <a
+                      href="https://business.facebook.com/wa/manage/payments/"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-3.5 py-1.5 rounded-lg bg-[#ea3829] hover:bg-[#d42c1e] text-white font-bold text-xs shrink-0 flex items-center gap-1.5 shadow-xs transition-colors"
+                    >
+                      <span>Fix in Meta Business Suite</span>
+                      <ExternalLink size={12} />
+                    </a>
                   </div>
-                  <ChevronRight size={16} className="text-emerald-600" />
+                )}
+
+                {/* Search & Filter Bar (Screenshot 1) */}
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="relative flex-1 min-w-[220px] max-w-xs">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input
+                      type="text"
+                      placeholder="Search senders..."
+                      value={senderSearchTerm}
+                      onChange={(e) => setSenderSearchTerm(e.target.value)}
+                      className="w-full pl-9 pr-4 py-2 bg-white border border-gray-200 rounded-lg text-xs text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-300"
+                    />
+                  </div>
+
+                  {/* Type Filter */}
+                  <div className="relative">
+                    <select
+                      value={senderTypeFilter}
+                      onChange={(e) => setSenderTypeFilter(e.target.value)}
+                      className="appearance-none bg-white border border-gray-200 hover:border-gray-300 px-3.5 py-2 pr-8 rounded-lg text-xs font-medium text-gray-700 focus:outline-none cursor-pointer shadow-2xs"
+                    >
+                      <option value="all">All types</option>
+                      <option value="coexistence">Coexistence</option>
+                      <option value="cloud_api">Cloud API</option>
+                    </select>
+                    <ChevronDown size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                  </div>
+
+                  {/* Status Filter */}
+                  <div className="relative">
+                    <select
+                      value={senderStatusFilter}
+                      onChange={(e) => setSenderStatusFilter(e.target.value)}
+                      className="appearance-none bg-white border border-gray-200 hover:border-gray-300 px-3.5 py-2 pr-8 rounded-lg text-xs font-medium text-gray-700 focus:outline-none cursor-pointer shadow-2xs"
+                    >
+                      <option value="all">Any status</option>
+                      <option value="cant_start">Can't start conversations</option>
+                      <option value="active">Active</option>
+                    </select>
+                    <ChevronDown size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                  </div>
                 </div>
 
-                {/* Step 3: Manage all incoming leads */}
-                <div 
-                  onClick={() => setCurrentView('inbox')}
-                  className="p-5 sm:p-6 hover:bg-gray-50 flex items-center justify-between gap-4 cursor-pointer transition-colors"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="w-8 h-8 rounded-full border border-gray-300 text-gray-500 font-medium text-sm flex items-center justify-center shrink-0">
-                      3
-                    </div>
-                    <span className="text-sm text-gray-800">Manage all incoming leads in your AI powered inbox</span>
-                  </div>
-                  <ChevronRight size={16} className="text-gray-400" />
-                </div>
+                {/* Senders Table (Exact Match to Screenshot 1) */}
+                <div className="bg-white border border-gray-200 rounded-xl shadow-xs overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-gray-100 text-[11px] font-semibold text-gray-500 bg-white">
+                          <th className="py-3.5 px-5">Sender</th>
+                          <th className="py-3.5 px-4">Number</th>
+                          <th className="py-3.5 px-4">Type</th>
+                          <th className="py-3.5 px-4">Name review</th>
+                          <th className="py-3.5 px-4">Business verification</th>
+                          <th className="py-3.5 px-4">Calling</th>
+                          <th className="py-3.5 px-4">Status</th>
+                          <th className="py-3.5 px-5 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 text-xs">
+                        {filtered.map((s, idx) => (
+                          <tr key={idx} className="hover:bg-gray-50/60 transition-colors">
+                            {/* Sender */}
+                            <td className="py-4 px-5">
+                              <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-full bg-stone-900 border border-stone-800 flex items-center justify-center overflow-hidden shrink-0">
+                                  <img
+                                    src="https://api.dicebear.com/7.x/bottts/svg?seed=Rockyt"
+                                    alt={s.name}
+                                    className="w-full h-full object-cover"
+                                  />
+                                </div>
+                                <div>
+                                  <div className="font-bold text-gray-900 text-xs">{s.name}</div>
+                                  <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-gray-100 text-gray-600 text-[10px] font-mono mt-0.5 border border-gray-200/70">
+                                    <span>Account ID</span>
+                                    <span className="text-gray-400">--</span>
+                                    <span>{s.shortId}</span>
+                                    <button
+                                      onClick={() => {
+                                        navigator.clipboard.writeText(s.rawId);
+                                        setCopiedAccountId(true);
+                                        setTimeout(() => setCopiedAccountId(false), 2000);
+                                      }}
+                                      title="Copy Account ID"
+                                      className="text-gray-400 hover:text-gray-700 ml-0.5 cursor-pointer"
+                                    >
+                                      {copiedAccountId ? <Check size={11} className="text-emerald-600" /> : <Copy size={11} />}
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
 
-                {/* Step 4: Invite sales team */}
-                <div 
-                  onClick={() => setCurrentView('settings')}
-                  className="p-5 sm:p-6 hover:bg-gray-50 flex items-center justify-between gap-4 cursor-pointer transition-colors"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="w-8 h-8 rounded-full border border-gray-300 text-gray-500 font-medium text-sm flex items-center justify-center shrink-0">
-                      4
-                    </div>
-                    <span className="text-sm text-gray-800">Invite your sales team</span>
-                  </div>
-                  <ChevronRight size={16} className="text-gray-400" />
-                </div>
+                            {/* Number */}
+                            <td className="py-4 px-4 font-mono font-medium text-gray-900 whitespace-nowrap">
+                              {s.phone}
+                            </td>
 
-                {/* Divider Label */}
-                <div className="bg-gray-50/80 px-6 py-3 text-xs text-gray-500 font-semibold uppercase tracking-wider">
-                  After set up, explore more of Rockyt
-                </div>
+                            {/* Type */}
+                            <td className="py-4 px-4 whitespace-nowrap">
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-gray-100 text-gray-700 border border-gray-200/80">
+                                <Phone size={11} className="text-gray-500" />
+                                <span>{s.type}</span>
+                              </span>
+                            </td>
 
-                {/* Step 5: Sync your CRM */}
-                <div 
-                  onClick={() => setCurrentView('connectors')}
-                  className="p-5 sm:p-6 hover:bg-gray-50 flex items-center justify-between gap-4 cursor-pointer transition-colors"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="w-8 h-8 rounded-full border border-gray-300 text-gray-500 font-medium text-sm flex items-center justify-center shrink-0">
-                      5
-                    </div>
-                    <span className="text-sm text-gray-800">Sync your CRM to close deals faster</span>
-                  </div>
-                  <ChevronRight size={16} className="text-gray-400" />
-                </div>
+                            {/* Name review */}
+                            <td className="py-4 px-4 whitespace-nowrap">
+                              <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-[#fef3c7] text-[#b45309]">
+                                {s.nameReview}
+                              </span>
+                            </td>
 
-                {/* Step 6: Bring in more leads */}
-                <div 
-                  onClick={() => setCurrentView('ads')}
-                  className="p-5 sm:p-6 hover:bg-gray-50 flex items-center justify-between gap-4 cursor-pointer transition-colors"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="w-8 h-8 rounded-full border border-gray-300 text-gray-500 font-medium text-sm flex items-center justify-center shrink-0">
-                      6
-                    </div>
-                    <span className="text-sm text-gray-800">Bring in more leads by creating ads</span>
-                  </div>
-                  <ChevronRight size={16} className="text-gray-400" />
-                </div>
+                            {/* Business verification */}
+                            <td className="py-4 px-4 whitespace-nowrap">
+                              <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-[#fef3c7] text-[#b45309]">
+                                {s.businessVerification}
+                              </span>
+                            </td>
 
-                {/* Step 7: Automate repetitive actions */}
-                <div 
-                  onClick={() => setCurrentView('automations')}
-                  className="p-5 sm:p-6 hover:bg-gray-50 flex items-center justify-between gap-4 cursor-pointer transition-colors"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="w-8 h-8 rounded-full border border-gray-300 text-gray-500 font-medium text-sm flex items-center justify-center shrink-0">
-                      7
-                    </div>
-                    <span className="text-sm text-gray-800">Automate repetitive actions</span>
+                            {/* Calling */}
+                            <td className="py-4 px-4 text-gray-600 font-medium whitespace-nowrap">
+                              {s.calling}
+                            </td>
+
+                            {/* Status */}
+                            <td className="py-4 px-4 max-w-xs">
+                              <div className="space-y-0.5">
+                                <div className="flex items-center gap-1.5 text-xs font-bold text-gray-900">
+                                  <span className="w-2 h-2 rounded-full bg-[#ea3829] shrink-0"></span>
+                                  <span>Can't start conversations</span>
+                                </div>
+                                <p className="text-[11px] text-gray-500 leading-tight">
+                                  There is an error with the payment method. This will prevent sending template messages until updated in Meta Business Suite.
+                                </p>
+                              </div>
+                            </td>
+
+                            {/* Actions */}
+                            <td className="py-4 px-5 text-right relative">
+                              <button
+                                onClick={() => setManageSenderDropdownOpen(!manageSenderDropdownOpen)}
+                                className="px-3.5 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 text-gray-800 text-xs font-semibold shadow-2xs transition-all cursor-pointer"
+                              >
+                                Manage
+                              </button>
+
+                              {manageSenderDropdownOpen && (
+                                <div className="absolute right-5 mt-1 w-52 bg-white rounded-xl shadow-lg border border-gray-200 py-1.5 z-30 text-left">
+                                  <button
+                                    onClick={() => {
+                                      setManageSenderDropdownOpen(false);
+                                      handleFetchChatsAndContacts();
+                                    }}
+                                    className="w-full text-left px-3.5 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2 font-medium cursor-pointer"
+                                  >
+                                    <RefreshCw size={13} className="text-emerald-600" />
+                                    <span>Fetch Chats &amp; Contacts</span>
+                                  </button>
+                                  <a
+                                    href="https://business.facebook.com/wa/manage/payments/"
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="w-full text-left px-3.5 py-2 text-xs text-[#ea3829] hover:bg-red-50 flex items-center gap-2 font-medium"
+                                  >
+                                    <ExternalLink size={13} />
+                                    <span>Fix Payment in Meta</span>
+                                  </a>
+                                  <button
+                                    onClick={() => {
+                                      setManageSenderDropdownOpen(false);
+                                      setIsConnectModalOpen(true);
+                                    }}
+                                    className="w-full text-left px-3.5 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2 font-medium cursor-pointer"
+                                  >
+                                    <Settings size={13} className="text-gray-500" />
+                                    <span>Reconnect / Settings</span>
+                                  </button>
+                                  <div className="my-1 border-t border-gray-100"></div>
+                                  <button
+                                    onClick={() => {
+                                      setManageSenderDropdownOpen(false);
+                                      handleDisconnect();
+                                    }}
+                                    className="w-full text-left px-3.5 py-2 text-xs text-red-600 hover:bg-red-50 flex items-center gap-2 font-medium cursor-pointer"
+                                  >
+                                    <LogOut size={13} />
+                                    <span>Disconnect</span>
+                                  </button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
-                  <ChevronRight size={16} className="text-gray-400" />
                 </div>
 
               </div>
+            );
+          })()}
 
+          {/* =========================================================================
+              WHATSAPP SUB-VIEWS (Templates, Flows, Groups, Conversions)
+          ========================================================================= */}
+          {currentView === 'whatsapp-templates' && (
+            <div className="p-6">
+              <TemplateStudio />
             </div>
           )}
 
+          {currentView === 'whatsapp-flows' && (
+            <div className="p-6">
+              <BroadcastManager />
+            </div>
+          )}
+
+          {currentView === 'whatsapp-groups' && (
+            <div className="p-6 sm:p-8 max-w-5xl mx-auto space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900">WhatsApp Groups &amp; Communities</h2>
+                  <p className="text-xs text-gray-500 mt-0.5">Manage community announcements, group engagement, and multi-user qualification.</p>
+                </div>
+                <button
+                  onClick={() => alert('WhatsApp Group Creation: Available for verified Business accounts in Meta Business Suite.')}
+                  className="px-4 py-2 rounded-xl bg-[#00D084] text-[#07301f] font-bold text-xs shadow-sm hover:bg-[#00be77] cursor-pointer"
+                >
+                  + Create Group
+                </button>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-gray-200 p-8 shadow-xs text-center py-12">
+                <Users size={40} className="mx-auto text-emerald-500 mb-3" />
+                <h3 className="font-bold text-gray-900 text-base">Community &amp; Group Management</h3>
+                <p className="text-xs text-gray-500 max-w-md mx-auto mt-1 mb-6">
+                  Sync groups, organize VIP customers, send broadcast updates, and trigger automated responses across your WhatsApp groups.
+                </p>
+                <button
+                  onClick={handleFetchChatsAndContacts}
+                  className="px-5 py-2.5 rounded-xl border border-gray-300 bg-white hover:bg-gray-50 text-gray-800 font-bold text-xs shadow-xs inline-flex items-center gap-2 cursor-pointer"
+                >
+                  <RefreshCw size={14} className="text-emerald-600" />
+                  <span>Fetch Chats &amp; Groups</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {currentView === 'whatsapp-conversions' && (
+            <div className="p-6">
+              <CTWAHub />
+            </div>
+          )}
+          
           {/* =========================================================================
               VIEW 2: CAMPAIGNS OVERVIEW DASHBOARD (Exact Match to Image 2)
           ========================================================================= */}
@@ -1408,14 +1700,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
             </div>
           )}
 
-          {/* =========================================================================
-              VIEW 6: AUTOMATIONS
-          ========================================================================= */}
-          {currentView === 'automations' && (
-            <div className="p-6">
-              <AutomationBuilder />
-            </div>
-          )}
+// VIEW 6: AUTOMATIONS removed in favor of WhatsApp expandable tab & flows
 
           {/* =========================================================================
               VIEW 7: COMMERCE & CATALOG

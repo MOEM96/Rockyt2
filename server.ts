@@ -27,7 +27,7 @@ function startServer() {
     }
     next();
   });
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   // Security headers & CORS
   app.use(helmet({

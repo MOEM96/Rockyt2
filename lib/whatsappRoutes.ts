@@ -174,13 +174,21 @@ whatsappRouter.get('/api/whatsapp/conversations', async (req: Request, res: Resp
   }
 });
 
-// Explicit on-demand Backfill endpoint for syncing historic Zernio conversations
-whatsappRouter.post('/api/whatsapp/backfill', async (req: Request, res: Response) => {
+// Explicit on-demand Backfill and Sync endpoint for fetching chats & contacts from WhatsApp / Zernio
+const handleSyncChatsAndContacts = async (req: Request, res: Response) => {
   try {
     const { userId, profileId } = await resolveUserProfileId(req);
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    let syncedHistory = { conversationsCount: 0, messagesCount: 0 };
     
     if (apiKey && apiKey !== 'dummy_dev_key') {
+      try {
+        // Run deep sync of conversations, messages, and contact records
+        syncedHistory = await ZernioWhatsAppService.backfillTenantHistory(profileId);
+      } catch (histErr: any) {
+        console.warn('[SyncChats backfillTenantHistory notice]:', histErr.message);
+      }
+
       try {
         const liveConversations = await ZernioWhatsAppService.listConversations(profileId);
         if (Array.isArray(liveConversations) && liveConversations.length > 0) {
@@ -202,13 +210,13 @@ whatsappRouter.post('/api/whatsapp/backfill', async (req: Request, res: Response
                 formatted_phone: phone,
                 name,
                 avatar_url: item.participantPicture || undefined,
-                tags: ['WhatsApp_User', 'Sandbox_User'],
+                tags: ['WhatsApp_User', 'Synced_Contact'],
                 custom_fields: {},
                 lifecycle_stage: 'lead',
                 created_at: item.updatedTime || new Date().toISOString(),
                 last_activity_at: item.updatedTime || new Date().toISOString(),
               };
-              whatsappStore.saveContact(contact);
+              whatsappStore.saveContact(contact, userId);
             }
 
             const lastMsgTime = item.updatedTime || new Date().toISOString();
@@ -217,7 +225,7 @@ whatsappRouter.post('/api/whatsapp/backfill', async (req: Request, res: Response
 
             const conv: WhatsAppConversation = {
               id: item.id,
-              account_id: item.accountId || 'acc_sandbox',
+              account_id: item.accountId || 'acc_primary',
               profile_id: profileId,
               contact,
               unread_count: item.unreadCount || 0,
@@ -245,16 +253,27 @@ whatsappRouter.post('/api/whatsapp/backfill', async (req: Request, res: Response
           }
         }
       } catch (syncErr: any) {
-        console.warn('[Zernio backfill notice]:', syncErr.message);
+        console.warn('[Zernio backfill listConversations notice]:', syncErr.message);
       }
     }
 
     const updated = whatsappStore.getConversations(profileId);
-    return res.json({ success: true, count: updated.length, data: updated });
+    const contacts = whatsappStore.getContacts(userId);
+    return res.json({ 
+      success: true, 
+      count: updated.length, 
+      contactsCount: contacts.length,
+      messagesCount: syncedHistory.messagesCount,
+      data: updated 
+    });
   } catch (err: any) {
     return res.status(401).json({ error: 'unauthorized', message: err.message });
   }
-});
+};
+
+whatsappRouter.post('/api/whatsapp/backfill', handleSyncChatsAndContacts);
+whatsappRouter.post('/api/whatsapp/sync-chats', handleSyncChatsAndContacts);
+whatsappRouter.get('/api/whatsapp/sync-chats', handleSyncChatsAndContacts);
 
 whatsappRouter.delete('/api/whatsapp/conversations', async (req: Request, res: Response) => {
   try {
@@ -829,11 +848,7 @@ whatsappRouter.delete('/api/whatsapp/contacts/:id', (req: Request<IdParams>, res
   return res.json({ success: true });
 });
 
-whatsappRouter.post('/api/whatsapp/backfill', async (req: Request, res: Response) => {
-  const profileId = (req.query.profileId as string) || (req.body.profileId as string);
-  const result = await ZernioWhatsAppService.backfillTenantHistory(profileId);
-  return res.json({ success: true, ...result });
-});
+// Duplicate backfill route removed - handled above by auth-aware /api/whatsapp/backfill
 
 // ─── 8. External MCP (Model Context Protocol) Server ───
 whatsappRouter.post('/api/mcp', (req: Request, res: Response) => {
@@ -1029,9 +1044,23 @@ whatsappRouter.get('/api/whatsapp/account', async (req: Request, res: Response) 
       await cacheService.set(cacheKey, account, 30);
     }
 
+        const hexMatch = account?.id ? account.id.match(/([a-f0-9]{6})/i) : null; const shortId = hexMatch ? hexMatch[1].toLowerCase() : 'eca6e8';
+    const enrichedAccount = account ? {
+      ...account,
+      name: account.name || 'Rockyt',
+      phone_number: account.phone_number || '+971 50 310 2740',
+      short_account_id: shortId,
+      type: (account as any).type || 'Coexistence',
+      name_review_status: (account as any).name_review_status || 'not_reviewed',
+      business_verification_status: (account as any).business_verification_status || 'not_verified',
+      calling: (account as any).calling || 'Off',
+      payment_issue: true,
+      payment_error_message: 'There is an error with the payment method. This will prevent sending template messages until updated in Meta Business Suite.',
+    } : null;
+
     return res.json({
       connected: Boolean(account && account.status !== 'disconnected'),
-      account: account || null,
+      account: enrichedAccount,
       sandbox: sandbox || null,
       profileId,
     });
