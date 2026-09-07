@@ -195,6 +195,18 @@ export interface WhatsAppAccount {
   messaging_limit_tier?: string;
   verified_name?: string;
   connected_at: string;
+  // Real-time Meta & Zernio account health & verification status
+  short_account_id?: string;
+  type?: string;
+  name_review_status?: 'approved' | 'in_review' | 'declined' | 'not_reviewed';
+  business_verification_status?: 'verified' | 'in_review' | 'not_verified';
+  calling?: 'On' | 'Off';
+  can_start_conversations?: boolean;
+  health_status?: 'healthy' | 'warning' | 'error';
+  payment_issue?: boolean;
+  payment_error_message?: string;
+  issues?: string[];
+  recommendations?: string[];
 }
 
 export interface WhatsAppSandboxSession {

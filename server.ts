@@ -3238,21 +3238,11 @@ function startServer() {
           });
           fetchedOk = true;
         } catch {
-          // If filtering by profileId failed (e.g. 404), fall back to listing without filter to discover accounts
-          try {
-            accountsRes = await zernio.accounts.listAccounts({});
-            fetchedOk = true;
-          } catch {
-            accountsRes = { data: { accounts: [] } };
-          }
-        }
-      } else {
-        try {
-          accountsRes = await zernio.accounts.listAccounts({});
-          fetchedOk = true;
-        } catch {
+          // Strict tenant isolation: If profile has no accounts or 404, return empty list!
           accountsRes = { data: { accounts: [] } };
         }
+      } else {
+        accountsRes = { data: { accounts: [] } };
       }
 
       const rawAccounts = (accountsRes.data as any)?.accounts || (accountsRes.data as any) || [];

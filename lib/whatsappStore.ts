@@ -160,10 +160,10 @@ class WhatsAppStore {
   public getConversations(profileId?: string): WhatsAppConversation[] {
     const all = Array.from(this.conversations.values());
     if (all.length === 0) return [];
-    let list = profileId ? all.filter(c => c.profile_id === profileId) : all;
+    // Strict tenant isolation: strictly scope conversations to tenant's profileId
+    const list = profileId ? all.filter(c => c.profile_id === profileId) : all;
     if (list.length === 0) {
-      // Fallback: If tenant ID has different format or prefix, do not hide conversations
-      list = all;
+      return [];
     }
     const now = Date.now();
     // Dynamically recompute 24-hour customer service window status
@@ -185,9 +185,12 @@ class WhatsAppStore {
       });
   }
 
-  public getConversation(id: string): WhatsAppConversation | undefined {
+  public getConversation(id: string, profileId?: string): WhatsAppConversation | undefined {
     const conv = this.conversations.get(id);
     if (!conv) return undefined;
+    if (profileId && conv.profile_id && conv.profile_id !== profileId) {
+      return undefined;
+    }
     const expiresAt = new Date(conv.window_expires_at).getTime();
     conv.is_window_open = expiresAt > Date.now();
     conv.last_message = this.getLatestMessage(id) || conv.last_message;

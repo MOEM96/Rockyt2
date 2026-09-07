@@ -799,17 +799,34 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
               WHATSAPP SENDERS OVERVIEW DASHBOARD (Exact Match to Screenshot 1)
           ========================================================================= */}
           {(currentView === 'setup' || currentView === 'whatsapp-overview') && (() => {
-            const senderName = account?.name || 'Rockyt';
-            const senderPhone = account?.phone_number || '+971 50 310 2740';
-            const rawId = account?.id || 'eca6e8_prod_id';
-            const hexMatch = (account?.short_account_id || rawId) ? (account?.short_account_id || rawId).match(/([a-f0-9]{6})/i) : null; const shortId = hexMatch ? hexMatch[1].toLowerCase() : 'eca6e8';
+            const isConnected = Boolean(account && account.status !== 'disconnected' && (account.phone_number || account.id));
+            const senderName = account?.name || 'WhatsApp Business';
+            const senderPhone = account?.phone_number || '';
+            const rawId = account?.id || '';
+            const hexMatch = (account?.short_account_id || rawId) ? (account?.short_account_id || rawId).match(/([a-f0-9]{6})/i) : null;
+            const shortId = hexMatch ? hexMatch[1].toLowerCase() : (rawId ? rawId.substring(0, 6) : 'eca6e8');
             const senderType = (account as any)?.type || 'Coexistence';
-            const nameReview = (account as any)?.name_review_status === 'approved' ? 'Approved' : 'Not reviewed';
-            const businessVerification = (account as any)?.business_verification_status === 'verified' ? 'Verified' : 'Not verified';
-            const calling = (account as any)?.calling || 'Off';
-            const hasPaymentIssue = true; // Alerts user of payment method requirement in Meta
 
-            const sendersList = [
+            // Dynamic Meta Name Review Status
+            const rawNameStatus = String((account as any)?.name_review_status || '').toLowerCase();
+            const nameReview = rawNameStatus === 'approved' ? 'Approved' : (rawNameStatus === 'in_review' ? 'In review' : (rawNameStatus === 'declined' ? 'Declined' : 'Not reviewed'));
+
+            // Dynamic Meta Business Verification Status
+            const rawBizStatus = String((account as any)?.business_verification_status || '').toLowerCase();
+            const businessVerification = rawBizStatus === 'verified' ? 'Verified' : (rawBizStatus === 'in_review' ? 'In review' : 'Not verified');
+
+            // Dynamic Meta Calling Status
+            const calling = (account as any)?.calling || 'Off';
+
+            // Real-time Account Health & Payment Status
+            const hasPaymentIssue = Boolean((account as any)?.payment_issue);
+            const canStartConversations = (account as any)?.can_start_conversations ?? !hasPaymentIssue;
+            const paymentErrorMessage = (account as any)?.payment_error_message || (hasPaymentIssue ? 'There is an error with the payment method. This will prevent sending template messages until updated in Meta Business Suite.' : '');
+            const healthStatus = (account as any)?.health_status || (hasPaymentIssue ? 'error' : (isConnected ? 'healthy' : 'disconnected'));
+            const issues: string[] = (account as any)?.issues || [];
+
+            // Strict per-user isolation: Only list sender if this user actually has a connected account!
+            const sendersList = isConnected && senderPhone ? [
               {
                 id: rawId,
                 shortId,
@@ -821,8 +838,12 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
                 businessVerification,
                 calling,
                 hasPaymentIssue,
+                canStartConversations,
+                paymentErrorMessage,
+                healthStatus,
+                issues,
               }
-            ];
+            ] : [];
 
             const filtered = sendersList.filter(s => {
               if (senderSearchTerm.trim()) {
@@ -971,7 +992,29 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100 text-xs">
-                        {filtered.map((s, idx) => (
+                        {filtered.length === 0 ? (
+                          <tr>
+                            <td colSpan={8} className="py-12 px-6 text-center">
+                              <div className="flex flex-col items-center justify-center max-w-md mx-auto space-y-3">
+                                <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                                  <Phone size={22} />
+                                </div>
+                                <h3 className="text-sm font-bold text-gray-900">No WhatsApp Account Connected</h3>
+                                <p className="text-xs text-gray-500 text-center">
+                                  Connect your WhatsApp Business number via Meta OAuth to enable real-time messaging, view account health, and manage customer threads.
+                                </p>
+                                <button
+                                  onClick={() => setIsConnectModalOpen(true)}
+                                  className="mt-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-all cursor-pointer inline-flex items-center gap-2"
+                                >
+                                  <Sparkles size={14} />
+                                  <span>Connect WhatsApp</span>
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : (
+                          filtered.map((s, idx) => (
                           <tr key={idx} className="hover:bg-gray-50/60 transition-colors">
                             {/* Sender */}
                             <td className="py-4 px-5">
@@ -1018,35 +1061,80 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
                               </span>
                             </td>
 
-                            {/* Name review */}
+                            {/* Dynamic Name review */}
                             <td className="py-4 px-4 whitespace-nowrap">
-                              <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-[#fef3c7] text-[#b45309]">
+                              <span className={'inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold ' + (
+                                s.nameReview === 'Approved' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/80' :
+                                s.nameReview === 'In review' ? 'bg-blue-50 text-blue-700 border border-blue-200/80' :
+                                s.nameReview === 'Declined' ? 'bg-red-50 text-red-700 border border-red-200/80' :
+                                'bg-[#fef3c7] text-[#b45309]'
+                              )}>
                                 {s.nameReview}
                               </span>
                             </td>
 
-                            {/* Business verification */}
+                            {/* Dynamic Business verification */}
                             <td className="py-4 px-4 whitespace-nowrap">
-                              <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-[#fef3c7] text-[#b45309]">
+                              <span className={'inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold ' + (
+                                s.businessVerification === 'Verified' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/80' :
+                                s.businessVerification === 'In review' ? 'bg-blue-50 text-blue-700 border border-blue-200/80' :
+                                'bg-[#fef3c7] text-[#b45309]'
+                              )}>
                                 {s.businessVerification}
                               </span>
                             </td>
 
-                            {/* Calling */}
-                            <td className="py-4 px-4 text-gray-600 font-medium whitespace-nowrap">
-                              {s.calling}
+                            {/* Dynamic Calling */}
+                            <td className="py-4 px-4 font-medium whitespace-nowrap">
+                              <span className={s.calling === 'On' ? 'text-emerald-600 font-semibold' : 'text-gray-600'}>
+                                {s.calling}
+                              </span>
                             </td>
 
-                            {/* Status */}
+                            {/* Real-time Dynamic Status */}
                             <td className="py-4 px-4 max-w-xs">
                               <div className="space-y-0.5">
-                                <div className="flex items-center gap-1.5 text-xs font-bold text-gray-900">
-                                  <span className="w-2 h-2 rounded-full bg-[#ea3829] shrink-0"></span>
-                                  <span>Can't start conversations</span>
-                                </div>
-                                <p className="text-[11px] text-gray-500 leading-tight">
-                                  There is an error with the payment method. This will prevent sending template messages until updated in Meta Business Suite.
-                                </p>
+                                {s.hasPaymentIssue ? (
+                                  <>
+                                    <div className="flex items-center gap-1.5 text-xs font-bold text-gray-900">
+                                      <span className="w-2 h-2 rounded-full bg-[#ea3829] shrink-0"></span>
+                                      <span>Can't start conversations</span>
+                                    </div>
+                                    <p className="text-[11px] text-gray-500 leading-tight">
+                                      {s.paymentErrorMessage || 'There is an error with the payment method. This will prevent sending template messages until updated in Meta Business Suite.'}
+                                    </p>
+                                  </>
+                                ) : s.healthStatus === 'healthy' && s.canStartConversations ? (
+                                  <>
+                                    <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-800">
+                                      <span className="w-2 h-2 rounded-full bg-[#10b981] shrink-0"></span>
+                                      <span>Active &amp; Ready</span>
+                                    </div>
+                                    <p className="text-[11px] text-gray-500 leading-tight">
+                                      Account is healthy and ready to initiate and receive customer conversations.
+                                    </p>
+                                  </>
+                                ) : s.healthStatus === 'warning' ? (
+                                  <>
+                                    <div className="flex items-center gap-1.5 text-xs font-bold text-amber-800">
+                                      <span className="w-2 h-2 rounded-full bg-[#f59e0b] shrink-0"></span>
+                                      <span>Action required</span>
+                                    </div>
+                                    <p className="text-[11px] text-gray-500 leading-tight">
+                                      {s.issues?.[0] || 'Meta has flagged warnings on this phone number.'}
+                                    </p>
+                                  </>
+                                ) : (
+                                  <>
+                                    <div className="flex items-center gap-1.5 text-xs font-bold text-gray-900">
+                                      <span className="w-2 h-2 rounded-full bg-[#ea3829] shrink-0"></span>
+                                      <span>Disconnected</span>
+                                    </div>
+                                    <p className="text-[11px] text-gray-500 leading-tight">
+                                      WhatsApp session disconnected. Please reconnect your account.
+                                    </p>
+                                  </>
+                                )}
                               </div>
                             </td>
 
@@ -1061,6 +1149,16 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
 
                               {manageSenderDropdownOpen && (
                                 <div className="absolute right-5 mt-1 w-52 bg-white rounded-xl shadow-lg border border-gray-200 py-1.5 z-30 text-left">
+                                  <button
+                                    onClick={() => {
+                                      setManageSenderDropdownOpen(false);
+                                      loadAccount(true);
+                                    }}
+                                    className="w-full text-left px-3.5 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2 font-medium cursor-pointer"
+                                  >
+                                    <RefreshCw size={13} className="text-blue-600" />
+                                    <span>Check Real-time Health</span>
+                                  </button>
                                   <button
                                     onClick={() => {
                                       setManageSenderDropdownOpen(false);
@@ -1105,7 +1203,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
                               )}
                             </td>
                           </tr>
-                        ))}
+                        )))}
                       </tbody>
                     </table>
                   </div>

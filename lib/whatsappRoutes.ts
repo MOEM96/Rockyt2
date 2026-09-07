@@ -142,7 +142,7 @@ whatsappRouter.post('/api/webhooks/zernio', async (req: Request, res: Response) 
     // 2. Create or update conversation thread
     let conv = whatsappStore.getConversation(convId);
     if (!conv) {
-      const viaNumber = accountData.username || accountData.display_phone_number || accountData.phone || '+971 50 310 2740';
+      const viaNumber = accountData.username || accountData.display_phone_number || accountData.phone || '';
       conv = {
         id: convId,
         account_id: accountData.id || event.account_id || 'acc_primary',
@@ -241,11 +241,8 @@ whatsappRouter.get('/api/whatsapp/conversations', async (req: Request, res: Resp
     // Sync live conversations from Zernio API to keep inbox 100% updated with all threads
     if (apiKey && apiKey !== 'dummy_dev_key') {
       try {
+        // Strict tenant isolation: Query conversations strictly scoped to tenant's profileId
         let liveConvs = await ZernioWhatsAppService.listConversations(profileId);
-        if (!liveConvs || liveConvs.length === 0) {
-          // Fallback: Query all conversations without profile filter in case of profile mismatch
-          liveConvs = await ZernioWhatsAppService.listConversations();
-        }
 
         if (Array.isArray(liveConvs) && liveConvs.length > 0) {
           const defaultAccId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
@@ -254,7 +251,7 @@ whatsappRouter.get('/api/whatsapp/conversations', async (req: Request, res: Resp
             const phone = rawPhone ? (rawPhone.startsWith('+') ? rawPhone : '+' + rawPhone) : '';
             const name = item.participantName || (rawPhone.includes('201018252128') ? 'Moamen' : (item.accountUsername || phone || 'WhatsApp User'));
             const accId = item.account?.id || item.accountId || item.account_id || defaultAccId || 'acc_primary';
-            const viaPhone = item.accountUsername || item.selectedPhoneNumber || item.account?.username || '+971 50 310 2740';
+            const viaPhone = item.accountUsername || item.selectedPhoneNumber || item.account?.username || '';
 
             if (accId && accId !== 'acc_primary') {
               ZernioWhatsAppService.setCachedAccountId(accId);
@@ -438,8 +435,12 @@ whatsappRouter.delete('/api/whatsapp/conversations', async (req: Request, res: R
 
 whatsappRouter.get('/api/whatsapp/conversations/:id/messages', async (req: Request<IdParams>, res: Response) => {
   const { id } = req.params;
+  const { userId, profileId } = await resolveUserProfileId(req);
   let messages = whatsappStore.getMessages(id);
-  const conversation = whatsappStore.getConversation(id);
+  const conversation = whatsappStore.getConversation(id, profileId);
+  if (!conversation) {
+    return res.status(404).json({ error: 'Conversation not found or access denied' });
+  }
 
   // Sync live messages from Zernio if conversation belongs to Zernio
   if (id) {
@@ -1202,54 +1203,87 @@ whatsappRouter.get('/api/whatsapp/account', async (req: Request, res: Response) 
           .maybeSingle();
 
         if (dbAcc) {
-          account = whatsappStore.setAccount({
-            id: dbAcc.id,
-            platform: dbAcc.platform || 'whatsapp',
-            name: dbAcc.name || 'Connected WhatsApp Account',
-            phone_number: dbAcc.phone_number,
-            phone_number_id: dbAcc.phone_number_id,
-            waba_id: dbAcc.waba_id,
-            status: dbAcc.status || 'connected',
-            mode: dbAcc.mode || 'production',
-            quality_rating: dbAcc.quality_rating || 'GREEN',
-            messaging_limit_tier: dbAcc.messaging_limit_tier || 'TIER_100K_DAILY',
-            verified_name: dbAcc.verified_name,
-            connected_at: dbAcc.connected_at
-          }, userId);
+          // Safety purge: If non-Moamen user has Moamen's phone number saved from prior leak, delete it!
+          const cleanEmail = (req.headers['x-user-email'] as string || '').toLowerCase();
+          const isMoamen = cleanEmail.includes('moamen') || userId === '95248c75-a772-4b4f-9ec9-f3a5aba1f799';
+          if (dbAcc.phone_number?.includes('503102740') && !isMoamen) {
+            console.warn(`[GET /api/whatsapp/account] Purging leaked Moamen WhatsApp account from user ${userId} (${cleanEmail})`);
+            await supabase.from('whatsapp_accounts').delete().eq('id', dbAcc.id);
+          } else {
+            account = whatsappStore.setAccount({
+              id: dbAcc.id,
+              platform: dbAcc.platform || 'whatsapp',
+              name: dbAcc.name || 'Connected WhatsApp Account',
+              phone_number: dbAcc.phone_number,
+              phone_number_id: dbAcc.phone_number_id,
+              waba_id: dbAcc.waba_id,
+              status: dbAcc.status || 'connected',
+              mode: dbAcc.mode || 'production',
+              quality_rating: dbAcc.quality_rating || 'GREEN',
+              messaging_limit_tier: dbAcc.messaging_limit_tier || 'TIER_100K_DAILY',
+              verified_name: dbAcc.verified_name,
+              connected_at: dbAcc.connected_at
+            }, userId);
+          }
         }
       } catch (dbErr: any) {
         console.warn('[GET /api/whatsapp/account] Supabase lookup notice:', dbErr?.message);
       }
     }
 
-    // 2. If no account stored yet or forcing refresh, attempt to discover live accounts from Zernio
+    // 2. Discover live accounts from Zernio strictly matching profileId
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if ((!account || force) && apiKey && apiKey !== 'dummy_dev_key') {
       const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId);
       if (liveAccounts.length > 0) {
         account = whatsappStore.setAccount(liveAccounts[0], userId);
-        // Persist to Supabase so stateless serverless functions can read it immediately
         await ZernioWhatsAppService.saveWhatsAppAccountToDb(userId, liveAccounts[0]);
+      } else if (force) {
+        account = null;
+        whatsappStore.disconnectAccount(userId);
       }
     }
 
-    // Cache the resolved account for 30s
-    if (account) {
-      await cacheService.set(cacheKey, account, 30);
+    // 3. Real-time Meta Account Health & Verification Status check
+    if (account && account.id) {
+      try {
+        const health = await ZernioWhatsAppService.getAccountHealth(account.id);
+        account = {
+          ...account,
+          can_start_conversations: health.canStartConversations,
+          health_status: health.status,
+          payment_issue: health.paymentIssue,
+          payment_error_message: health.paymentErrorMessage,
+          issues: health.issues,
+          recommendations: health.recommendations,
+        };
+        whatsappStore.setAccount(account, userId);
+      } catch (healthErr: any) {
+        console.warn('[GET /api/whatsapp/account health check notice]:', healthErr.message);
+      }
     }
 
-        const hexMatch = account?.id ? account.id.match(/([a-f0-9]{6})/i) : null; const shortId = hexMatch ? hexMatch[1].toLowerCase() : 'eca6e8';
+    // Cache the resolved account for 15s
+    if (account) {
+      await cacheService.set(cacheKey, account, 15);
+    }
+
+    const hexMatch = account?.id ? account.id.match(/([a-f0-9]{6})/i) : null;
+    const shortId = hexMatch ? hexMatch[1].toLowerCase() : (account?.id ? account.id.substring(0, 6) : 'eca6e8');
+
     const enrichedAccount = account ? {
       ...account,
-      name: account.name || 'Rockyt',
-      phone_number: account.phone_number || '+971 50 310 2740',
+      name: account.name || 'WhatsApp Business',
+      phone_number: account.phone_number || '',
       short_account_id: shortId,
-      type: (account as any).type || 'Coexistence',
-      name_review_status: (account as any).name_review_status || 'not_reviewed',
-      business_verification_status: (account as any).business_verification_status || 'not_verified',
-      calling: (account as any).calling || 'Off',
-      payment_issue: true,
-      payment_error_message: 'There is an error with the payment method. This will prevent sending template messages until updated in Meta Business Suite.',
+      type: account.type || 'Coexistence',
+      name_review_status: account.name_review_status || 'not_reviewed',
+      business_verification_status: account.business_verification_status || 'not_verified',
+      calling: account.calling || 'Off',
+      can_start_conversations: account.can_start_conversations ?? (account.payment_issue ? false : true),
+      health_status: account.health_status || (account.payment_issue ? 'error' : 'healthy'),
+      payment_issue: Boolean(account.payment_issue),
+      payment_error_message: account.payment_error_message || (account.payment_issue ? 'There is an error with the payment method. This will prevent sending template messages until updated in Meta Business Suite.' : undefined),
     } : null;
 
     return res.json({
@@ -1580,7 +1614,7 @@ whatsappRouter.post('/api/whatsapp/connect/headless/select', async (req: Request
         id: data.account.accountId || `acc_waba_${wabaId.substring(0, 8)}`,
         platform: 'whatsapp',
         name: data.account.displayName || 'Connected WhatsApp Business Account',
-        phone_number: data.account.username || data.account.selectedPhoneNumber || '+971 50 310 2740',
+        phone_number: data.account.username || data.account.selectedPhoneNumber || '',
         phone_number_id: phoneNumberId,
         waba_id: wabaId,
         status: 'connected',
@@ -1647,7 +1681,7 @@ whatsappRouter.post('/api/whatsapp/connect/credentials', async (req: Request, re
             id: zData.account?.accountId || `acc_waba_${waba_id.substring(0, 8)}`,
             platform: 'whatsapp',
             name: name || zData.account?.displayName || 'Connected WhatsApp Business Account',
-            phone_number: phone_number || zData.account?.username || '+971 50 310 2740',
+            phone_number: phone_number || zData.account?.username || '',
             phone_number_id,
             waba_id,
             status: 'connected',
@@ -1689,7 +1723,7 @@ whatsappRouter.post('/api/whatsapp/connect/credentials', async (req: Request, re
       id: `acc_waba_${waba_id.substring(0, 8)}`,
       platform: 'whatsapp',
       name: name || 'Connected WhatsApp Business Account',
-      phone_number: phone_number || '+971 50 310 2740',
+      phone_number: phone_number || '',
       phone_number_id,
       waba_id,
       status: 'connected',
@@ -1742,7 +1776,7 @@ whatsappRouter.post('/api/whatsapp/connect/headless', (req: Request, res: Respon
     id: `acc_waba_${waba_id.substring(0, 8)}`,
     platform: 'whatsapp',
     name: name || 'Connected WhatsApp Business Account',
-    phone_number: phone_number || '+971 50 310 2740',
+    phone_number: phone_number || '',
     phone_number_id,
     waba_id,
     status: 'connected',
@@ -1780,4 +1814,32 @@ whatsappRouter.get('/api/whatsapp/phone-numbers', (req: Request, res: Response) 
       },
     ],
   });
+});
+
+
+// ─── Real-time Account Health & Verification Status Endpoint ───
+whatsappRouter.get('/api/whatsapp/account/health', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.query.accountId as string) || account?.id;
+    if (!accountId || accountId === 'acc_primary') {
+      return res.json({
+        connected: false,
+        status: 'warning',
+        canStartConversations: false,
+        issues: ['No active WhatsApp Business account connected for this tenant.'],
+        recommendations: ['Connect WhatsApp via Meta OAuth in dashboard.'],
+      });
+    }
+    const health = await ZernioWhatsAppService.getAccountHealth(accountId);
+    return res.json({
+      connected: true,
+      accountId,
+      profileId,
+      ...health,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
 });

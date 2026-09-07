@@ -228,7 +228,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onTriggerCapi, onO
   const handleSimulateSandboxInbound = async () => {
     setIsSimulating(true);
     try {
-      const phone = activeConv?.contact?.phone_number || initialPhone || '+971 50 310 2740';
+      const phone = activeConv?.contact?.phone_number || initialPhone || '';
       const name = activeConv?.contact?.name || initialName || 'WhatsApp Contact';
 
       const res = await fetch('/api/whatsapp/sandbox/simulate-message', {
@@ -596,7 +596,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onTriggerCapi, onO
               const isSelected = conv.id === activeConvId;
               const contactName = conv.contact?.name || 'WhatsApp Contact';
               const contactPhone = conv.contact?.formatted_phone || conv.contact?.phone_number || '';
-              const viaNumber = conv.via_phone_number || '+971 50 310 2740';
+              const viaNumber = conv.via_phone_number || '';
               const initial = getInitial(contactName, contactPhone);
               const preview = getMessagePreview(conv.last_message?.text, conv.last_message?.template_name);
               const timeDisplay = formatTimeAgo(conv.last_message?.timestamp || conv.updated_at);
@@ -698,7 +698,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onTriggerCapi, onO
                   <span className="text-xs text-zinc-400 font-mono">{activeConv.contact?.formatted_phone || activeConv.contact?.phone_number}</span>
                 </div>
                 <div className="flex items-center gap-2 text-[11px] text-zinc-400">
-                  <span>via {activeConv.via_phone_number || '+971 50 310 2740'}</span>
+                  {activeConv.via_phone_number && <span>via {activeConv.via_phone_number}</span>}
                   <span>•</span>
                   <span className={`flex items-center gap-1 font-medium ${windowInfo.isOpen ? 'text-emerald-400' : 'text-amber-400'}`}>
                     <Clock className="w-3 h-3" />
@@ -912,7 +912,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onTriggerCapi, onO
             <div className="pt-2 space-y-2 text-xs">
               <div className="flex items-center justify-between text-zinc-400">
                 <span>Via Account:</span>
-                <span className="text-zinc-200 font-mono text-[11px]">{activeConv.via_phone_number || '+971 50 310 2740'}</span>
+                <span className="text-zinc-200 font-mono text-[11px]">{activeConv.via_phone_number || 'WhatsApp'}</span>
               </div>
               <div className="flex items-center justify-between text-zinc-400">
                 <span>Customer Window:</span>
