@@ -215,6 +215,12 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
           success: true,
           message: `Successfully synced ${data.count || 0} conversations and ${data.contactsCount || 0} contacts from WhatsApp!`
         });
+        if (data.data && Array.isArray(data.data) && data.data.length > 0) {
+          try {
+            const uid = userSession?.id || localStorage.getItem('rockyt_user_id') || 'default_user';
+            localStorage.setItem(`rockyt_wa_convs_${uid}`, JSON.stringify(data.data));
+          } catch {}
+        }
         fetchAccountStatus(true);
       } else {
         setFetchChatsNotice({
@@ -459,7 +465,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
               {!isSidebarCollapsed && <span>Campaigns</span>}
             </button>
 
-            {/* Team Inbox */}
+            {/* Inbox */}
             <button
               onClick={() => setCurrentView('inbox')}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
@@ -469,7 +475,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
               }`}
             >
               <MessageSquare size={18} className={currentView === 'inbox' ? 'text-emerald-600' : 'text-gray-400'} />
-              {!isSidebarCollapsed && <span>Team Inbox</span>}
+              {!isSidebarCollapsed && <span>Inbox</span>}
             </button>
 
             {/* Contacts */}

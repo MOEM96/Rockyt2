@@ -78,23 +78,12 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
   };
 
   useEffect(() => {
-    // Thoroughly purge any legacy unisolated conversation/sandbox cache
-    try {
-      localStorage.removeItem('rockyt_wa_conversations');
-      localStorage.removeItem('rockyt_wa_messages');
-      localStorage.removeItem('rockyt_wa_sandbox_session');
-      for (let i = localStorage.length - 1; i >= 0; i--) {
-        const key = localStorage.key(i);
-        if (key && (key.startsWith('rockyt_wa_messages_') || key.includes('201018252128') || key.includes('conv_'))) {
-          localStorage.removeItem(key);
-        }
-      }
-    } catch {}
-    
-    // Clear initial state
-    setConversations([]);
-    setActiveConvId('');
-    setMessages([]);
+    // Load cached conversations on mount for instantaneous rendering
+    const cached = getStoredConversations();
+    if (cached.length > 0) {
+      setConversations(cached);
+      setActiveConvId((prev) => prev || cached[0].id);
+    }
   }, []);
 
   const handleSimulateSandboxInbound = async () => {
@@ -150,22 +139,24 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
           if (!activeConvId) setActiveConvId(cached[0].id);
         }
       }
-      const res = await fetch('/api/whatsapp/conversations', { headers: getHeaders() });
+      const res = await fetch('/api/whatsapp/conversations', { headers: getHeaders(), cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
         if (data.data && Array.isArray(data.data)) {
-          if (data.data.length === 0) {
-            // Clean state when no conversations exist for this user
-            setConversations([]);
-            setActiveConvId('');
-            setStoredConversations([]);
-          } else {
+          if (data.data.length > 0) {
             setConversations(data.data);
             setStoredConversations(data.data);
             setActiveConvId((prev) => {
               const exists = data.data.some((c: any) => c.id === prev);
-              return exists ? prev : data.data[0].id;
+              return exists && prev ? prev : data.data[0].id;
             });
+          } else {
+            // If API returns empty, keep existing state or cache if available
+            const cached = getStoredConversations();
+            if (cached.length > 0 && conversations.length === 0) {
+              setConversations(cached);
+              if (!activeConvId) setActiveConvId(cached[0].id);
+            }
           }
         }
       }
@@ -404,16 +395,17 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onOpenConnect, ini
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <MessageSquare className="w-4 h-4 text-emerald-400" />
-              <h2 className="text-sm font-bold text-white tracking-tight">WhatsApp Inbound CRM</h2>
+              <h2 className="text-sm font-bold text-white tracking-tight">Inbox ({conversations.length})</h2>
             </div>
             <div className="flex items-center gap-1">
               <button
                 onClick={handleBackfill}
                 disabled={isBackfilling}
-                className="p-1.5 text-zinc-400 hover:text-emerald-400 rounded-lg hover:bg-zinc-900 transition-colors disabled:opacity-50"
-                title="Backfill History from WhatsApp"
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-emerald-400 hover:text-emerald-300 bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-800/60 rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
+                title="Fetch latest chats & messages from WhatsApp"
               >
-                <ArrowUpRight className={`w-3.5 h-3.5 ${isBackfilling ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`w-3 h-3 ${isBackfilling ? 'animate-spin' : ''}`} />
+                <span>{isBackfilling ? 'Syncing...' : 'Sync Chats'}</span>
               </button>
               <button
                 onClick={handleSimulateSandboxInbound}

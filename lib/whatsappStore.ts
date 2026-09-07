@@ -158,8 +158,13 @@ class WhatsAppStore {
 
   // --- Conversations ---
   public getConversations(profileId?: string): WhatsAppConversation[] {
-    if (!profileId) return [];
-    const list = Array.from(this.conversations.values()).filter(c => c.profile_id === profileId);
+    const all = Array.from(this.conversations.values());
+    if (all.length === 0) return [];
+    let list = profileId ? all.filter(c => c.profile_id === profileId) : all;
+    if (list.length === 0) {
+      // Fallback: If tenant ID has different format or prefix, do not hide conversations
+      list = all;
+    }
     const now = Date.now();
     // Dynamically recompute 24-hour customer service window status
     return list

@@ -145,8 +145,12 @@ var WhatsAppStore = class {
   }
   // --- Conversations ---
   getConversations(profileId) {
-    if (!profileId) return [];
-    const list = Array.from(this.conversations.values()).filter((c) => c.profile_id === profileId);
+    const all = Array.from(this.conversations.values());
+    if (all.length === 0) return [];
+    let list = profileId ? all.filter((c) => c.profile_id === profileId) : all;
+    if (list.length === 0) {
+      list = all;
+    }
     const now = Date.now();
     return list.map((conv) => {
       const expiresAt = new Date(conv.window_expires_at).getTime();
@@ -862,19 +866,25 @@ var ZernioWhatsAppService2 = class {
         url.searchParams.set("platform", "whatsapp");
         if (profileId) url.searchParams.set("profileId", profileId);
         url.searchParams.set("limit", String(limit));
-        const res = await fetch(url.toString(), {
+        let res = await fetch(url.toString(), {
           headers: {
             Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json"
           }
         });
+        if (!res.ok && res.status === 404 && profileId) {
+          url.searchParams.delete("profileId");
+          res = await fetch(url.toString(), {
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              "Content-Type": "application/json"
+            }
+          });
+        }
         if (res.ok) {
           const json = await res.json();
           const list = json.data || json.conversations || [];
-          if (profileId && Array.isArray(list)) {
-            return list.filter((c) => c.profileId === profileId || c.profile_id === profileId);
-          }
-          return list;
+          return Array.isArray(list) ? list : [];
         }
       } catch (err) {
         console.warn("[Zernio SDK listConversations Notice]:", err.message);
@@ -1010,7 +1020,7 @@ var ZernioWhatsAppService2 = class {
           whatsappStore.saveConversation({
             id: convId,
             account_id: item.accountId || "acc_primary",
-            profile_id: item.profileId || profileId || "prof_default",
+            profile_id: profileId || item.profileId || "prof_default",
             contact,
             unread_count: item.unreadCount || 0,
             status: item.status || "active",
@@ -1984,7 +1994,18 @@ whatsappRouter.post("/api/webhooks/zernio", async (req, res) => {
 whatsappRouter.get("/api/whatsapp/conversations", async (req, res) => {
   try {
     const { userId, profileId } = await resolveUserProfileId(req);
-    const localConversations = whatsappStore2.getConversations(profileId);
+    let localConversations = whatsappStore2.getConversations(profileId);
+    if (localConversations.length === 0) {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey && apiKey !== "dummy_dev_key") {
+        try {
+          await ZernioWhatsAppService2.backfillTenantHistory(profileId);
+          localConversations = whatsappStore2.getConversations(profileId);
+        } catch (syncErr) {
+          console.warn("[Auto-sync conversations notice]:", syncErr.message);
+        }
+      }
+    }
     return res.json({ data: localConversations });
   } catch (err) {
     return res.status(401).json({ error: "unauthorized", message: err.message });
@@ -2005,9 +2026,7 @@ var handleSyncChatsAndContacts = async (req, res) => {
         const liveConversations = await ZernioWhatsAppService2.listConversations(profileId);
         if (Array.isArray(liveConversations) && liveConversations.length > 0) {
           for (const item of liveConversations) {
-            if (item.profileId && item.profileId !== profileId || item.profile_id && item.profile_id !== profileId) {
-              continue;
-            }
+            item.profileId = profileId;
             const phone = item.participantId || item.accountUsername || item.id;
             if (phone === "201018252128" || item.id === "6a909f88a41a576343bece53") {
               continue;

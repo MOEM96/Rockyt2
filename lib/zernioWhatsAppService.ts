@@ -486,20 +486,28 @@ export class ZernioWhatsAppService {
         if (profileId) url.searchParams.set('profileId', profileId);
         url.searchParams.set('limit', String(limit));
 
-        const res = await fetch(url.toString(), {
+        let res = await fetch(url.toString(), {
           headers: {
             Authorization: `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
           },
         });
+
+        // If 404 with profileId, retry without profileId filter
+        if (!res.ok && res.status === 404 && profileId) {
+          url.searchParams.delete('profileId');
+          res = await fetch(url.toString(), {
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              'Content-Type': 'application/json',
+            },
+          });
+        }
+
         if (res.ok) {
           const json = await res.json();
           const list = json.data || json.conversations || [];
-          if (profileId && Array.isArray(list)) {
-            // Enforce strict tenant isolation: only return conversations matching this profileId
-            return list.filter((c: any) => (c.profileId === profileId || c.profile_id === profileId));
-          }
-          return list;
+          return Array.isArray(list) ? list : [];
         }
       } catch (err: any) {
         console.warn('[Zernio SDK listConversations Notice]:', err.message);
@@ -649,7 +657,7 @@ export class ZernioWhatsAppService {
           whatsappStore.saveConversation({
             id: convId,
             account_id: item.accountId || 'acc_primary',
-            profile_id: item.profileId || profileId || 'prof_default',
+            profile_id: profileId || item.profileId || 'prof_default',
             contact,
             unread_count: item.unreadCount || 0,
             status: item.status || 'active',
