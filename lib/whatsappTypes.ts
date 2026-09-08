@@ -92,24 +92,46 @@ export interface MetaCAPIEvent {
   created_at: string;
 }
 
+export type WhatsAppTemplateStatus = 
+  | 'APPROVED' 
+  | 'PENDING' 
+  | 'REJECTED' 
+  | 'IN_APPEAL' 
+  | 'PAUSED' 
+  | 'DISABLED' 
+  | 'PENDING_DELETION';
+
+export interface WhatsAppTemplateComponent {
+  type: 'HEADER' | 'BODY' | 'FOOTER' | 'BUTTONS' | 'header' | 'body' | 'footer' | 'buttons';
+  format?: 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+  text?: string;
+  example?: {
+    header_text?: string[];
+    body_text?: string[][];
+    header_handle?: string[];
+  };
+  buttons?: Array<{
+    type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER' | 'FLOW';
+    text: string;
+    url?: string;
+    phone_number?: string;
+    example?: string[];
+  }>;
+}
+
 export interface WhatsAppTemplate {
   id: string;
   name: string;
   category: 'MARKETING' | 'UTILITY' | 'AUTHENTICATION';
   language: string;
-  status: 'APPROVED' | 'PENDING' | 'REJECTED';
-  components: {
-    type: 'HEADER' | 'BODY' | 'FOOTER' | 'BUTTONS';
-    format?: 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT';
-    text?: string;
-    buttons?: Array<{
-      type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER' | 'FLOW';
-      text: string;
-      url?: string;
-      phone_number?: string;
-    }>;
-  }[];
-  last_updated: string;
+  status: WhatsAppTemplateStatus;
+  components: WhatsAppTemplateComponent[];
+  account_id?: string;
+  rejected_reason?: string;
+  message_send_ttl_seconds?: number;
+  created_at?: string;
+  last_updated?: string;
+  updated_at?: string;
 }
 
 export interface BroadcastCampaign {

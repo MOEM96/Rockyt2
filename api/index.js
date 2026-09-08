@@ -1566,6 +1566,173 @@ var ZernioWhatsAppService = class _ZernioWhatsAppService {
     }
     return { conversationsCount: convCount, messagesCount: msgCount };
   }
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // WHATSAPP TEMPLATES (Meta Graph API via Zernio Engine)
+  // ═══════════════════════════════════════════════════════════════════════════════
+  /**
+   * Create a new custom or library WhatsApp message template with Meta review submission
+   */
+  static async createWhatsAppTemplate(accountId, payload) {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey) {
+      throw new Error("Zernio API key is not configured.");
+    }
+    const body = {
+      accountId,
+      name: payload.name.trim().toLowerCase().replace(/\s+/g, "_"),
+      category: payload.category,
+      language: payload.language || "en_US"
+    };
+    if (payload.library_template_name) {
+      body.library_template_name = payload.library_template_name;
+      if (Array.isArray(payload.library_template_button_inputs)) {
+        body.library_template_button_inputs = payload.library_template_button_inputs;
+      }
+    } else {
+      body.components = payload.components || [];
+      if (payload.parameter_format) {
+        body.parameter_format = payload.parameter_format;
+      }
+    }
+    if (payload.message_send_ttl_seconds !== void 0 && payload.message_send_ttl_seconds !== null) {
+      body.message_send_ttl_seconds = payload.message_send_ttl_seconds;
+    }
+    const res = await fetch("https://zernio.com/api/v1/whatsapp/templates", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const errMsg = data.error || data.message || `Meta template creation failed with HTTP ${res.status}`;
+      throw new Error(errMsg);
+    }
+    return {
+      success: true,
+      template: data.template || data
+    };
+  }
+  /**
+   * List all templates live from Meta WABA via Zernio
+   */
+  static async getWhatsAppTemplates(accountId, filters) {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey) {
+      return { success: false, templates: [] };
+    }
+    const params = new URLSearchParams({ accountId });
+    if (filters?.status) params.append("status", filters.status);
+    if (filters?.name) params.append("name", filters.name);
+    if (filters?.language) params.append("language", filters.language);
+    const res = await fetch(`https://zernio.com/api/v1/whatsapp/templates?${params.toString()}`, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`
+      }
+    });
+    if (!res.ok) {
+      const err = await res.text().catch(() => "");
+      console.warn(`[getWhatsAppTemplates error ${res.status}]:`, err);
+      return { success: false, templates: [] };
+    }
+    const data = await res.json().catch(() => ({}));
+    const templates = Array.isArray(data.templates) ? data.templates : Array.isArray(data) ? data : [];
+    return { success: true, templates };
+  }
+  /**
+   * Fetch a single template by name or ID
+   */
+  static async getWhatsAppTemplate(accountId, templateNameOrId, language) {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey) return null;
+    const params = new URLSearchParams({ accountId });
+    if (language) params.append("language", language);
+    const isId = /^[0-9]+$/.test(templateNameOrId);
+    const endpoint = isId ? `https://zernio.com/api/v1/whatsapp/templates/id/${templateNameOrId}` : `https://zernio.com/api/v1/whatsapp/templates/${templateNameOrId}`;
+    const res = await fetch(`${endpoint}?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${apiKey}` }
+    });
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => ({}));
+    return data.template || data;
+  }
+  /**
+   * Update an existing WhatsApp template (resubmits to Meta if components are changed)
+   */
+  static async updateWhatsAppTemplate(accountId, templateNameOrId, updates) {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey) {
+      throw new Error("Zernio API key is missing.");
+    }
+    const isId = /^[0-9]+$/.test(templateNameOrId);
+    const endpoint = isId ? `https://zernio.com/api/v1/whatsapp/templates/id/${templateNameOrId}` : `https://zernio.com/api/v1/whatsapp/templates/${templateNameOrId}`;
+    const body = {
+      accountId
+    };
+    if (updates.language) body.language = updates.language;
+    if (updates.components) body.components = updates.components;
+    if (updates.message_send_ttl_seconds !== void 0) {
+      body.message_send_ttl_seconds = updates.message_send_ttl_seconds;
+    }
+    const res = await fetch(endpoint, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || data.message || `Failed to update template (${res.status})`);
+    }
+    return data.template || data;
+  }
+  /**
+   * Delete a template from Meta WABA
+   */
+  static async deleteWhatsAppTemplate(accountId, templateNameOrId, language) {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey) return false;
+    const params = new URLSearchParams({ accountId });
+    if (language) params.append("language", language);
+    const isId = /^[0-9]+$/.test(templateNameOrId);
+    const endpoint = isId ? `https://zernio.com/api/v1/whatsapp/templates/id/${templateNameOrId}` : `https://zernio.com/api/v1/whatsapp/templates/${templateNameOrId}`;
+    const res = await fetch(`${endpoint}?${params.toString()}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${apiKey}` }
+    });
+    if (!res.ok) {
+      const err = await res.text().catch(() => "");
+      console.warn(`[deleteWhatsAppTemplate error ${res.status}]:`, err);
+      return false;
+    }
+    return true;
+  }
+  /**
+   * Lookup pre-approved template from Meta's Template Library
+   */
+  static async getWhatsAppLibraryTemplate(accountId, name, language = "en_US") {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey) return null;
+    const params = new URLSearchParams({
+      accountId,
+      name,
+      language
+    });
+    const res = await fetch(`https://zernio.com/api/v1/whatsapp/template-library?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${apiKey}` }
+    });
+    if (!res.ok) {
+      const err = await res.text().catch(() => "");
+      console.warn(`[getWhatsAppLibraryTemplate error ${res.status}]:`, err);
+      return null;
+    }
+    const data = await res.json().catch(() => ({}));
+    return data.template || data;
+  }
 };
 
 // lib/metaCapiService.ts
@@ -2290,6 +2457,50 @@ whatsappRouter.post("/api/webhooks/zernio", async (req, res) => {
       }
     }
     const eventType = event.event || event.action || event.type;
+    if (eventType === "whatsapp.template.status_updated") {
+      const tmpl = event.template || {};
+      const status = tmpl.status;
+      const reason = tmpl.reason;
+      const tmplName = tmpl.name;
+      const tmplLang = tmpl.language;
+      const templateId = tmpl.templateId;
+      if (tmplName) {
+        try {
+          const supabase = getBackendSupabaseClient();
+          if (supabase) {
+            let query = supabase.from("whatsapp_templates").update({
+              status,
+              rejected_reason: reason && reason !== "NONE" ? reason : null,
+              updated_at: (/* @__PURE__ */ new Date()).toISOString()
+            }).eq("name", tmplName);
+            if (tmplLang) {
+              query = query.eq("language", tmplLang);
+            }
+            await query;
+          }
+          const localTmpl = whatsappStore.getTemplate(tmplName);
+          if (localTmpl) {
+            localTmpl.status = status;
+            localTmpl.rejected_reason = reason && reason !== "NONE" ? reason : void 0;
+            localTmpl.updated_at = (/* @__PURE__ */ new Date()).toISOString();
+            whatsappStore.saveTemplate(localTmpl);
+          }
+          broadcastWhatsAppEvent({
+            event: "whatsapp.template.status_updated",
+            template: {
+              id: templateId,
+              name: tmplName,
+              language: tmplLang,
+              status,
+              reason
+            }
+          });
+        } catch (e) {
+          console.warn("[webhook template.status_updated error]:", e.message);
+        }
+      }
+      return res.status(200).json({ ok: true, template_updated: true });
+    }
     const msg = event.message || event.data?.message || {};
     const metadata = event.metadata || {};
     const convData = event.conversation || event.data?.conversation || {};
@@ -2826,70 +3037,314 @@ whatsappRouter.post("/api/whatsapp/automations/:id/test", async (req, res) => {
   return res.json({ success: true, result });
 });
 whatsappRouter.get("/api/whatsapp/templates", async (req, res) => {
-  const { userId } = await resolveUserProfileId(req);
-  const cacheKey = cacheService.getUserKey(userId, "templates");
-  const cached = await cacheService.get(cacheKey);
-  if (cached) {
-    return res.json({ data: cached });
-  }
-  const supabase = getBackendSupabaseClient();
-  if (supabase) {
-    const { data } = await supabase.from("whatsapp_templates").select("*").eq("user_id", userId);
-    if (data && data.length > 0) {
-      const mapped = data.map((t) => ({
-        id: t.id,
-        name: t.name,
-        category: t.category,
-        language: t.language,
-        status: t.status,
-        components: t.components,
-        created_at: t.created_at
-      }));
-      await cacheService.set(cacheKey, mapped, 60);
-      return res.json({ data: mapped });
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const forceRefresh = req.query.refresh === "true" || req.query.sync === "true";
+    const cacheKey = cacheService.getUserKey(userId, "templates");
+    if (!forceRefresh) {
+      const cached = await cacheService.get(cacheKey);
+      if (cached && Array.isArray(cached) && cached.length > 0) {
+        return res.json({ data: cached });
+      }
     }
+    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
+    const supabase = getBackendSupabaseClient();
+    if (defaultAccountId) {
+      try {
+        const liveResult = await ZernioWhatsAppService.getWhatsAppTemplates(defaultAccountId);
+        if (liveResult.success && Array.isArray(liveResult.templates)) {
+          for (const lt of liveResult.templates) {
+            const tmplName = lt.name;
+            const tmplLang = lt.language || "en_US";
+            const tmplStatus = lt.status || "PENDING";
+            const tmplCategory = lt.category || "MARKETING";
+            const tmplComponents = lt.components || [];
+            const tmplTTL = lt.message_send_ttl_seconds || null;
+            const tmplReason = lt.rejected_reason || null;
+            if (supabase) {
+              await supabase.from("whatsapp_templates").upsert({
+                id: String(lt.id || `tmpl_${Date.now()}_${tmplName}`),
+                user_id: userId,
+                name: tmplName,
+                category: tmplCategory,
+                language: tmplLang,
+                status: tmplStatus,
+                components: tmplComponents,
+                account_id: defaultAccountId,
+                message_send_ttl_seconds: tmplTTL,
+                rejected_reason: tmplReason,
+                updated_at: (/* @__PURE__ */ new Date()).toISOString()
+              }, { onConflict: "id" });
+            }
+            whatsappStore.saveTemplate({
+              id: String(lt.id || `tmpl_${Date.now()}`),
+              name: tmplName,
+              category: tmplCategory,
+              language: tmplLang,
+              status: tmplStatus,
+              components: tmplComponents,
+              account_id: defaultAccountId,
+              rejected_reason: tmplReason,
+              message_send_ttl_seconds: tmplTTL,
+              created_at: (/* @__PURE__ */ new Date()).toISOString(),
+              last_updated: (/* @__PURE__ */ new Date()).toISOString()
+            }, userId);
+          }
+        }
+      } catch (syncErr) {
+        console.warn("[Zernio live templates sync warning]:", syncErr.message);
+      }
+    }
+    let dbTemplates = [];
+    if (supabase) {
+      const { data, error } = await supabase.from("whatsapp_templates").select("*").eq("user_id", userId).order("created_at", { ascending: false });
+      if (!error && Array.isArray(data)) {
+        dbTemplates = data.map((t) => ({
+          id: t.id,
+          name: t.name,
+          category: t.category,
+          language: t.language,
+          status: t.status,
+          components: t.components || [],
+          account_id: t.account_id,
+          rejected_reason: t.rejected_reason,
+          message_send_ttl_seconds: t.message_send_ttl_seconds,
+          created_at: t.created_at,
+          last_updated: t.updated_at || t.created_at
+        }));
+      }
+    }
+    if (dbTemplates.length === 0) {
+      const memoryTemplates = whatsappStore.getTemplates(userId);
+      if (memoryTemplates.length > 0) {
+        dbTemplates = memoryTemplates;
+      }
+    }
+    await cacheService.set(cacheKey, dbTemplates, 60);
+    return res.json({
+      data: dbTemplates,
+      accountId: defaultAccountId || null,
+      accountConnected: !!defaultAccountId
+    });
+  } catch (err) {
+    console.error("[GET /api/whatsapp/templates error]:", err);
+    return res.status(500).json({ error: err.message || "Failed to fetch templates" });
   }
-  const templates = whatsappStore.getTemplates(userId);
-  await cacheService.set(cacheKey, templates, 60);
-  return res.json({ data: templates });
+});
+whatsappRouter.get("/api/whatsapp/templates/library", async (req, res) => {
+  try {
+    const { profileId } = await resolveUserProfileId(req);
+    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
+    const name = req.query.name || "";
+    const language = req.query.language || "en_US";
+    if (!defaultAccountId) {
+      return res.status(400).json({ error: "No connected WhatsApp Business Account found to query template library." });
+    }
+    if (!name) {
+      return res.status(400).json({ error: "Missing library template name query parameter." });
+    }
+    const libraryData = await ZernioWhatsAppService.getWhatsAppLibraryTemplate(defaultAccountId, name, language);
+    if (!libraryData) {
+      return res.status(404).json({ error: `Library template "${name}" not found in language "${language}".` });
+    }
+    return res.json({ success: true, template: libraryData });
+  } catch (err) {
+    console.error("[GET /api/whatsapp/templates/library error]:", err);
+    return res.status(500).json({ error: err.message || "Failed to query template library." });
+  }
 });
 whatsappRouter.post("/api/whatsapp/templates", async (req, res) => {
-  const { userId } = await resolveUserProfileId(req);
-  const { name, category, language, components } = req.body;
-  const newTemplate = {
-    id: `tmpl_${Date.now()}`,
-    name: name.toLowerCase().replace(/\s+/g, "_"),
-    category: category || "MARKETING",
-    language: language || "en_US",
-    status: "APPROVED",
-    components: components || [],
-    last_updated: (/* @__PURE__ */ new Date()).toISOString()
-  };
-  const supabase = getBackendSupabaseClient();
-  if (supabase) {
-    await supabase.from("whatsapp_templates").insert({
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const {
+      name,
+      category,
+      language,
+      components,
+      message_send_ttl_seconds,
+      parameter_format,
+      library_template_name,
+      library_template_button_inputs
+    } = req.body;
+    const rawName = name || library_template_name || "";
+    const cleanName = rawName.trim().toLowerCase().replace(/[^a-z0-9_]/g, "_");
+    if (!cleanName || !/^[a-z][a-z0-9_]*$/.test(cleanName)) {
+      return res.status(400).json({
+        error: "Template name must begin with a lowercase letter and contain only lowercase letters, numbers, and underscores."
+      });
+    }
+    const templateCategory = (category || "MARKETING").toUpperCase();
+    const templateLanguage = language || "en_US";
+    let validatedComponents = [];
+    if (Array.isArray(components)) {
+      validatedComponents = components.map((c) => {
+        const item = { ...c };
+        const typeUpper = (item.type || "").toUpperCase();
+        item.type = typeUpper;
+        if (typeUpper === "BODY" && item.text) {
+          const matches = item.text.match(/\{\{(\d+)\}\}/g);
+          if (matches && matches.length > 0) {
+            if (!item.example || !item.example.body_text) {
+              const sampleRow = matches.map((m, idx) => {
+                if (m === "{{1}}") return "Alex";
+                if (m === "{{2}}") return "ORD-9821";
+                if (m === "{{3}}") return "25%";
+                return `Sample_${idx + 1}`;
+              });
+              item.example = { body_text: [sampleRow] };
+            }
+          }
+        }
+        if (typeUpper === "HEADER" && item.format === "TEXT" && item.text) {
+          const matches = item.text.match(/\{\{(\d+)\}\}/g);
+          if (matches && matches.length > 0) {
+            if (!item.example || !item.example.header_text) {
+              item.example = { header_text: ["Special Offer"] };
+            }
+          }
+        }
+        return item;
+      });
+    }
+    const defaultAccountId = req.body.accountId || await ZernioWhatsAppService.getDefaultAccountId(profileId);
+    let zernioTemplate = null;
+    let initialStatus = library_template_name ? "APPROVED" : "PENDING";
+    let assignedId = `tmpl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    if (defaultAccountId) {
+      try {
+        const createRes = await ZernioWhatsAppService.createWhatsAppTemplate(defaultAccountId, {
+          name: cleanName,
+          category: templateCategory,
+          language: templateLanguage,
+          components: library_template_name ? void 0 : validatedComponents,
+          message_send_ttl_seconds: message_send_ttl_seconds ? Number(message_send_ttl_seconds) : void 0,
+          parameter_format,
+          library_template_name,
+          library_template_button_inputs
+        });
+        if (createRes.success && createRes.template) {
+          zernioTemplate = createRes.template;
+          if (zernioTemplate.id) assignedId = String(zernioTemplate.id);
+          if (zernioTemplate.status) initialStatus = zernioTemplate.status;
+        }
+      } catch (apiErr) {
+        console.error("[createWhatsAppTemplate API Error]:", apiErr.message);
+        return res.status(400).json({ error: apiErr.message || "Meta template submission failed." });
+      }
+    }
+    const supabase = getBackendSupabaseClient();
+    const newTemplateRecord = {
+      id: assignedId,
       user_id: userId,
-      name: newTemplate.name,
-      category: newTemplate.category,
-      language: newTemplate.language,
-      status: newTemplate.status,
-      components: newTemplate.components
+      name: cleanName,
+      category: templateCategory,
+      language: templateLanguage,
+      status: initialStatus,
+      components: validatedComponents.length > 0 ? validatedComponents : zernioTemplate?.components || [],
+      account_id: defaultAccountId || null,
+      message_send_ttl_seconds: message_send_ttl_seconds ? Number(message_send_ttl_seconds) : null,
+      created_at: (/* @__PURE__ */ new Date()).toISOString(),
+      updated_at: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    if (supabase) {
+      const { error: dbErr } = await supabase.from("whatsapp_templates").upsert(newTemplateRecord, { onConflict: "id" });
+      if (dbErr) {
+        console.warn("[Supabase whatsapp_templates insert warning]:", dbErr.message);
+      }
+    }
+    whatsappStore.saveTemplate({
+      id: newTemplateRecord.id,
+      name: newTemplateRecord.name,
+      category: newTemplateRecord.category,
+      language: newTemplateRecord.language,
+      status: newTemplateRecord.status,
+      components: newTemplateRecord.components,
+      account_id: newTemplateRecord.account_id || void 0,
+      message_send_ttl_seconds: newTemplateRecord.message_send_ttl_seconds || void 0,
+      created_at: newTemplateRecord.created_at,
+      last_updated: newTemplateRecord.updated_at
+    }, userId);
+    await cacheService.invalidateUser(userId);
+    return res.json({
+      success: true,
+      data: newTemplateRecord
     });
+  } catch (err) {
+    console.error("[POST /api/whatsapp/templates error]:", err);
+    return res.status(500).json({ error: err.message || "Failed to create WhatsApp template." });
   }
-  whatsappStore.saveTemplate(newTemplate, userId);
-  await cacheService.invalidateUser(userId);
-  return res.json({ success: true, data: newTemplate });
+});
+whatsappRouter.patch("/api/whatsapp/templates/:name", async (req, res) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const { name } = req.params;
+    const { components, message_send_ttl_seconds, language } = req.body;
+    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
+    let updatedStatus = void 0;
+    if (defaultAccountId) {
+      try {
+        const updateRes = await ZernioWhatsAppService.updateWhatsAppTemplate(defaultAccountId, name, {
+          components,
+          message_send_ttl_seconds: message_send_ttl_seconds ? Number(message_send_ttl_seconds) : void 0,
+          language
+        });
+        if (updateRes && updateRes.status) {
+          updatedStatus = updateRes.status;
+        }
+      } catch (err) {
+        return res.status(400).json({ error: err.message || "Failed to update template on Meta." });
+      }
+    }
+    const newStatus = updatedStatus || (components ? "PENDING" : void 0);
+    const supabase = getBackendSupabaseClient();
+    if (supabase) {
+      const updateData = {
+        updated_at: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      if (components) updateData.components = components;
+      if (message_send_ttl_seconds !== void 0) updateData.message_send_ttl_seconds = Number(message_send_ttl_seconds);
+      if (newStatus) updateData.status = newStatus;
+      await supabase.from("whatsapp_templates").update(updateData).eq("user_id", userId).eq("name", name);
+    }
+    const localTmpl = whatsappStore.getTemplate(name, userId);
+    if (localTmpl) {
+      if (components) localTmpl.components = components;
+      if (message_send_ttl_seconds !== void 0) localTmpl.message_send_ttl_seconds = Number(message_send_ttl_seconds);
+      if (newStatus) localTmpl.status = newStatus;
+      localTmpl.last_updated = (/* @__PURE__ */ new Date()).toISOString();
+      whatsappStore.saveTemplate(localTmpl, userId);
+    }
+    await cacheService.invalidateUser(userId);
+    return res.json({ success: true, status: newStatus });
+  } catch (err) {
+    console.error("[PATCH /api/whatsapp/templates/:name error]:", err);
+    return res.status(500).json({ error: err.message || "Failed to update template" });
+  }
 });
 whatsappRouter.delete("/api/whatsapp/templates/:name", async (req, res) => {
-  const { userId } = await resolveUserProfileId(req);
-  const { name } = req.params;
-  const supabase = getBackendSupabaseClient();
-  if (supabase) {
-    await supabase.from("whatsapp_templates").delete().eq("user_id", userId).eq("name", name);
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const { name } = req.params;
+    const language = req.query.language || void 0;
+    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
+    if (defaultAccountId) {
+      try {
+        await ZernioWhatsAppService.deleteWhatsAppTemplate(defaultAccountId, name, language);
+      } catch (err) {
+        console.warn("[deleteWhatsAppTemplate upstream warning]:", err.message);
+      }
+    }
+    const supabase = getBackendSupabaseClient();
+    if (supabase) {
+      await supabase.from("whatsapp_templates").delete().eq("user_id", userId).eq("name", name);
+    }
+    whatsappStore.deleteTemplate(name, userId);
+    await cacheService.invalidateUser(userId);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("[DELETE /api/whatsapp/templates/:name error]:", err);
+    return res.status(500).json({ error: err.message || "Failed to delete template" });
   }
-  whatsappStore.deleteTemplate(name, userId);
-  await cacheService.invalidateUser(userId);
-  return res.json({ success: true });
 });
 whatsappRouter.get("/api/whatsapp/campaigns/overview", async (req, res) => {
   try {

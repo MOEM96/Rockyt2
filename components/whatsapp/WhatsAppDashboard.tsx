@@ -1340,7 +1340,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
               WHATSAPP SUB-VIEWS (Templates, Flows, Groups, Conversions)
           ========================================================================= */}
           {currentView === 'whatsapp-templates' && (
-            <div className="p-6">
+            <div className="p-6 max-w-7xl mx-auto">
               <TemplateStudio />
             </div>
           )}
@@ -1850,13 +1850,63 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
 
           {/* Sub-views for Campaigns (Templates & Broadcasts) */}
           {currentView === 'campaigns' && campaignSubView === 'templates' && (
-            <div className="p-6">
+            <div className="p-6 max-w-7xl mx-auto space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-gray-200 dark:border-zinc-800">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCampaignSubView('overview')}
+                    className="px-3.5 py-1.5 rounded-xl text-xs font-semibold text-gray-600 hover:text-gray-900 hover:bg-gray-100 dark:text-zinc-400 dark:hover:text-white transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <LayoutGrid size={14} />
+                    <span>Overview</span>
+                  </button>
+                  <button
+                    onClick={() => setCampaignSubView('templates')}
+                    className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800 transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <LayoutTemplate size={14} />
+                    <span>Message Templates</span>
+                  </button>
+                  <button
+                    onClick={() => setCampaignSubView('scheduled')}
+                    className="px-3.5 py-1.5 rounded-xl text-xs font-semibold text-gray-600 hover:text-gray-900 hover:bg-gray-100 dark:text-zinc-400 dark:hover:text-white transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Megaphone size={14} />
+                    <span>Scheduled Broadcasts</span>
+                  </button>
+                </div>
+              </div>
               <TemplateStudio />
             </div>
           )}
 
           {currentView === 'campaigns' && campaignSubView === 'scheduled' && (
-            <div className="p-6">
+            <div className="p-6 max-w-7xl mx-auto space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-gray-200 dark:border-zinc-800">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCampaignSubView('overview')}
+                    className="px-3.5 py-1.5 rounded-xl text-xs font-semibold text-gray-600 hover:text-gray-900 hover:bg-gray-100 dark:text-zinc-400 dark:hover:text-white transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <LayoutGrid size={14} />
+                    <span>Overview</span>
+                  </button>
+                  <button
+                    onClick={() => setCampaignSubView('templates')}
+                    className="px-3.5 py-1.5 rounded-xl text-xs font-semibold text-gray-600 hover:text-gray-900 hover:bg-gray-100 dark:text-zinc-400 dark:hover:text-white transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <LayoutTemplate size={14} />
+                    <span>Message Templates</span>
+                  </button>
+                  <button
+                    onClick={() => setCampaignSubView('scheduled')}
+                    className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800 transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Megaphone size={14} />
+                    <span>Scheduled Broadcasts</span>
+                  </button>
+                </div>
+              </div>
               <BroadcastManager />
             </div>
           )}
