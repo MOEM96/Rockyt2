@@ -4,7 +4,7 @@ import { ZernioWhatsAppService } from './zernioWhatsAppService';
 import { MetaCAPIService } from './metaCapiService';
 import { MCPServerHandler, MCP_TOOLS_MANIFEST } from './mcpServer';
 import { AutomationEngine } from './automationEngine';
-import { WhatsAppMessage, MetaCAPIEvent, WhatsAppContact, AutomationFlow, BroadcastCampaign } from './whatsappTypes';
+import { WhatsAppMessage, MetaCAPIEvent, WhatsAppContact, AutomationFlow, BroadcastCampaign, WhatsAppConversation, WhatsAppSandboxSession, WhatsAppAccount } from './whatsappTypes';
 import { cacheService } from './cacheService';
 import { getBackendSupabaseClient } from './backendSupabase';
 import crypto from 'crypto';
@@ -1235,9 +1235,10 @@ whatsappRouter.get('/api/whatsapp/account', async (req: Request, res: Response) 
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if ((!account || force) && apiKey && apiKey !== 'dummy_dev_key') {
       const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId);
-      if (liveAccounts.length > 0) {
-        account = whatsappStore.setAccount(liveAccounts[0], userId);
-        await ZernioWhatsAppService.saveWhatsAppAccountToDb(userId, liveAccounts[0]);
+      const activeAccounts = liveAccounts.filter(acc => acc.status !== 'disconnected');
+      if (activeAccounts.length > 0) {
+        account = whatsappStore.setAccount(activeAccounts[0], userId);
+        await ZernioWhatsAppService.saveWhatsAppAccountToDb(userId, activeAccounts[0]);
       } else if (force) {
         account = null;
         whatsappStore.disconnectAccount(userId);
@@ -1348,25 +1349,157 @@ whatsappRouter.post('/api/whatsapp/account/sync', async (req: Request, res: Resp
   }
 });
 
-whatsappRouter.post('/api/whatsapp/account/disconnect', async (req: Request, res: Response) => {
+const handleDisconnectWhatsAppAccount = async (req: Request, res: Response) => {
   try {
-    const { userId } = await resolveUserProfileId(req);
-    whatsappStore.disconnectAccount(userId);
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const body = req.body || {};
+    const query = req.query || {};
 
-    // Also remove from Supabase database
+    const requestedAccountId = body.accountId || body.id || query.accountId || query.id;
+    const requestedPhone = body.phone || body.phone_number || query.phone;
+
+    console.log(`[POST /api/whatsapp/account/disconnect] Disconnecting WhatsApp for user ${userId} (profile: ${profileId}, accountId: ${requestedAccountId || 'auto-detect'})`);
+
+    const supabase = getBackendSupabaseClient();
+
+    // 1. Gather all candidate account IDs to disconnect from Zernio and DB
+    const accountIdsToDisconnect = new Set<string>();
+    if (requestedAccountId && typeof requestedAccountId === 'string' && requestedAccountId !== 'disconnect') {
+      accountIdsToDisconnect.add(requestedAccountId);
+    }
+
+    // In-memory account
+    const memAcc = whatsappStore.getAccount(userId);
+    if (memAcc?.id) accountIdsToDisconnect.add(memAcc.id);
+
+    // Database: whatsapp_accounts
     try {
-      const supabase = getBackendSupabaseClient();
+      const { data: dbAccs } = await supabase
+        .from('whatsapp_accounts')
+        .select('id, phone_number_id')
+        .eq('user_id', userId);
+      if (dbAccs) {
+        dbAccs.forEach((a: any) => {
+          if (a.id) accountIdsToDisconnect.add(a.id);
+          if (a.phone_number_id) accountIdsToDisconnect.add(a.phone_number_id);
+        });
+      }
+    } catch (e: any) {
+      console.warn('[disconnect] whatsapp_accounts lookup notice:', e?.message);
+    }
+
+    // Database: connected_accounts
+    try {
+      const { data: connAccs } = await supabase
+        .from('connected_accounts')
+        .select('id')
+        .eq('user_id', userId)
+        .ilike('platform', '%whatsapp%');
+      if (connAccs) {
+        connAccs.forEach((a: any) => {
+          if (a.id) accountIdsToDisconnect.add(a.id);
+        });
+      }
+    } catch (e: any) {
+      console.warn('[disconnect] connected_accounts lookup notice:', e?.message);
+    }
+
+    // Upstream Zernio: List any live accounts under this profile to make sure we disconnect them on Zernio!
+    try {
+      const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId);
+      if (liveAccounts && Array.isArray(liveAccounts)) {
+        liveAccounts.forEach((acc: any) => {
+          if (acc.id) accountIdsToDisconnect.add(acc.id);
+        });
+      }
+    } catch (e: any) {
+      console.warn('[disconnect] Zernio live accounts lookup notice:', e?.message);
+    }
+
+    // 2. Call Zernio disconnect endpoint for all identified accounts
+    for (const accId of accountIdsToDisconnect) {
+      try {
+        await ZernioWhatsAppService.disconnectAccount(accId, profileId);
+      } catch (zErr: any) {
+        console.warn(`[disconnect] Zernio disconnect warning for ${accId}:`, zErr.message);
+      }
+    }
+
+    // 3. Update Supabase database
+    try {
+      // 3a. Delete from whatsapp_accounts
       await supabase.from('whatsapp_accounts').delete().eq('user_id', userId);
-    } catch {}
+      if (requestedAccountId) {
+        await supabase.from('whatsapp_accounts').delete().eq('id', requestedAccountId);
+      }
 
-    // Invalidate cache immediately
+      // 3b. Delete from connected_accounts
+      await supabase
+        .from('connected_accounts')
+        .delete()
+        .eq('user_id', userId)
+        .ilike('platform', '%whatsapp%');
+
+      for (const accId of accountIdsToDisconnect) {
+        await supabase.from('connected_accounts').delete().eq('id', accId);
+      }
+
+      // 3c. Update whatsapp_numbers if present
+      try {
+        await supabase
+          .from('whatsapp_numbers')
+          .update({ status: 'disconnected' })
+          .eq('user_id', userId);
+        if (requestedPhone) {
+          await supabase
+            .from('whatsapp_numbers')
+            .update({ status: 'disconnected' })
+            .eq('phone_number', requestedPhone);
+        }
+      } catch {}
+
+      // 3d. Recalculate connected_accounts_count in profiles
+      const { data: remaining } = await supabase
+        .from('connected_accounts')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('status', 'connected');
+
+      const remainingCount = remaining ? remaining.length : 0;
+      await supabase
+        .from('profiles')
+        .update({
+          connected_accounts_count: remainingCount,
+        })
+        .eq('id', userId);
+
+      console.log(`[disconnect] Successfully updated profiles.connected_accounts_count to ${remainingCount} for user ${userId}`);
+    } catch (dbErr: any) {
+      console.error('[disconnect] Supabase cleanup error:', dbErr?.message || dbErr);
+    }
+
+    // 4. Invalidate memory & caches
+    whatsappStore.disconnectAccount(userId);
     await cacheService.invalidateUser(userId);
+    await cacheService.del(cacheService.getUserKey(userId, 'account'));
 
-    return res.json({ success: true, message: 'WhatsApp account disconnected' });
+    return res.json({
+      success: true,
+      status: 'disconnected',
+      message: 'WhatsApp account disconnected successfully',
+      disconnectedAccounts: Array.from(accountIdsToDisconnect)
+    });
   } catch (err: any) {
-    return res.status(401).json({ error: 'unauthorized', message: err.message });
+    console.error('[POST /api/whatsapp/account/disconnect] Error:', err);
+    return res.status(500).json({ error: 'disconnect_failed', message: err.message });
   }
-});
+};
+
+whatsappRouter.post('/api/whatsapp/account/disconnect', handleDisconnectWhatsAppAccount);
+whatsappRouter.delete('/api/whatsapp/account/disconnect', handleDisconnectWhatsAppAccount);
+whatsappRouter.delete('/api/whatsapp/account', handleDisconnectWhatsAppAccount);
+whatsappRouter.post('/api/v1/whatsapp/account/disconnect', handleDisconnectWhatsAppAccount);
+whatsappRouter.delete('/api/v1/whatsapp/account', handleDisconnectWhatsAppAccount);
 
 // WhatsApp Sandbox Endpoints (as per Zernio platform docs)
 const handleCreateSandbox = async (req: Request, res: Response) => {
@@ -1610,7 +1743,7 @@ whatsappRouter.post('/api/whatsapp/connect/headless/select', async (req: Request
     });
     const data = await zRes.json();
     if (zRes.ok && data.account) {
-      const newAcc = {
+      const newAcc: WhatsAppAccount = {
         id: data.account.accountId || `acc_waba_${wabaId.substring(0, 8)}`,
         platform: 'whatsapp',
         name: data.account.displayName || 'Connected WhatsApp Business Account',
@@ -1677,7 +1810,7 @@ whatsappRouter.post('/api/whatsapp/connect/credentials', async (req: Request, re
         });
         if (zRes.ok) {
           const zData = await zRes.json();
-          const account = {
+          const account: WhatsAppAccount = {
             id: zData.account?.accountId || `acc_waba_${waba_id.substring(0, 8)}`,
             platform: 'whatsapp',
             name: name || zData.account?.displayName || 'Connected WhatsApp Business Account',

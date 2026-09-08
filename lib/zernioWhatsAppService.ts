@@ -1,5 +1,6 @@
 import { Zernio } from '@zernio/node';
 import { WhatsAppSandboxSession, WhatsAppAccount } from './whatsappTypes';
+import { whatsappStore } from './whatsappStore';
 import { getBackendSupabaseClient } from './backendSupabase';
 import crypto from 'crypto';
 
@@ -375,6 +376,61 @@ export class ZernioWhatsAppService {
       console.warn('[Zernio SDK listWhatsAppAccounts Notice]:', err.message);
     }
     return [];
+  }
+
+  /**
+   * Disconnect and remove a connected WhatsApp account from Zernio API
+   */
+  public static async disconnectAccount(accountId: string, profileId?: string): Promise<{ success: boolean; message?: string }> {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey || !accountId) return { success: true };
+
+    const cleanAccId = String(accountId).replace(/^acc_/, '').trim();
+    if (!cleanAccId || cleanAccId === 'disconnect' || cleanAccId === 'acc_primary') {
+      return { success: true };
+    }
+
+    try {
+      const url = new URL(`https://zernio.com/api/v1/accounts/${encodeURIComponent(cleanAccId)}`);
+      if (profileId) {
+        url.searchParams.set('profileId', profileId);
+      }
+
+      console.log(`[ZernioWhatsAppService.disconnectAccount] Calling DELETE ${url.toString()}`);
+      const res = await fetch(url.toString(), {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const resData = await res.json().catch(() => ({}));
+      console.log(`[ZernioWhatsAppService.disconnectAccount] Response (${res.status}):`, resData);
+
+      if (res.ok || res.status === 404) {
+        return { success: true, message: resData.message || 'Account disconnected successfully from Zernio' };
+      }
+
+      // Try fallback without profileId query param if it failed
+      if (profileId) {
+        const fallbackRes = await fetch(`https://zernio.com/api/v1/accounts/${encodeURIComponent(cleanAccId)}`, {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+        });
+        if (fallbackRes.ok || fallbackRes.status === 404) {
+          return { success: true };
+        }
+      }
+
+      return { success: false, message: resData.error || resData.message || `Status ${res.status}` };
+    } catch (err: any) {
+      console.warn('[ZernioWhatsAppService.disconnectAccount] Notice:', err.message);
+      return { success: false, message: err.message };
+    }
   }
 
   /**

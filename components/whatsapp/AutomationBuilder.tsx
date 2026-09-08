@@ -443,7 +443,7 @@ export const AutomationBuilder: React.FC = () => {
             Create automated WhatsApp workflows with keyword matching, 24h window checks, and Meta CAPI conversion triggers.
           </p>
           <button
-            onClick={handleCreateFlow}
+            onClick={handleCreateNewFlow}
             className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-bold rounded-xl text-xs transition-all shadow-md shadow-emerald-500/20 flex items-center gap-2"
           >
             <Plus className="w-3.5 h-3.5" />

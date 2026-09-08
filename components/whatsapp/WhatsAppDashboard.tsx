@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   LayoutGrid, GitBranch, Layout, Copy, Search,
   MessageSquare, Zap, Megaphone, LayoutTemplate, Radio, 
@@ -66,9 +66,32 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
   const [fetchChatsNotice, setFetchChatsNotice] = useState<{ success: boolean; message: string } | null>(null);
   const [copiedAccountId, setCopiedAccountId] = useState(false);
   const [manageSenderDropdownOpen, setManageSenderDropdownOpen] = useState(false);
+  const [isDisconnecting, setIsDisconnecting] = useState(false);
+  const manageDropdownRef = useRef<HTMLDivElement>(null);
   const [senderSearchTerm, setSenderSearchTerm] = useState('');
   const [senderTypeFilter, setSenderTypeFilter] = useState('all');
   const [senderStatusFilter, setSenderStatusFilter] = useState('all');
+
+  // Close Manage dropdown cleanly when clicking outside or pressing Escape
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (manageDropdownRef.current && !manageDropdownRef.current.contains(e.target as Node)) {
+        setManageSenderDropdownOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setManageSenderDropdownOpen(false);
+    };
+
+    if (manageSenderDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('keydown', handleKeyDown);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [manageSenderDropdownOpen]);
   
   // UI states
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -239,17 +262,46 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
     }
   };
 
-  const handleDisconnect = async () => {
-    if (!confirm('Are you sure you want to disconnect this WhatsApp sender?')) return;
+  const handleDisconnect = async (targetAccountId?: string, targetPhone?: string) => {
+    const accId = targetAccountId || account?.id;
+    const phoneNum = targetPhone || account?.phone_number;
+    if (!confirm(`Are you sure you want to disconnect this WhatsApp number${phoneNum ? ` (${phoneNum})` : ''}? You can reconnect it anytime.`)) return;
+
+    setIsDisconnecting(true);
     try {
-      await fetch('/api/whatsapp/account/disconnect', {
+      const res = await fetch('/api/whatsapp/account/disconnect', {
         method: 'POST',
-        headers: getHeaders(),
+        headers: {
+          ...getHeaders(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          accountId: accId,
+          phone: phoneNum,
+          phoneNumberId: (account as any)?.phone_number_id,
+          platform: 'whatsapp',
+        }),
       });
-      setAccount(null);
-      fetchAccountStatus(true);
-    } catch (err) {
+
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        setAccount(null);
+        setCompletedSteps(prev => ({ ...prev, 1: false }));
+        setFetchChatsNotice({
+          success: true,
+          message: 'WhatsApp number successfully disconnected and unlinked.',
+        });
+        await fetchAccountStatus(true);
+        await fetchCampaignMetrics();
+      } else {
+        alert(`Failed to disconnect: ${data.message || data.error || 'Please try again.'}`);
+      }
+    } catch (err: any) {
       console.warn('Disconnect error:', err);
+      alert(`Error disconnecting account: ${err.message}`);
+    } finally {
+      setIsDisconnecting(false);
+      setTimeout(() => setFetchChatsNotice(null), 6000);
     }
   };
 
@@ -976,8 +1028,8 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
                 </div>
 
                 {/* Senders Table (Exact Match to Screenshot 1) */}
-                <div className="bg-white border border-gray-200 rounded-xl shadow-xs overflow-hidden">
-                  <div className="overflow-x-auto">
+                <div className="bg-white border border-gray-200 rounded-xl shadow-xs relative">
+                  <div className="overflow-x-auto min-h-[300px] pb-32">
                     <table className="w-full text-left border-collapse">
                       <thead>
                         <tr className="border-b border-gray-100 text-[11px] font-semibold text-gray-500 bg-white">
@@ -1142,63 +1194,104 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
                             <td className="py-4 px-5 text-right relative">
                               <button
                                 onClick={() => setManageSenderDropdownOpen(!manageSenderDropdownOpen)}
-                                className="px-3.5 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 text-gray-800 text-xs font-semibold shadow-2xs transition-all cursor-pointer"
+                                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 active:bg-gray-100 text-gray-800 text-xs font-semibold shadow-2xs transition-all cursor-pointer select-none"
                               >
-                                Manage
+                                <span>Manage</span>
+                                <ChevronDown size={13} className={`text-gray-500 transition-transform duration-200 ${manageSenderDropdownOpen ? 'rotate-180 text-emerald-600' : ''}`} />
                               </button>
 
                               {manageSenderDropdownOpen && (
-                                <div className="absolute right-5 mt-1 w-52 bg-white rounded-xl shadow-lg border border-gray-200 py-1.5 z-30 text-left">
-                                  <button
-                                    onClick={() => {
-                                      setManageSenderDropdownOpen(false);
-                                      loadAccount(true);
-                                    }}
-                                    className="w-full text-left px-3.5 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2 font-medium cursor-pointer"
-                                  >
-                                    <RefreshCw size={13} className="text-blue-600" />
-                                    <span>Check Real-time Health</span>
-                                  </button>
-                                  <button
-                                    onClick={() => {
-                                      setManageSenderDropdownOpen(false);
-                                      handleFetchChatsAndContacts();
-                                    }}
-                                    className="w-full text-left px-3.5 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2 font-medium cursor-pointer"
-                                  >
-                                    <RefreshCw size={13} className="text-emerald-600" />
-                                    <span>Fetch Chats &amp; Contacts</span>
-                                  </button>
-                                  <a
-                                    href="https://business.facebook.com/wa/manage/payments/"
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="w-full text-left px-3.5 py-2 text-xs text-[#ea3829] hover:bg-red-50 flex items-center gap-2 font-medium"
-                                  >
-                                    <ExternalLink size={13} />
-                                    <span>Fix Payment in Meta</span>
-                                  </a>
-                                  <button
-                                    onClick={() => {
-                                      setManageSenderDropdownOpen(false);
-                                      setIsConnectModalOpen(true);
-                                    }}
-                                    className="w-full text-left px-3.5 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2 font-medium cursor-pointer"
-                                  >
-                                    <Settings size={13} className="text-gray-500" />
-                                    <span>Reconnect / Settings</span>
-                                  </button>
-                                  <div className="my-1 border-t border-gray-100"></div>
-                                  <button
-                                    onClick={() => {
-                                      setManageSenderDropdownOpen(false);
-                                      handleDisconnect();
-                                    }}
-                                    className="w-full text-left px-3.5 py-2 text-xs text-red-600 hover:bg-red-50 flex items-center gap-2 font-medium cursor-pointer"
-                                  >
-                                    <LogOut size={13} />
-                                    <span>Disconnect</span>
-                                  </button>
+                                <div
+                                  ref={manageDropdownRef}
+                                  className="absolute right-5 top-full mt-1.5 w-64 bg-white rounded-xl shadow-2xl border border-gray-200/90 py-2 z-50 text-left divide-y divide-gray-100 animate-in fade-in-50 zoom-in-95 duration-150"
+                                >
+                                  {/* Header section */}
+                                  <div className="px-3.5 py-1.5 pb-2">
+                                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Connected Sender</div>
+                                    <div className="text-xs font-bold text-gray-900 truncate mt-0.5">{s.phone}</div>
+                                    <div className="text-[10px] text-gray-500 truncate">{s.name} • {s.type}</div>
+                                  </div>
+
+                                  {/* Main Options */}
+                                  <div className="py-1">
+                                    <button
+                                      onClick={() => {
+                                        setManageSenderDropdownOpen(false);
+                                        fetchAccountStatus(true);
+                                      }}
+                                      className="w-full text-left px-3.5 py-2 text-xs text-gray-700 hover:bg-blue-50/70 hover:text-blue-700 flex items-center gap-2.5 font-medium transition-colors cursor-pointer group"
+                                    >
+                                      <RefreshCw size={14} className="text-blue-600 shrink-0 group-hover:rotate-180 transition-transform duration-300" />
+                                      <div>
+                                        <div className="font-semibold text-gray-800 group-hover:text-blue-700">Check Real-time Health</div>
+                                        <div className="text-[10px] text-gray-400 font-normal">Verify Cloud API token &amp; limits</div>
+                                      </div>
+                                    </button>
+
+                                    <button
+                                      onClick={() => {
+                                        setManageSenderDropdownOpen(false);
+                                        handleFetchChatsAndContacts();
+                                      }}
+                                      className="w-full text-left px-3.5 py-2 text-xs text-gray-700 hover:bg-emerald-50/70 hover:text-emerald-700 flex items-center gap-2.5 font-medium transition-colors cursor-pointer group"
+                                    >
+                                      <RefreshCw size={14} className="text-emerald-600 shrink-0 group-hover:rotate-180 transition-transform duration-300" />
+                                      <div>
+                                        <div className="font-semibold text-gray-800 group-hover:text-emerald-700">Fetch Chats &amp; Contacts</div>
+                                        <div className="text-[10px] text-gray-400 font-normal">Backfill customer message threads</div>
+                                      </div>
+                                    </button>
+
+                                    <a
+                                      href="https://business.facebook.com/wa/manage/payments/"
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      onClick={() => setManageSenderDropdownOpen(false)}
+                                      className="w-full text-left px-3.5 py-2 text-xs text-gray-700 hover:bg-purple-50/70 hover:text-purple-700 flex items-center gap-2.5 font-medium transition-colors group"
+                                    >
+                                      <ExternalLink size={14} className="text-purple-600 shrink-0 group-hover:scale-110 transition-transform" />
+                                      <div>
+                                        <div className="font-semibold text-gray-800 group-hover:text-purple-700">Fix Payment in Meta</div>
+                                        <div className="text-[10px] text-gray-400 font-normal">Open Meta Business Manager</div>
+                                      </div>
+                                    </a>
+
+                                    <button
+                                      onClick={() => {
+                                        setManageSenderDropdownOpen(false);
+                                        setIsConnectModalOpen(true);
+                                      }}
+                                      className="w-full text-left px-3.5 py-2 text-xs text-gray-700 hover:bg-gray-100 flex items-center gap-2.5 font-medium transition-colors cursor-pointer group"
+                                    >
+                                      <Settings size={14} className="text-gray-500 shrink-0 group-hover:rotate-45 transition-transform duration-200" />
+                                      <div>
+                                        <div className="font-semibold text-gray-800">Reconnect / Settings</div>
+                                        <div className="text-[10px] text-gray-400 font-normal">Re-authenticate or change WABA</div>
+                                      </div>
+                                    </button>
+                                  </div>
+
+                                  {/* Danger Zone: Disconnect */}
+                                  <div className="pt-1">
+                                    <button
+                                      onClick={() => {
+                                        setManageSenderDropdownOpen(false);
+                                        handleDisconnect(s.rawId || s.id, s.phone);
+                                      }}
+                                      disabled={isDisconnecting}
+                                      className="w-full text-left px-3.5 py-2 text-xs text-red-600 hover:bg-red-50 flex items-center gap-2.5 font-semibold transition-colors cursor-pointer disabled:opacity-50 group"
+                                    >
+                                      {isDisconnecting ? (
+                                        <RefreshCw size={14} className="text-red-600 animate-spin shrink-0" />
+                                      ) : (
+                                        <LogOut size={14} className="text-red-600 shrink-0 group-hover:-translate-x-0.5 transition-transform" />
+                                      )}
+                                      <div>
+                                        <div className="font-bold text-red-600">{isDisconnecting ? 'Disconnecting...' : 'Disconnect Phone Number'}</div>
+                                        <div className="text-[10px] text-red-400 font-normal">Unlink sender from this workspace</div>
+                                      </div>
+                                    </button>
+                                  </div>
                                 </div>
                               )}
                             </td>
@@ -1916,14 +2009,26 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
                 <div className="pt-4 border-t border-gray-100 flex items-center justify-between">
                   <div>
                     <div className="text-xs font-bold text-gray-900">Connected Phone Number</div>
-                    <div className="text-xs text-gray-500">{account?.phone_number || '+1 (202) 908-7457 (Demo Virtual)'}</div>
+                    <div className="text-xs text-gray-500">{account?.phone_number || 'No phone number connected'}</div>
                   </div>
-                  <button
-                    onClick={() => setIsConnectModalOpen(true)}
-                    className="px-4 py-1.5 rounded-xl border border-gray-300 hover:border-gray-400 text-xs font-bold"
-                  >
-                    Manage WABA
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {account && account.status !== 'disconnected' && (
+                      <button
+                        onClick={() => handleDisconnect(account.id, account.phone_number)}
+                        disabled={isDisconnecting}
+                        className="px-3 py-1.5 rounded-xl border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-bold cursor-pointer transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"
+                      >
+                        {isDisconnecting && <RefreshCw size={12} className="animate-spin text-red-600" />}
+                        <span>{isDisconnecting ? 'Disconnecting...' : 'Disconnect'}</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setIsConnectModalOpen(true)}
+                      className="px-4 py-1.5 rounded-xl border border-gray-300 hover:border-gray-400 text-xs font-bold cursor-pointer"
+                    >
+                      Manage WABA
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

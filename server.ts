@@ -10,6 +10,9 @@ import cors from "cors";
 import rateLimit from "express-rate-limit";
 import Redis from "ioredis";
 import { whatsappRouter } from "./lib/whatsappRoutes";
+import { whatsappStore } from "./lib/whatsappStore";
+import { cacheService } from "./lib/cacheService";
+import { ZernioWhatsAppService } from "./lib/zernioWhatsAppService";
 
 function startServer() {
   const app = express();
@@ -3678,6 +3681,12 @@ function startServer() {
           const formattedPlatform = cleanPlatform.charAt(0).toUpperCase() + cleanPlatform.slice(1);
           await supabase.from('connected_accounts').delete().eq('user_id', userId).eq('platform', formattedPlatform);
           await supabase.from('connected_accounts').delete().eq('user_id', userId).eq('platform', cleanPlatform);
+        }
+
+        if (platformName && platformName.toLowerCase().includes('whatsapp')) {
+          await supabase.from('whatsapp_accounts').delete().eq('user_id', userId);
+          whatsappStore.disconnectAccount(userId);
+          await cacheService.invalidateUser(userId);
         }
 
         // Recalculate remaining active connected accounts count WITHOUT mutating permanent zernio_profile_id!

@@ -487,11 +487,11 @@ var WhatsAppStore = class {
     this.automations.clear();
     this.capiEvents = [];
     this.mcpTokens.clear();
-    this.connectedAccount = null;
-    this.sandboxSession = null;
+    this.userAccounts.clear();
+    this.userSandboxSessions.clear();
   }
 };
-var whatsappStore2 = new WhatsAppStore();
+var whatsappStore = new WhatsAppStore();
 
 // lib/zernioWhatsAppService.ts
 import { Zernio } from "@zernio/node";
@@ -515,7 +515,7 @@ function getBackendSupabaseClient() {
 
 // lib/zernioWhatsAppService.ts
 import crypto2 from "crypto";
-var ZernioWhatsAppService2 = class _ZernioWhatsAppService {
+var ZernioWhatsAppService = class _ZernioWhatsAppService {
   static setCachedAccountId(accountId) {
     if (accountId && accountId !== "acc_primary") {
       this.cachedAccountId = accountId;
@@ -828,6 +828,52 @@ var ZernioWhatsAppService2 = class _ZernioWhatsAppService {
       console.warn("[Zernio SDK listWhatsAppAccounts Notice]:", err.message);
     }
     return [];
+  }
+  /**
+   * Disconnect and remove a connected WhatsApp account from Zernio API
+   */
+  static async disconnectAccount(accountId, profileId) {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey || !accountId) return { success: true };
+    const cleanAccId = String(accountId).replace(/^acc_/, "").trim();
+    if (!cleanAccId || cleanAccId === "disconnect" || cleanAccId === "acc_primary") {
+      return { success: true };
+    }
+    try {
+      const url = new URL(`https://zernio.com/api/v1/accounts/${encodeURIComponent(cleanAccId)}`);
+      if (profileId) {
+        url.searchParams.set("profileId", profileId);
+      }
+      console.log(`[ZernioWhatsAppService.disconnectAccount] Calling DELETE ${url.toString()}`);
+      const res = await fetch(url.toString(), {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        }
+      });
+      const resData = await res.json().catch(() => ({}));
+      console.log(`[ZernioWhatsAppService.disconnectAccount] Response (${res.status}):`, resData);
+      if (res.ok || res.status === 404) {
+        return { success: true, message: resData.message || "Account disconnected successfully from Zernio" };
+      }
+      if (profileId) {
+        const fallbackRes = await fetch(`https://zernio.com/api/v1/accounts/${encodeURIComponent(cleanAccId)}`, {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json"
+          }
+        });
+        if (fallbackRes.ok || fallbackRes.status === 404) {
+          return { success: true };
+        }
+      }
+      return { success: false, message: resData.error || resData.message || `Status ${res.status}` };
+    } catch (err) {
+      console.warn("[ZernioWhatsAppService.disconnectAccount] Notice:", err.message);
+      return { success: false, message: err.message };
+    }
   }
   /**
    * Real-time account health and verification status check directly from Zernio / Meta API
@@ -1616,7 +1662,7 @@ var MCPServerHandler = class {
   static executeTool(name, args) {
     switch (name) {
       case "whatsapp_list_conversations": {
-        const list = whatsappStore2.getConversations();
+        const list = whatsappStore.getConversations();
         return {
           total: list.length,
           conversations: list.map((c) => ({
@@ -1633,8 +1679,8 @@ var MCPServerHandler = class {
       }
       case "whatsapp_get_messages": {
         if (!args.conversation_id) throw new Error("Missing conversation_id");
-        const msgs = whatsappStore2.getMessages(args.conversation_id);
-        const conv = whatsappStore2.getConversation(args.conversation_id);
+        const msgs = whatsappStore.getMessages(args.conversation_id);
+        const conv = whatsappStore.getConversation(args.conversation_id);
         return {
           conversation_id: args.conversation_id,
           contact: conv?.contact,
@@ -1645,7 +1691,7 @@ var MCPServerHandler = class {
       case "whatsapp_send_message": {
         if (!args.conversation_id) throw new Error("Missing conversation_id");
         if (!args.text) throw new Error("Missing text");
-        const conv = whatsappStore2.getConversation(args.conversation_id);
+        const conv = whatsappStore.getConversation(args.conversation_id);
         if (!conv) throw new Error("Conversation not found");
         if (!conv.is_window_open) {
           throw new Error(
@@ -1663,7 +1709,7 @@ var MCPServerHandler = class {
           timestamp: (/* @__PURE__ */ new Date()).toISOString(),
           sender_name: "AI Agent (MCP)"
         };
-        whatsappStore2.appendMessage(msg);
+        whatsappStore.appendMessage(msg);
         return {
           success: true,
           message_id: msg.id,
@@ -1674,9 +1720,9 @@ var MCPServerHandler = class {
       case "whatsapp_send_template": {
         if (!args.conversation_id) throw new Error("Missing conversation_id");
         if (!args.template_name) throw new Error("Missing template_name");
-        const conv = whatsappStore2.getConversation(args.conversation_id);
+        const conv = whatsappStore.getConversation(args.conversation_id);
         if (!conv) throw new Error("Conversation not found");
-        const tmpl = whatsappStore2.getTemplate(args.template_name);
+        const tmpl = whatsappStore.getTemplate(args.template_name);
         if (!tmpl) throw new Error(`Template '${args.template_name}' not found`);
         const msg = {
           id: `msg_mcp_tmpl_${Date.now()}_${crypto4.randomBytes(3).toString("hex")}`,
@@ -1690,7 +1736,7 @@ var MCPServerHandler = class {
           timestamp: (/* @__PURE__ */ new Date()).toISOString(),
           sender_name: "AI Agent (MCP)"
         };
-        whatsappStore2.appendMessage(msg);
+        whatsappStore.appendMessage(msg);
         return {
           success: true,
           message_id: msg.id,
@@ -1700,7 +1746,7 @@ var MCPServerHandler = class {
       }
       case "whatsapp_trigger_capi_event": {
         if (!args.conversation_id) throw new Error("Missing conversation_id");
-        const conv = whatsappStore2.getConversation(args.conversation_id);
+        const conv = whatsappStore.getConversation(args.conversation_id);
         if (!conv) throw new Error("Conversation not found");
         const eventName = args.event_name || "Lead";
         const contact = conv.contact;
@@ -1729,7 +1775,7 @@ var MCPServerHandler = class {
           },
           created_at: (/* @__PURE__ */ new Date()).toISOString()
         };
-        whatsappStore2.logCAPIEvent(capiEvent);
+        whatsappStore.logCAPIEvent(capiEvent);
         return {
           success: true,
           event_id: eventId,
@@ -1740,7 +1786,7 @@ var MCPServerHandler = class {
       }
       case "whatsapp_update_contact": {
         if (!args.contact_id) throw new Error("Missing contact_id");
-        const contact = whatsappStore2.getContact(args.contact_id);
+        const contact = whatsappStore.getContact(args.contact_id);
         if (!contact) throw new Error("Contact not found");
         if (args.tags_to_add && Array.isArray(args.tags_to_add)) {
           contact.tags = Array.from(/* @__PURE__ */ new Set([...contact.tags, ...args.tags_to_add]));
@@ -1752,7 +1798,7 @@ var MCPServerHandler = class {
           contact.notes = contact.notes ? `${contact.notes}
 [AI Update]: ${args.notes}` : args.notes;
         }
-        whatsappStore2.saveContact(contact);
+        whatsappStore.saveContact(contact);
         return {
           success: true,
           contact
@@ -1760,7 +1806,7 @@ var MCPServerHandler = class {
       }
       case "whatsapp_get_templates": {
         return {
-          templates: whatsappStore2.getTemplates()
+          templates: whatsappStore.getTemplates()
         };
       }
       default:
@@ -1776,7 +1822,7 @@ var AutomationEngine = class {
    * Evaluate active flows when an incoming message or trigger occurs
    */
   static async evaluateTrigger(type, payload) {
-    const flows = whatsappStore2.getAutomations().filter((f) => f.is_active);
+    const flows = whatsappStore.getAutomations().filter((f) => f.is_active);
     const triggered = [];
     for (const flow of flows) {
       let shouldRun = false;
@@ -1804,8 +1850,8 @@ var AutomationEngine = class {
    * Process incoming trigger by ID
    */
   static async processIncomingTrigger(params) {
-    const flows = whatsappStore2.getAutomations().filter((f) => f.is_active);
-    const conv = whatsappStore2.getConversation(params.conversationId);
+    const flows = whatsappStore.getAutomations().filter((f) => f.is_active);
+    const conv = whatsappStore.getConversation(params.conversationId);
     if (!conv) return;
     for (const flow of flows) {
       let shouldRun = false;
@@ -1835,7 +1881,7 @@ var AutomationEngine = class {
     executionLogs.push(`[${(/* @__PURE__ */ new Date()).toISOString()}] Started flow "${flow.title}" (ID: ${flow.id})`);
     flow.execution_count = (flow.execution_count || 0) + 1;
     flow.last_triggered_at = (/* @__PURE__ */ new Date()).toISOString();
-    whatsappStore2.saveAutomation(flow);
+    whatsappStore.saveAutomation(flow);
     const triggerNode = flow.nodes.find((n) => n.type.startsWith("trigger_")) || flow.nodes[0];
     if (!triggerNode) {
       executionLogs.push("No trigger node found in flow graph.");
@@ -1868,13 +1914,13 @@ var AutomationEngine = class {
             timestamp: (/* @__PURE__ */ new Date()).toISOString(),
             sender_name: "Automation Bot"
           };
-          whatsappStore2.appendMessage(msg);
+          whatsappStore.appendMessage(msg);
           executionLogs.push(`Sent free-form automated reply: "${text.substring(0, 40)}..."`);
         }
       }
       if (currentNode.type === "action_send_template") {
         const templateName = currentNode.config.template_name || "lead_welcome_v1";
-        const tmpl = whatsappStore2.getTemplate(templateName);
+        const tmpl = whatsappStore.getTemplate(templateName);
         const msg = {
           id: `msg_auto_tmpl_${Date.now()}_${crypto5.randomBytes(3).toString("hex")}`,
           conversation_id: conv.id,
@@ -1886,7 +1932,7 @@ var AutomationEngine = class {
           timestamp: (/* @__PURE__ */ new Date()).toISOString(),
           sender_name: "Automation Bot"
         };
-        whatsappStore2.appendMessage(msg);
+        whatsappStore.appendMessage(msg);
         executionLogs.push(`Sent Meta-approved template "${templateName}"`);
       }
       if (currentNode.type === "action_trigger_capi") {
@@ -1906,7 +1952,7 @@ var AutomationEngine = class {
             campaignId: conv.ctwa_referral?.campaign_id
           }
         });
-        whatsappStore2.logCAPIEvent({
+        whatsappStore.logCAPIEvent({
           id: `capi_auto_${Date.now()}`,
           event_id: result.eventId,
           event_name: eventName,
@@ -1930,7 +1976,7 @@ var AutomationEngine = class {
         const tag = currentNode.config.tag || "Automated_Lead";
         if (conv.contact) {
           conv.contact.tags = Array.from(/* @__PURE__ */ new Set([...conv.contact.tags, tag]));
-          whatsappStore2.saveContact(conv.contact);
+          whatsappStore.saveContact(conv.contact);
           executionLogs.push(`Added CRM tag "${tag}" to contact`);
         }
       }
@@ -2174,12 +2220,12 @@ whatsappRouter.post("/api/webhooks/zernio", async (req, res) => {
     const name = sender.name || sender.username || metadata.senderName || convData?.contact?.name || phone || "WhatsApp Contact";
     const resolvedAccId = accountData.id || event.account_id || event.accountId || metadata.accountId;
     if (resolvedAccId && resolvedAccId !== "acc_primary") {
-      ZernioWhatsAppService2.setCachedAccountId(resolvedAccId);
+      ZernioWhatsAppService.setCachedAccountId(resolvedAccId);
     }
     const convId = msg.conversationId || msg.conversation_id || convData.id || convData._id || metadata.conversationId || (phone ? `conv_${phone.replace(/[^0-9]/g, "")}` : `conv_${Date.now()}`);
     const direction = eventType === "message.sent" ? "outgoing" : msg.direction || "incoming";
     const msgText = msg.text || msg.message || metadata.messagePreview || "";
-    let contact = phone ? whatsappStore2.getContactByPhone(phone) : void 0;
+    let contact = phone ? whatsappStore.getContactByPhone(phone) : void 0;
     if (!contact && phone) {
       contact = {
         id: `cnt_${phone.replace(/[^0-9]/g, "")}`,
@@ -2193,9 +2239,9 @@ whatsappRouter.post("/api/webhooks/zernio", async (req, res) => {
         created_at: (/* @__PURE__ */ new Date()).toISOString(),
         last_activity_at: (/* @__PURE__ */ new Date()).toISOString()
       };
-      whatsappStore2.saveContact(contact);
+      whatsappStore.saveContact(contact);
     }
-    let conv = whatsappStore2.getConversation(convId);
+    let conv = whatsappStore.getConversation(convId);
     if (!conv) {
       const viaNumber = accountData.username || accountData.display_phone_number || accountData.phone || "";
       conv = {
@@ -2224,7 +2270,7 @@ whatsappRouter.post("/api/webhooks/zernio", async (req, res) => {
         created_at: (/* @__PURE__ */ new Date()).toISOString(),
         updated_at: (/* @__PURE__ */ new Date()).toISOString()
       };
-      whatsappStore2.saveConversation(conv);
+      whatsappStore.saveConversation(conv);
     } else {
       if (direction === "incoming") {
         conv.unread_count = (conv.unread_count || 0) + 1;
@@ -2233,7 +2279,7 @@ whatsappRouter.post("/api/webhooks/zernio", async (req, res) => {
         conv.is_window_open = true;
       }
       conv.updated_at = (/* @__PURE__ */ new Date()).toISOString();
-      whatsappStore2.saveConversation(conv);
+      whatsappStore.saveConversation(conv);
     }
     if (msgText || msg.media_url || msg.attachmentUrl) {
       const newMsg = {
@@ -2248,7 +2294,7 @@ whatsappRouter.post("/api/webhooks/zernio", async (req, res) => {
         sender_name: name,
         sender_phone: phone
       };
-      whatsappStore2.appendMessage(newMsg);
+      whatsappStore.appendMessage(newMsg);
       broadcastWhatsAppEvent({
         event: eventType || "message.received",
         conversationId: convId,
@@ -2258,7 +2304,7 @@ whatsappRouter.post("/api/webhooks/zernio", async (req, res) => {
     } else if (eventType === "message.delivered" || eventType === "message.read") {
       if (msg.id) {
         const st = eventType === "message.read" ? "read" : "delivered";
-        whatsappStore2.updateMessageStatus(convId, msg.id, st);
+        whatsappStore.updateMessageStatus(convId, msg.id, st);
         broadcastWhatsAppEvent({
           event: eventType,
           conversationId: convId,
@@ -2284,9 +2330,9 @@ whatsappRouter.get("/api/whatsapp/conversations", async (req, res) => {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if (apiKey && apiKey !== "dummy_dev_key") {
       try {
-        let liveConvs = await ZernioWhatsAppService2.listConversations(profileId);
+        let liveConvs = await ZernioWhatsAppService.listConversations(profileId);
         if (Array.isArray(liveConvs) && liveConvs.length > 0) {
-          const defaultAccId = await ZernioWhatsAppService2.getDefaultAccountId(profileId);
+          const defaultAccId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
           for (const item of liveConvs) {
             const rawPhone = item.participantId || item.accountUsername || item.id || "";
             const phone = rawPhone ? rawPhone.startsWith("+") ? rawPhone : "+" + rawPhone : "";
@@ -2294,9 +2340,9 @@ whatsappRouter.get("/api/whatsapp/conversations", async (req, res) => {
             const accId = item.account?.id || item.accountId || item.account_id || defaultAccId || "acc_primary";
             const viaPhone = item.accountUsername || item.selectedPhoneNumber || item.account?.username || "";
             if (accId && accId !== "acc_primary") {
-              ZernioWhatsAppService2.setCachedAccountId(accId);
+              ZernioWhatsAppService.setCachedAccountId(accId);
             }
-            let contact = phone ? whatsappStore2.getContactByPhone(phone) : void 0;
+            let contact = phone ? whatsappStore.getContactByPhone(phone) : void 0;
             if (!contact) {
               contact = {
                 id: `cnt_${item.id}`,
@@ -2310,7 +2356,7 @@ whatsappRouter.get("/api/whatsapp/conversations", async (req, res) => {
                 created_at: item.updatedTime || (/* @__PURE__ */ new Date()).toISOString(),
                 last_activity_at: item.updatedTime || (/* @__PURE__ */ new Date()).toISOString()
               };
-              whatsappStore2.saveContact(contact, userId);
+              whatsappStore.saveContact(contact, userId);
             }
             const lastMsgTime = item.updatedTime || (/* @__PURE__ */ new Date()).toISOString();
             const winExpiry = new Date(new Date(lastMsgTime).getTime() + 24 * 60 * 60 * 1e3).toISOString();
@@ -2342,14 +2388,14 @@ whatsappRouter.get("/api/whatsapp/conversations", async (req, res) => {
                 sender_phone: phone
               } : void 0
             };
-            whatsappStore2.saveConversation(conv);
+            whatsappStore.saveConversation(conv);
           }
         }
       } catch (syncErr) {
         console.warn("[Auto-sync conversations notice]:", syncErr.message);
       }
     }
-    const conversations = whatsappStore2.getConversations(profileId);
+    const conversations = whatsappStore.getConversations(profileId);
     return res.json({ data: conversations });
   } catch (err) {
     return res.status(401).json({ error: "unauthorized", message: err.message });
@@ -2362,22 +2408,22 @@ var handleSyncChatsAndContacts = async (req, res) => {
     let syncedHistory = { conversationsCount: 0, messagesCount: 0 };
     if (apiKey && apiKey !== "dummy_dev_key") {
       try {
-        syncedHistory = await ZernioWhatsAppService2.backfillTenantHistory(profileId);
+        syncedHistory = await ZernioWhatsAppService.backfillTenantHistory(profileId);
       } catch (histErr) {
         console.warn("[SyncChats backfillTenantHistory notice]:", histErr.message);
       }
       try {
-        const liveConversations = await ZernioWhatsAppService2.listConversations(profileId);
+        const liveConversations = await ZernioWhatsAppService.listConversations(profileId);
         if (Array.isArray(liveConversations) && liveConversations.length > 0) {
           for (const item of liveConversations) {
             item.profileId = profileId;
             const itemAccId = item.account?.id || item.accountId || item.account_id;
             if (itemAccId && itemAccId !== "acc_primary") {
-              ZernioWhatsAppService2.setCachedAccountId(itemAccId);
+              ZernioWhatsAppService.setCachedAccountId(itemAccId);
             }
             const phone = item.participantId || item.accountUsername || item.id;
             const name = item.participantName || (phone.includes("201018252128") ? "Moamen" : item.accountUsername || phone || "WhatsApp User");
-            let contact = whatsappStore2.getContactByPhone(phone);
+            let contact = whatsappStore.getContactByPhone(phone);
             if (!contact) {
               contact = {
                 id: `cnt_${item.participantId || item.id}`,
@@ -2391,7 +2437,7 @@ var handleSyncChatsAndContacts = async (req, res) => {
                 created_at: item.updatedTime || (/* @__PURE__ */ new Date()).toISOString(),
                 last_activity_at: item.updatedTime || (/* @__PURE__ */ new Date()).toISOString()
               };
-              whatsappStore2.saveContact(contact, userId);
+              whatsappStore.saveContact(contact, userId);
             }
             const lastMsgTime = item.updatedTime || (/* @__PURE__ */ new Date()).toISOString();
             const winExpiry = new Date(new Date(lastMsgTime).getTime() + 24 * 60 * 60 * 1e3).toISOString();
@@ -2421,15 +2467,15 @@ var handleSyncChatsAndContacts = async (req, res) => {
                 sender_phone: phone
               } : void 0
             };
-            whatsappStore2.saveConversation(conv);
+            whatsappStore.saveConversation(conv);
           }
         }
       } catch (syncErr) {
         console.warn("[Zernio backfill listConversations notice]:", syncErr.message);
       }
     }
-    const updated = whatsappStore2.getConversations(profileId);
-    const contacts = whatsappStore2.getContacts(userId);
+    const updated = whatsappStore.getConversations(profileId);
+    const contacts = whatsappStore.getContacts(userId);
     return res.json({
       success: true,
       count: updated.length,
@@ -2447,7 +2493,7 @@ whatsappRouter.get("/api/whatsapp/sync-chats", handleSyncChatsAndContacts);
 whatsappRouter.delete("/api/whatsapp/conversations", async (req, res) => {
   try {
     const { userId, profileId } = await resolveUserProfileId(req);
-    whatsappStore2.clearAllConversations(profileId);
+    whatsappStore.clearAllConversations(profileId);
     return res.json({ success: true, message: "All conversations cleared for this workspace" });
   } catch (err) {
     return res.status(401).json({ error: "unauthorized", message: err.message });
@@ -2456,8 +2502,8 @@ whatsappRouter.delete("/api/whatsapp/conversations", async (req, res) => {
 whatsappRouter.get("/api/whatsapp/conversations/:id/messages", async (req, res) => {
   const { id } = req.params;
   const { userId, profileId } = await resolveUserProfileId(req);
-  let messages = whatsappStore2.getMessages(id);
-  const conversation = whatsappStore2.getConversation(id, profileId);
+  let messages = whatsappStore.getMessages(id);
+  const conversation = whatsappStore.getConversation(id, profileId);
   if (!conversation) {
     return res.status(404).json({ error: "Conversation not found or access denied" });
   }
@@ -2465,14 +2511,14 @@ whatsappRouter.get("/api/whatsapp/conversations/:id/messages", async (req, res) 
     try {
       let accountId = conversation?.account_id && conversation.account_id !== "acc_primary" ? conversation.account_id : void 0;
       if (!accountId) {
-        accountId = await ZernioWhatsAppService2.getDefaultAccountId(conversation?.profile_id);
+        accountId = await ZernioWhatsAppService.getDefaultAccountId(conversation?.profile_id);
         if (accountId && conversation) {
           conversation.account_id = accountId;
-          whatsappStore2.saveConversation(conversation);
+          whatsappStore.saveConversation(conversation);
         }
       }
       if (accountId) {
-        const liveMessages = await ZernioWhatsAppService2.listMessages(id, accountId);
+        const liveMessages = await ZernioWhatsAppService.listMessages(id, accountId);
         if (Array.isArray(liveMessages) && liveMessages.length > 0) {
           for (const m of liveMessages) {
             const isFromContact = m.senderId === conversation?.contact.phone_number || m.source === "contact";
@@ -2489,23 +2535,23 @@ whatsappRouter.get("/api/whatsapp/conversations/:id/messages", async (req, res) 
               sender_name: m.senderName || (direction === "incoming" ? conversation?.contact.name : "Support Agent"),
               sender_phone: m.senderPhone || (direction === "incoming" ? conversation?.contact.phone_number : void 0)
             };
-            whatsappStore2.appendMessage(msg);
+            whatsappStore.appendMessage(msg);
           }
-          messages = whatsappStore2.getMessages(id);
+          messages = whatsappStore.getMessages(id);
         }
       }
     } catch (mErr) {
       console.warn("[Zernio live messages notice]:", mErr.message);
     }
   }
-  whatsappStore2.cleanDuplicates(id);
-  messages = whatsappStore2.getMessages(id);
+  whatsappStore.cleanDuplicates(id);
+  messages = whatsappStore.getMessages(id);
   return res.json({ data: messages, conversation });
 });
 whatsappRouter.post("/api/whatsapp/conversations/:id/messages", async (req, res) => {
   const { id } = req.params;
   const { text, media_url, template_name, template_params } = req.body;
-  const conv = whatsappStore2.getConversation(id);
+  const conv = whatsappStore.getConversation(id);
   if (!conv) {
     return res.status(404).json({ error: "Conversation not found" });
   }
@@ -2518,16 +2564,16 @@ whatsappRouter.post("/api/whatsapp/conversations/:id/messages", async (req, res)
   }
   let accountId = conv.account_id && conv.account_id !== "acc_primary" ? conv.account_id : void 0;
   if (!accountId) {
-    accountId = await ZernioWhatsAppService2.getDefaultAccountId(conv.profile_id);
+    accountId = await ZernioWhatsAppService.getDefaultAccountId(conv.profile_id);
     if (accountId) {
       conv.account_id = accountId;
-      whatsappStore2.saveConversation(conv);
+      whatsappStore.saveConversation(conv);
     }
   }
   let officialMsgId = `msg_out_${Date.now()}`;
   if (id) {
     try {
-      const zernioRes = await ZernioWhatsAppService2.sendInboxMessage({
+      const zernioRes = await ZernioWhatsAppService.sendInboxMessage({
         conversationId: id,
         accountId,
         text,
@@ -2554,7 +2600,7 @@ whatsappRouter.post("/api/whatsapp/conversations/:id/messages", async (req, res)
     status: "sent",
     timestamp: (/* @__PURE__ */ new Date()).toISOString()
   };
-  whatsappStore2.appendMessage(msg);
+  whatsappStore.appendMessage(msg);
   broadcastWhatsAppEvent({
     event: "message.sent",
     conversationId: id,
@@ -2565,22 +2611,22 @@ whatsappRouter.post("/api/whatsapp/conversations/:id/messages", async (req, res)
 });
 whatsappRouter.post("/api/whatsapp/conversations/:id/typing", async (req, res) => {
   const { id } = req.params;
-  ZernioWhatsAppService2.sendTypingIndicator(id).catch(() => {
+  ZernioWhatsAppService.sendTypingIndicator(id).catch(() => {
   });
   return res.json({ ok: true });
 });
 whatsappRouter.post("/api/whatsapp/conversations/:id/read", async (req, res) => {
   const { id } = req.params;
-  whatsappStore2.markConversationRead(id);
+  whatsappStore.markConversationRead(id);
   if (/^[0-9a-fA-F]{24}$/.test(id)) {
-    ZernioWhatsAppService2.markConversationRead(id).catch(() => {
+    ZernioWhatsAppService.markConversationRead(id).catch(() => {
     });
   }
   return res.json({ ok: true });
 });
 whatsappRouter.post("/api/whatsapp/capi/trigger", async (req, res) => {
   const { conversation_id, event_name, value, currency, custom_event_name } = req.body;
-  const conv = conversation_id ? whatsappStore2.getConversation(conversation_id) : void 0;
+  const conv = conversation_id ? whatsappStore.getConversation(conversation_id) : void 0;
   const contact = conv?.contact;
   const ctwaClid = conv?.ctwa_referral?.ctwa_clid || contact?.ctwa_source?.ctwa_clid;
   const result = await MetaCAPIService.dispatchEvent({
@@ -2617,7 +2663,7 @@ whatsappRouter.post("/api/whatsapp/capi/trigger", async (req, res) => {
     meta_response: result.metaResponse,
     created_at: (/* @__PURE__ */ new Date()).toISOString()
   };
-  whatsappStore2.logCAPIEvent(capiEvent);
+  whatsappStore.logCAPIEvent(capiEvent);
   return res.json({
     success: true,
     event: capiEvent,
@@ -2625,7 +2671,7 @@ whatsappRouter.post("/api/whatsapp/capi/trigger", async (req, res) => {
   });
 });
 whatsappRouter.get("/api/whatsapp/capi/events", (req, res) => {
-  const events = whatsappStore2.getCAPIEvents();
+  const events = whatsappStore.getCAPIEvents();
   return res.json({ data: events });
 });
 whatsappRouter.get("/api/whatsapp/automations", async (req, res) => {
@@ -2635,7 +2681,7 @@ whatsappRouter.get("/api/whatsapp/automations", async (req, res) => {
   if (cached) {
     return res.json({ data: cached });
   }
-  const flows = whatsappStore2.getAutomations(userId);
+  const flows = whatsappStore.getAutomations(userId);
   await cacheService.set(cacheKey, flows, 60);
   return res.json({ data: flows });
 });
@@ -2654,14 +2700,14 @@ whatsappRouter.post("/api/whatsapp/automations", async (req, res) => {
     created_at: (/* @__PURE__ */ new Date()).toISOString(),
     updated_at: (/* @__PURE__ */ new Date()).toISOString()
   };
-  whatsappStore2.saveAutomation(newFlow, userId);
+  whatsappStore.saveAutomation(newFlow, userId);
   await cacheService.invalidateUser(userId);
   return res.json({ success: true, data: newFlow });
 });
 whatsappRouter.put("/api/whatsapp/automations/:id", async (req, res) => {
   const { userId } = await resolveUserProfileId(req);
   const { id } = req.params;
-  const existing = whatsappStore2.getAutomation(id, userId);
+  const existing = whatsappStore.getAutomation(id, userId);
   if (!existing) return res.status(404).json({ error: "Flow not found" });
   const updated = {
     ...existing,
@@ -2669,23 +2715,23 @@ whatsappRouter.put("/api/whatsapp/automations/:id", async (req, res) => {
     id,
     updated_at: (/* @__PURE__ */ new Date()).toISOString()
   };
-  whatsappStore2.saveAutomation(updated, userId);
+  whatsappStore.saveAutomation(updated, userId);
   await cacheService.invalidateUser(userId);
   return res.json({ success: true, data: updated });
 });
 whatsappRouter.delete("/api/whatsapp/automations/:id", async (req, res) => {
   const { userId } = await resolveUserProfileId(req);
   const { id } = req.params;
-  whatsappStore2.deleteAutomation(id, userId);
+  whatsappStore.deleteAutomation(id, userId);
   await cacheService.invalidateUser(userId);
   return res.json({ success: true });
 });
 whatsappRouter.post("/api/whatsapp/automations/:id/test", async (req, res) => {
   const { userId } = await resolveUserProfileId(req);
   const { id } = req.params;
-  const flow = whatsappStore2.getAutomation(id, userId);
+  const flow = whatsappStore.getAutomation(id, userId);
   if (!flow) return res.status(404).json({ error: "Flow not found" });
-  const sampleConv = whatsappStore2.getConversations(userId)[0] || {
+  const sampleConv = whatsappStore.getConversations(userId)[0] || {
     id: "test_conv",
     contact: { id: "c_test", phone_number: "+971503102740", name: "Test Contact", formatted_phone: "+971 50 310 2740", tags: [], lifecycle_stage: "lead", unread_count: 0, last_activity_at: (/* @__PURE__ */ new Date()).toISOString() },
     unread_count: 0,
@@ -2723,7 +2769,7 @@ whatsappRouter.get("/api/whatsapp/templates", async (req, res) => {
       return res.json({ data: mapped });
     }
   }
-  const templates = whatsappStore2.getTemplates(userId);
+  const templates = whatsappStore.getTemplates(userId);
   await cacheService.set(cacheKey, templates, 60);
   return res.json({ data: templates });
 });
@@ -2750,7 +2796,7 @@ whatsappRouter.post("/api/whatsapp/templates", async (req, res) => {
       components: newTemplate.components
     });
   }
-  whatsappStore2.saveTemplate(newTemplate, userId);
+  whatsappStore.saveTemplate(newTemplate, userId);
   await cacheService.invalidateUser(userId);
   return res.json({ success: true, data: newTemplate });
 });
@@ -2761,7 +2807,7 @@ whatsappRouter.delete("/api/whatsapp/templates/:name", async (req, res) => {
   if (supabase) {
     await supabase.from("whatsapp_templates").delete().eq("user_id", userId).eq("name", name);
   }
-  whatsappStore2.deleteTemplate(name, userId);
+  whatsappStore.deleteTemplate(name, userId);
   await cacheService.invalidateUser(userId);
   return res.json({ success: true });
 });
@@ -2782,7 +2828,7 @@ whatsappRouter.get("/api/whatsapp/campaigns/overview", async (req, res) => {
       }
     } catch {
     }
-    const storeCampaigns = whatsappStore2.getBroadcasts(userId);
+    const storeCampaigns = whatsappStore.getBroadcasts(userId);
     const allCampaignsMap = /* @__PURE__ */ new Map();
     for (const c of dbCampaigns) allCampaignsMap.set(c.id, c);
     for (const c of storeCampaigns) allCampaignsMap.set(c.id, c);
@@ -2796,7 +2842,7 @@ whatsappRouter.get("/api/whatsapp/campaigns/overview", async (req, res) => {
     const failed = campaigns.reduce((acc, c) => acc + (Number(c.failed_count) || 0), 0);
     const read_rate = sent > 0 ? Number((read / sent * 100).toFixed(1)) : 0;
     const reply_rate = sent > 0 ? Number((replied / sent * 100).toFixed(1)) : 0;
-    const account = whatsappStore2.getAccount(userId);
+    const account = whatsappStore.getAccount(userId);
     const isConnected = Boolean(account && account.status !== "disconnected");
     const limitTotal = isConnected ? account?.messaging_limit_tier === "TIER_100K_DAILY" ? 1e5 : 250 : 0;
     const overview = {
@@ -2840,7 +2886,7 @@ whatsappRouter.get("/api/whatsapp/campaigns/scheduled", async (req, res) => {
       }
     } catch {
     }
-    const storeBroadcasts = whatsappStore2.getBroadcasts(userId).filter((b) => b.status === "scheduled");
+    const storeBroadcasts = whatsappStore.getBroadcasts(userId).filter((b) => b.status === "scheduled");
     const mergedMap = /* @__PURE__ */ new Map();
     for (const item of scheduled) mergedMap.set(item.id, item);
     for (const item of storeBroadcasts) mergedMap.set(item.id, item);
@@ -2854,7 +2900,7 @@ whatsappRouter.get("/api/whatsapp/campaigns/scheduled", async (req, res) => {
 whatsappRouter.get("/api/whatsapp/broadcasts", async (req, res) => {
   try {
     const { userId } = await resolveUserProfileId(req);
-    const broadcasts = whatsappStore2.getBroadcasts(userId);
+    const broadcasts = whatsappStore.getBroadcasts(userId);
     return res.json({ data: broadcasts });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -2864,7 +2910,7 @@ whatsappRouter.post("/api/whatsapp/broadcasts", async (req, res) => {
   try {
     const { userId } = await resolveUserProfileId(req);
     const { title, template_name, target_tags, scheduled_at } = req.body;
-    const allContacts = whatsappStore2.getContacts(userId);
+    const allContacts = whatsappStore.getContacts(userId);
     const matched = target_tags && target_tags.length > 0 ? allContacts.filter((c) => target_tags.some((t) => c.tags.includes(t))) : allContacts;
     const total = matched.length;
     const newBroadcast = {
@@ -2881,7 +2927,7 @@ whatsappRouter.post("/api/whatsapp/broadcasts", async (req, res) => {
       scheduled_at,
       created_at: (/* @__PURE__ */ new Date()).toISOString()
     };
-    whatsappStore2.saveBroadcast(newBroadcast, userId);
+    whatsappStore.saveBroadcast(newBroadcast, userId);
     try {
       const supabase = getBackendSupabaseClient();
       await supabase.from("whatsapp_campaigns").insert({
@@ -2909,7 +2955,7 @@ whatsappRouter.post("/api/whatsapp/broadcasts", async (req, res) => {
 whatsappRouter.get("/api/whatsapp/contacts", async (req, res) => {
   try {
     const { userId } = await resolveUserProfileId(req);
-    const contacts = whatsappStore2.getContacts(userId);
+    const contacts = whatsappStore.getContacts(userId);
     return res.json({ data: contacts });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -2931,7 +2977,7 @@ whatsappRouter.post("/api/whatsapp/contacts", async (req, res) => {
       last_activity_at: (/* @__PURE__ */ new Date()).toISOString(),
       notes: req.body.notes
     };
-    whatsappStore2.saveContact(newContact, userId);
+    whatsappStore.saveContact(newContact, userId);
     return res.json({ success: true, data: newContact });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -2939,7 +2985,7 @@ whatsappRouter.post("/api/whatsapp/contacts", async (req, res) => {
 });
 whatsappRouter.put("/api/whatsapp/contacts/:id", (req, res) => {
   const { id } = req.params;
-  const existing = whatsappStore2.getContact(id);
+  const existing = whatsappStore.getContact(id);
   if (!existing) return res.status(404).json({ error: "Contact not found" });
   const updated = {
     ...existing,
@@ -2947,12 +2993,12 @@ whatsappRouter.put("/api/whatsapp/contacts/:id", (req, res) => {
     id,
     last_activity_at: (/* @__PURE__ */ new Date()).toISOString()
   };
-  whatsappStore2.saveContact(updated);
+  whatsappStore.saveContact(updated);
   return res.json({ success: true, data: updated });
 });
 whatsappRouter.delete("/api/whatsapp/contacts/:id", (req, res) => {
   const { id } = req.params;
-  whatsappStore2.deleteContact(id);
+  whatsappStore.deleteContact(id);
   return res.json({ success: true });
 });
 whatsappRouter.post("/api/mcp", (req, res) => {
@@ -2991,17 +3037,17 @@ whatsappRouter.get("/api/mcp/manifest", (req, res) => {
   });
 });
 whatsappRouter.get("/api/mcp/tokens", (req, res) => {
-  const tokens = whatsappStore2.getMCPTokens();
+  const tokens = whatsappStore.getMCPTokens();
   return res.json({ data: tokens });
 });
 whatsappRouter.post("/api/mcp/tokens", (req, res) => {
   const { name, scopes } = req.body;
-  const result = whatsappStore2.createMCPToken(name || "External Agent Token", scopes || ["*"]);
+  const result = whatsappStore.createMCPToken(name || "External Agent Token", scopes || ["*"]);
   return res.json({ success: true, token: result.token, data: result.record });
 });
 whatsappRouter.delete("/api/mcp/tokens/:id", (req, res) => {
   const { id } = req.params;
-  whatsappStore2.deleteMCPToken(id);
+  whatsappStore.deleteMCPToken(id);
   return res.json({ success: true });
 });
 function getUserIdFromReq(req) {
@@ -3056,7 +3102,7 @@ async function resolveUserProfileId(req) {
     userId = "demo@rockyt.io";
   }
   const userEmail = req.headers["x-user-email"] || (userId.includes("@") ? userId : void 0);
-  const profileId = await ZernioWhatsAppService2.getOrCreateProfileId(userId, userEmail);
+  const profileId = await ZernioWhatsAppService.getOrCreateProfileId(userId, userEmail);
   return { userId, profileId };
 }
 whatsappRouter.get("/api/whatsapp/account", async (req, res) => {
@@ -3070,7 +3116,7 @@ whatsappRouter.get("/api/whatsapp/account", async (req, res) => {
         return res.json({
           connected: Boolean(cached && cached.status !== "disconnected"),
           account: cached,
-          sandbox: whatsappStore2.getSandboxSession(userId) || null,
+          sandbox: whatsappStore.getSandboxSession(userId) || null,
           profileId,
           cached: true
         });
@@ -3078,8 +3124,8 @@ whatsappRouter.get("/api/whatsapp/account", async (req, res) => {
     } else {
       await cacheService.invalidateUser(userId);
     }
-    let account = whatsappStore2.getAccount(userId);
-    const sandbox = whatsappStore2.getSandboxSession(userId);
+    let account = whatsappStore.getAccount(userId);
+    const sandbox = whatsappStore.getSandboxSession(userId);
     if (!account) {
       try {
         const supabase = getBackendSupabaseClient();
@@ -3091,7 +3137,7 @@ whatsappRouter.get("/api/whatsapp/account", async (req, res) => {
             console.warn(`[GET /api/whatsapp/account] Purging leaked Moamen WhatsApp account from user ${userId} (${cleanEmail})`);
             await supabase.from("whatsapp_accounts").delete().eq("id", dbAcc.id);
           } else {
-            account = whatsappStore2.setAccount({
+            account = whatsappStore.setAccount({
               id: dbAcc.id,
               platform: dbAcc.platform || "whatsapp",
               name: dbAcc.name || "Connected WhatsApp Account",
@@ -3113,18 +3159,19 @@ whatsappRouter.get("/api/whatsapp/account", async (req, res) => {
     }
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if ((!account || force) && apiKey && apiKey !== "dummy_dev_key") {
-      const liveAccounts = await ZernioWhatsAppService2.listWhatsAppAccounts(profileId);
-      if (liveAccounts.length > 0) {
-        account = whatsappStore2.setAccount(liveAccounts[0], userId);
-        await ZernioWhatsAppService2.saveWhatsAppAccountToDb(userId, liveAccounts[0]);
+      const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId);
+      const activeAccounts = liveAccounts.filter((acc) => acc.status !== "disconnected");
+      if (activeAccounts.length > 0) {
+        account = whatsappStore.setAccount(activeAccounts[0], userId);
+        await ZernioWhatsAppService.saveWhatsAppAccountToDb(userId, activeAccounts[0]);
       } else if (force) {
         account = null;
-        whatsappStore2.disconnectAccount(userId);
+        whatsappStore.disconnectAccount(userId);
       }
     }
     if (account && account.id) {
       try {
-        const health = await ZernioWhatsAppService2.getAccountHealth(account.id);
+        const health = await ZernioWhatsAppService.getAccountHealth(account.id);
         account = {
           ...account,
           can_start_conversations: health.canStartConversations,
@@ -3134,7 +3181,7 @@ whatsappRouter.get("/api/whatsapp/account", async (req, res) => {
           issues: health.issues,
           recommendations: health.recommendations
         };
-        whatsappStore2.setAccount(account, userId);
+        whatsappStore.setAccount(account, userId);
       } catch (healthErr) {
         console.warn("[GET /api/whatsapp/account health check notice]:", healthErr.message);
       }
@@ -3189,15 +3236,15 @@ whatsappRouter.post("/api/whatsapp/account/sync", async (req, res) => {
         messaging_limit_tier: "TIER_100K_DAILY",
         connected_at: (/* @__PURE__ */ new Date()).toISOString()
       };
-      whatsappStore2.setAccount(account, userId);
-      await ZernioWhatsAppService2.saveWhatsAppAccountToDb(userId, account);
+      whatsappStore.setAccount(account, userId);
+      await ZernioWhatsAppService.saveWhatsAppAccountToDb(userId, account);
     }
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if (apiKey && apiKey !== "dummy_dev_key") {
-      const liveAccounts = await ZernioWhatsAppService2.listWhatsAppAccounts(profileId);
+      const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId);
       if (liveAccounts.length > 0) {
-        account = whatsappStore2.setAccount(liveAccounts[0], userId);
-        await ZernioWhatsAppService2.saveWhatsAppAccountToDb(userId, liveAccounts[0]);
+        account = whatsappStore.setAccount(liveAccounts[0], userId);
+        await ZernioWhatsAppService.saveWhatsAppAccountToDb(userId, liveAccounts[0]);
       }
     }
     await cacheService.invalidateUser(userId);
@@ -3210,21 +3257,103 @@ whatsappRouter.post("/api/whatsapp/account/sync", async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
-whatsappRouter.post("/api/whatsapp/account/disconnect", async (req, res) => {
+var handleDisconnectWhatsAppAccount = async (req, res) => {
   try {
-    const { userId } = await resolveUserProfileId(req);
-    whatsappStore2.disconnectAccount(userId);
-    try {
-      const supabase = getBackendSupabaseClient();
-      await supabase.from("whatsapp_accounts").delete().eq("user_id", userId);
-    } catch {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const body = req.body || {};
+    const query = req.query || {};
+    const requestedAccountId = body.accountId || body.id || query.accountId || query.id;
+    const requestedPhone = body.phone || body.phone_number || query.phone;
+    console.log(`[POST /api/whatsapp/account/disconnect] Disconnecting WhatsApp for user ${userId} (profile: ${profileId}, accountId: ${requestedAccountId || "auto-detect"})`);
+    const supabase = getBackendSupabaseClient();
+    const accountIdsToDisconnect = /* @__PURE__ */ new Set();
+    if (requestedAccountId && typeof requestedAccountId === "string" && requestedAccountId !== "disconnect") {
+      accountIdsToDisconnect.add(requestedAccountId);
     }
+    const memAcc = whatsappStore.getAccount(userId);
+    if (memAcc?.id) accountIdsToDisconnect.add(memAcc.id);
+    try {
+      const { data: dbAccs } = await supabase.from("whatsapp_accounts").select("id, phone_number_id").eq("user_id", userId);
+      if (dbAccs) {
+        dbAccs.forEach((a) => {
+          if (a.id) accountIdsToDisconnect.add(a.id);
+          if (a.phone_number_id) accountIdsToDisconnect.add(a.phone_number_id);
+        });
+      }
+    } catch (e) {
+      console.warn("[disconnect] whatsapp_accounts lookup notice:", e?.message);
+    }
+    try {
+      const { data: connAccs } = await supabase.from("connected_accounts").select("id").eq("user_id", userId).ilike("platform", "%whatsapp%");
+      if (connAccs) {
+        connAccs.forEach((a) => {
+          if (a.id) accountIdsToDisconnect.add(a.id);
+        });
+      }
+    } catch (e) {
+      console.warn("[disconnect] connected_accounts lookup notice:", e?.message);
+    }
+    try {
+      const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId);
+      if (liveAccounts && Array.isArray(liveAccounts)) {
+        liveAccounts.forEach((acc) => {
+          if (acc.id) accountIdsToDisconnect.add(acc.id);
+        });
+      }
+    } catch (e) {
+      console.warn("[disconnect] Zernio live accounts lookup notice:", e?.message);
+    }
+    for (const accId of accountIdsToDisconnect) {
+      try {
+        await ZernioWhatsAppService.disconnectAccount(accId, profileId);
+      } catch (zErr) {
+        console.warn(`[disconnect] Zernio disconnect warning for ${accId}:`, zErr.message);
+      }
+    }
+    try {
+      await supabase.from("whatsapp_accounts").delete().eq("user_id", userId);
+      if (requestedAccountId) {
+        await supabase.from("whatsapp_accounts").delete().eq("id", requestedAccountId);
+      }
+      await supabase.from("connected_accounts").delete().eq("user_id", userId).ilike("platform", "%whatsapp%");
+      for (const accId of accountIdsToDisconnect) {
+        await supabase.from("connected_accounts").delete().eq("id", accId);
+      }
+      try {
+        await supabase.from("whatsapp_numbers").update({ status: "disconnected" }).eq("user_id", userId);
+        if (requestedPhone) {
+          await supabase.from("whatsapp_numbers").update({ status: "disconnected" }).eq("phone_number", requestedPhone);
+        }
+      } catch {
+      }
+      const { data: remaining } = await supabase.from("connected_accounts").select("id").eq("user_id", userId).eq("status", "connected");
+      const remainingCount = remaining ? remaining.length : 0;
+      await supabase.from("profiles").update({
+        connected_accounts_count: remainingCount
+      }).eq("id", userId);
+      console.log(`[disconnect] Successfully updated profiles.connected_accounts_count to ${remainingCount} for user ${userId}`);
+    } catch (dbErr) {
+      console.error("[disconnect] Supabase cleanup error:", dbErr?.message || dbErr);
+    }
+    whatsappStore.disconnectAccount(userId);
     await cacheService.invalidateUser(userId);
-    return res.json({ success: true, message: "WhatsApp account disconnected" });
+    await cacheService.del(cacheService.getUserKey(userId, "account"));
+    return res.json({
+      success: true,
+      status: "disconnected",
+      message: "WhatsApp account disconnected successfully",
+      disconnectedAccounts: Array.from(accountIdsToDisconnect)
+    });
   } catch (err) {
-    return res.status(401).json({ error: "unauthorized", message: err.message });
+    console.error("[POST /api/whatsapp/account/disconnect] Error:", err);
+    return res.status(500).json({ error: "disconnect_failed", message: err.message });
   }
-});
+};
+whatsappRouter.post("/api/whatsapp/account/disconnect", handleDisconnectWhatsAppAccount);
+whatsappRouter.delete("/api/whatsapp/account/disconnect", handleDisconnectWhatsAppAccount);
+whatsappRouter.delete("/api/whatsapp/account", handleDisconnectWhatsAppAccount);
+whatsappRouter.post("/api/v1/whatsapp/account/disconnect", handleDisconnectWhatsAppAccount);
+whatsappRouter.delete("/api/v1/whatsapp/account", handleDisconnectWhatsAppAccount);
 var handleCreateSandbox = async (req, res) => {
   const phone = req.body.phone || req.body.phone_number;
   if (!phone) {
@@ -3232,15 +3361,15 @@ var handleCreateSandbox = async (req, res) => {
   }
   try {
     const { userId } = await resolveUserProfileId(req);
-    const session = await ZernioWhatsAppService2.createSandboxSession(phone, userId);
+    const session = await ZernioWhatsAppService.createSandboxSession(phone, userId);
     if (!session) {
       return res.status(500).json({ error: "Failed to initialize sandbox session." });
     }
-    whatsappStore2.setSandboxSession(session, userId);
+    whatsappStore.setSandboxSession(session, userId);
     return res.json({
       success: true,
       session,
-      account: whatsappStore2.getAccount(userId)
+      account: whatsappStore.getAccount(userId)
     });
   } catch (err) {
     return res.status(401).json({ error: "unauthorized", message: err.message });
@@ -3251,7 +3380,7 @@ whatsappRouter.post("/api/whatsapp/sandbox/sessions", handleCreateSandbox);
 whatsappRouter.get("/api/whatsapp/sandbox/session", async (req, res) => {
   try {
     const { userId } = await resolveUserProfileId(req);
-    const session = whatsappStore2.getSandboxSession(userId);
+    const session = whatsappStore.getSandboxSession(userId);
     return res.json({ session: session || null });
   } catch (err) {
     return res.status(401).json({ error: "unauthorized", message: err.message });
@@ -3260,7 +3389,7 @@ whatsappRouter.get("/api/whatsapp/sandbox/session", async (req, res) => {
 whatsappRouter.get("/api/whatsapp/sandbox/sessions", async (req, res) => {
   try {
     const { userId } = await resolveUserProfileId(req);
-    const session = whatsappStore2.getSandboxSession(userId);
+    const session = whatsappStore.getSandboxSession(userId);
     return res.json({ sessions: session ? [session] : [] });
   } catch (err) {
     return res.status(401).json({ error: "unauthorized", message: err.message });
@@ -3269,11 +3398,11 @@ whatsappRouter.get("/api/whatsapp/sandbox/sessions", async (req, res) => {
 whatsappRouter.delete("/api/whatsapp/sandbox/session", async (req, res) => {
   try {
     const { userId } = await resolveUserProfileId(req);
-    const session = whatsappStore2.getSandboxSession(userId);
+    const session = whatsappStore.getSandboxSession(userId);
     if (session) {
-      await ZernioWhatsAppService2.deleteSandboxSession(session.id);
+      await ZernioWhatsAppService.deleteSandboxSession(session.id);
     }
-    whatsappStore2.deleteSandboxSession(userId);
+    whatsappStore.deleteSandboxSession(userId);
     return res.json({ success: true, message: "Sandbox session revoked." });
   } catch (err) {
     return res.status(401).json({ error: "unauthorized", message: err.message });
@@ -3282,7 +3411,7 @@ whatsappRouter.delete("/api/whatsapp/sandbox/session", async (req, res) => {
 whatsappRouter.post("/api/whatsapp/sandbox/simulate-message", async (req, res) => {
   try {
     const { userId, profileId } = await resolveUserProfileId(req);
-    const session = whatsappStore2.getSandboxSession(userId);
+    const session = whatsappStore.getSandboxSession(userId);
     const phone = req.body.phone_number || session?.phone_number || "+971503102740";
     const text = req.body.text || "Hi! Testing WhatsApp sandbox automation and CRM response.";
     const name = req.body.name || "Sandbox Tester";
@@ -3292,9 +3421,9 @@ whatsappRouter.post("/api/whatsapp/sandbox/simulate-message", async (req, res) =
         status: "active",
         expires_at: new Date(Date.now() + 24 * 60 * 60 * 1e3).toISOString()
       };
-      whatsappStore2.setSandboxSession(activeSession, userId);
+      whatsappStore.setSandboxSession(activeSession, userId);
     }
-    let contact = whatsappStore2.getContactByPhone(phone);
+    let contact = whatsappStore.getContactByPhone(phone);
     if (!contact) {
       contact = {
         id: `cnt_${Date.now()}`,
@@ -3307,11 +3436,11 @@ whatsappRouter.post("/api/whatsapp/sandbox/simulate-message", async (req, res) =
         created_at: (/* @__PURE__ */ new Date()).toISOString(),
         last_activity_at: (/* @__PURE__ */ new Date()).toISOString()
       };
-      whatsappStore2.saveContact(contact);
+      whatsappStore.saveContact(contact);
     }
-    const conv = whatsappStore2.getOrCreateConversation(
+    const conv = whatsappStore.getOrCreateConversation(
       contact,
-      whatsappStore2.getAccount(userId)?.id || "acc_sandbox",
+      whatsappStore.getAccount(userId)?.id || "acc_sandbox",
       profileId
     );
     const incomingMsg = {
@@ -3325,7 +3454,7 @@ whatsappRouter.post("/api/whatsapp/sandbox/simulate-message", async (req, res) =
       sender_name: name,
       sender_phone: phone
     };
-    whatsappStore2.appendMessage(incomingMsg);
+    whatsappStore.appendMessage(incomingMsg);
     const triggeredFlows = await AutomationEngine.evaluateTrigger(
       "incoming_message",
       {
@@ -3363,7 +3492,7 @@ whatsappRouter.post("/api/whatsapp/connect/oauth", async (req, res) => {
       if (!zernioRes.ok && zernioRes.status === 404) {
         console.warn(`[POST /api/whatsapp/connect/oauth] Profile "${profileId}" returned 404 on Zernio. Refreshing profile...`);
         const userEmail = req.headers["x-user-email"] || (userId.includes("@") ? userId : void 0);
-        const freshProfileId = await ZernioWhatsAppService2.verifyAndRecreateProfile(userId, userEmail);
+        const freshProfileId = await ZernioWhatsAppService.verifyAndRecreateProfile(userId, userEmail);
         if (freshProfileId) {
           profileId = freshProfileId;
           zernioConnectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${encodeURIComponent(profileId)}&redirect_url=${redirectUri}&headless=true&reconnect=true&prompt=consent`;
@@ -3445,7 +3574,7 @@ whatsappRouter.post("/api/whatsapp/connect/headless/select", async (req, res) =>
         messaging_limit_tier: "TIER_100K_DAILY",
         connected_at: (/* @__PURE__ */ new Date()).toISOString()
       };
-      whatsappStore2.setAccount(newAcc, userId);
+      whatsappStore.setAccount(newAcc, userId);
       try {
         const supabase = getBackendSupabaseClient();
         await supabase.from("whatsapp_accounts").upsert({
@@ -3508,7 +3637,7 @@ whatsappRouter.post("/api/whatsapp/connect/credentials", async (req, res) => {
             messaging_limit_tier: "TIER_100K_DAILY",
             connected_at: (/* @__PURE__ */ new Date()).toISOString()
           };
-          whatsappStore2.setAccount(account2, userId);
+          whatsappStore.setAccount(account2, userId);
           try {
             const supabase = getBackendSupabaseClient();
             await supabase.from("whatsapp_accounts").upsert({
@@ -3549,7 +3678,7 @@ whatsappRouter.post("/api/whatsapp/connect/credentials", async (req, res) => {
       verified_name: name || "Verified WABA",
       connected_at: (/* @__PURE__ */ new Date()).toISOString()
     };
-    whatsappStore2.setAccount(account, userId);
+    whatsappStore.setAccount(account, userId);
     try {
       const supabase = getBackendSupabaseClient();
       await supabase.from("whatsapp_accounts").upsert({
@@ -3597,14 +3726,14 @@ whatsappRouter.post("/api/whatsapp/connect/headless", (req, res) => {
     verified_name: name || "Verified WABA",
     connected_at: (/* @__PURE__ */ new Date()).toISOString()
   };
-  whatsappStore2.setAccount(account);
+  whatsappStore.setAccount(account);
   return res.json({
     success: true,
     account
   });
 });
 whatsappRouter.get("/api/whatsapp/phone-numbers", (req, res) => {
-  const account = whatsappStore2.getAccount();
+  const account = whatsappStore.getAccount();
   if (!account) {
     return res.json({ data: [] });
   }
@@ -3625,7 +3754,7 @@ whatsappRouter.get("/api/whatsapp/phone-numbers", (req, res) => {
 whatsappRouter.get("/api/whatsapp/account/health", async (req, res) => {
   try {
     const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore2.getAccount(userId);
+    const account = whatsappStore.getAccount(userId);
     const accountId = req.query.accountId || account?.id;
     if (!accountId || accountId === "acc_primary") {
       return res.json({
@@ -3636,7 +3765,7 @@ whatsappRouter.get("/api/whatsapp/account/health", async (req, res) => {
         recommendations: ["Connect WhatsApp via Meta OAuth in dashboard."]
       });
     }
-    const health = await ZernioWhatsAppService2.getAccountHealth(accountId);
+    const health = await ZernioWhatsAppService.getAccountHealth(accountId);
     return res.json({
       connected: true,
       accountId,
@@ -6659,6 +6788,11 @@ function startServer() {
           const formattedPlatform = cleanPlatform.charAt(0).toUpperCase() + cleanPlatform.slice(1);
           await supabase.from("connected_accounts").delete().eq("user_id", userId).eq("platform", formattedPlatform);
           await supabase.from("connected_accounts").delete().eq("user_id", userId).eq("platform", cleanPlatform);
+        }
+        if (platformName && platformName.toLowerCase().includes("whatsapp")) {
+          await supabase.from("whatsapp_accounts").delete().eq("user_id", userId);
+          whatsappStore.disconnectAccount(userId);
+          await cacheService.invalidateUser(userId);
         }
         const { data: remaining } = await supabase.from("connected_accounts").select("id").eq("user_id", userId).eq("status", "connected");
         const newCount = remaining ? remaining.length : 0;

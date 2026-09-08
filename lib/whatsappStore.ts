@@ -382,7 +382,7 @@ class WhatsAppStore {
   }
 
 
-  public updateMessageStatus(conversationId: string, messageId: string, status: MessageStatus): boolean {
+  public updateMessageStatus(conversationId: string, messageId: string, status: 'sent' | 'delivered' | 'read' | 'failed'): boolean {
     const msgs = this.messages.get(conversationId);
     if (!msgs) return false;
     const msg = msgs.find(m => m.id === messageId);
@@ -559,8 +559,8 @@ class WhatsAppStore {
     this.automations.clear();
     this.capiEvents = [];
     this.mcpTokens.clear();
-    this.connectedAccount = null;
-    this.sandboxSession = null;
+    this.userAccounts.clear();
+    this.userSandboxSessions.clear();
   }
 }
 
