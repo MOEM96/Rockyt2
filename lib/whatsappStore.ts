@@ -550,6 +550,25 @@ class WhatsAppStore {
   }
 
   // --- Clear / Reset ---
+  public purgeAllUserData(userId: string, profileId?: string): void {
+    if (userId) {
+      this.userAccounts.delete(userId);
+      this.userSandboxSessions.delete(userId);
+      this.userContacts.delete(userId);
+      this.userTemplates.delete(userId);
+      this.userBroadcasts.delete(userId);
+      this.userAutomations.delete(userId);
+    }
+    if (profileId) {
+      for (const [id, conv] of this.conversations.entries()) {
+        if (conv.profile_id === profileId) {
+          this.conversations.delete(id);
+          this.messages.delete(id);
+        }
+      }
+    }
+  }
+
   public clearAllData(): void {
     this.contacts.clear();
     this.conversations.clear();

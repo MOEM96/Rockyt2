@@ -141,8 +141,9 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
       });
       if (res.ok) {
         const data = await res.json();
-        setAccount(data.account || null);
-        if (data.account && data.account.status !== 'disconnected') {
+        const validAcc = (data.account && data.account.status === 'connected' && data.account.phone_number) ? data.account : null;
+        setAccount(validAcc);
+        if (validAcc) {
           setCompletedSteps(prev => ({ ...prev, 1: true }));
         } else {
           setCompletedSteps(prev => ({ ...prev, 1: false }));
@@ -181,11 +182,22 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
     fetchAccountStatus();
     fetchCampaignMetrics();
 
-    // Live Real-Time refresh interval (every 4 seconds)
+    // Visibility-aware periodic refresh (every 30 seconds, paused when tab is inactive)
     const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return; // Pause background polling when tab is not active
+      }
       fetchAccountStatus();
       fetchCampaignMetrics();
-    }, 4000);
+    }, 30000);
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        fetchAccountStatus();
+        fetchCampaignMetrics();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     // Detect return from Meta / Zernio Headless OAuth
     const searchParams = new URLSearchParams(window.location.search);
@@ -220,7 +232,10 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
       setIsConnectModalOpen(true);
     }
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [userSession?.id]);
 
   const handleFetchChatsAndContacts = async () => {
@@ -265,7 +280,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
   const handleDisconnect = async (targetAccountId?: string, targetPhone?: string) => {
     const accId = targetAccountId || account?.id;
     const phoneNum = targetPhone || account?.phone_number;
-    if (!confirm(`Are you sure you want to disconnect this WhatsApp number${phoneNum ? ` (${phoneNum})` : ''}? You can reconnect it anytime.`)) return;
+    if (!confirm(`Are you sure you want to disconnect this WhatsApp number${phoneNum ? ` (${phoneNum})` : ''}? All associated conversations, messages, and configurations will be permanently deleted.`)) return;
 
     setIsDisconnecting(true);
     try {
@@ -287,9 +302,24 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
       if (res.ok && data.success) {
         setAccount(null);
         setCompletedSteps(prev => ({ ...prev, 1: false }));
+        setManageSenderDropdownOpen(false);
+        setAccountHealthModalOpen(false);
+        setAddChannelModalOpen(false);
+        setOauthBanner(null);
+
+        // Permanently purge all WhatsApp data from localStorage
+        const uid = userSession?.id || localStorage.getItem('rockyt_user_id') || 'default_user';
+        localStorage.removeItem(`rockyt_wa_convs_${uid}`);
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const key = localStorage.key(i);
+          if (key && (key.startsWith('rockyt_wa_') || key.startsWith(`rockyt_wa_msgs_${uid}`))) {
+            localStorage.removeItem(key);
+          }
+        }
+
         setFetchChatsNotice({
           success: true,
-          message: 'WhatsApp number successfully disconnected and unlinked.',
+          message: 'WhatsApp number and all associated data permanently deleted.',
         });
         await fetchAccountStatus(true);
         await fetchCampaignMetrics();
@@ -399,7 +429,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
         <div className="flex items-center gap-4">
           
           {/* WhatsApp Connection Status Header Badge */}
-          {account && account.status !== 'disconnected' ? (
+          {account && account.status === 'connected' && account.phone_number ? (
             <button
               onClick={() => setCurrentView('whatsapp-overview')}
               className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-900 border border-emerald-200 hover:bg-emerald-100 transition-colors cursor-pointer"
@@ -851,7 +881,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
               WHATSAPP SENDERS OVERVIEW DASHBOARD (Exact Match to Screenshot 1)
           ========================================================================= */}
           {(currentView === 'setup' || currentView === 'whatsapp-overview') && (() => {
-            const isConnected = Boolean(account && account.status !== 'disconnected' && (account.phone_number || account.id));
+            const isConnected = Boolean(account && account.status === 'connected' && (account.phone_number || account.id));
             const senderName = account?.name || 'WhatsApp Business';
             const senderPhone = account?.phone_number || '';
             const rawId = account?.id || '';
@@ -2012,7 +2042,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
                     <div className="text-xs text-gray-500">{account?.phone_number || 'No phone number connected'}</div>
                   </div>
                   <div className="flex items-center gap-2">
-                    {account && account.status !== 'disconnected' && (
+                    {account && account.status === 'connected' && (
                       <button
                         onClick={() => handleDisconnect(account.id, account.phone_number)}
                         disabled={isDisconnecting}

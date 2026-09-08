@@ -1176,14 +1176,25 @@ whatsappRouter.get('/api/whatsapp/account', async (req: Request, res: Response) 
 
     if (!force) {
       const cached = await cacheService.get<any>(cacheKey);
-      if (cached) {
-        return res.json({
-          connected: Boolean(cached && cached.status !== 'disconnected'),
-          account: cached,
-          sandbox: whatsappStore.getSandboxSession(userId) || null,
-          profileId,
-          cached: true,
-        });
+      if (cached !== undefined && cached !== null) {
+        if (cached.account && cached.account.status === 'connected') {
+          return res.json({
+            connected: true,
+            account: cached.account,
+            sandbox: whatsappStore.getSandboxSession(userId) || null,
+            profileId,
+            cached: true,
+          });
+        }
+        if (cached.account === null) {
+          return res.json({
+            connected: false,
+            account: null,
+            sandbox: whatsappStore.getSandboxSession(userId) || null,
+            profileId,
+            cached: true,
+          });
+        }
       }
     } else {
       await cacheService.invalidateUser(userId);
@@ -1209,21 +1220,31 @@ whatsappRouter.get('/api/whatsapp/account', async (req: Request, res: Response) 
           if (dbAcc.phone_number?.includes('503102740') && !isMoamen) {
             console.warn(`[GET /api/whatsapp/account] Purging leaked Moamen WhatsApp account from user ${userId} (${cleanEmail})`);
             await supabase.from('whatsapp_accounts').delete().eq('id', dbAcc.id);
+          } else if (dbAcc.status === 'disconnected') {
+            // Delete tombstoned/disconnected row from DB completely
+            await supabase.from('whatsapp_accounts').delete().eq('id', dbAcc.id);
           } else {
-            account = whatsappStore.setAccount({
-              id: dbAcc.id,
-              platform: dbAcc.platform || 'whatsapp',
-              name: dbAcc.name || 'Connected WhatsApp Account',
-              phone_number: dbAcc.phone_number,
-              phone_number_id: dbAcc.phone_number_id,
-              waba_id: dbAcc.waba_id,
-              status: dbAcc.status || 'connected',
-              mode: dbAcc.mode || 'production',
-              quality_rating: dbAcc.quality_rating || 'GREEN',
-              messaging_limit_tier: dbAcc.messaging_limit_tier || 'TIER_100K_DAILY',
-              verified_name: dbAcc.verified_name,
-              connected_at: dbAcc.connected_at
-            }, userId);
+            // Check tombstone cache
+            const isTombstoned = (await cacheService.get(`disconnected_wa_acc_${dbAcc.id}`)) ||
+              (dbAcc.phone_number ? await cacheService.get(`disconnected_wa_phone_${dbAcc.phone_number.replace(/[^0-9]/g, '')}`) : false);
+            if (isTombstoned) {
+              await supabase.from('whatsapp_accounts').delete().eq('id', dbAcc.id);
+            } else {
+              account = whatsappStore.setAccount({
+                id: dbAcc.id,
+                platform: dbAcc.platform || 'whatsapp',
+                name: dbAcc.name || 'Connected WhatsApp Account',
+                phone_number: dbAcc.phone_number,
+                phone_number_id: dbAcc.phone_number_id,
+                waba_id: dbAcc.waba_id,
+                status: 'connected',
+                mode: dbAcc.mode || 'production',
+                quality_rating: dbAcc.quality_rating || 'GREEN',
+                messaging_limit_tier: dbAcc.messaging_limit_tier || 'TIER_100K_DAILY',
+                verified_name: dbAcc.verified_name,
+                connected_at: dbAcc.connected_at
+              }, userId);
+            }
           }
         }
       } catch (dbErr: any) {
@@ -1234,21 +1255,21 @@ whatsappRouter.get('/api/whatsapp/account', async (req: Request, res: Response) 
     // 2. Discover live accounts from Zernio strictly matching profileId
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if ((!account || force) && apiKey && apiKey !== 'dummy_dev_key') {
-      const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId);
-      const activeAccounts = liveAccounts.filter(acc => acc.status !== 'disconnected');
+      const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId, force);
+      const activeAccounts = liveAccounts.filter(acc => acc.status === 'connected');
       if (activeAccounts.length > 0) {
         account = whatsappStore.setAccount(activeAccounts[0], userId);
         await ZernioWhatsAppService.saveWhatsAppAccountToDb(userId, activeAccounts[0]);
-      } else if (force) {
+      } else {
         account = null;
         whatsappStore.disconnectAccount(userId);
       }
     }
 
     // 3. Real-time Meta Account Health & Verification Status check
-    if (account && account.id) {
+    if (account && account.id && account.status === 'connected') {
       try {
-        const health = await ZernioWhatsAppService.getAccountHealth(account.id);
+        const health = await ZernioWhatsAppService.getAccountHealth(account.id, force);
         account = {
           ...account,
           can_start_conversations: health.canStartConversations,
@@ -1264,31 +1285,34 @@ whatsappRouter.get('/api/whatsapp/account', async (req: Request, res: Response) 
       }
     }
 
-    // Cache the resolved account for 15s
-    if (account) {
-      await cacheService.set(cacheKey, account, 15);
+    const isActuallyConnected = Boolean(account && account.status === 'connected' && account.phone_number);
+
+    let enrichedAccount: any = null;
+    if (isActuallyConnected && account) {
+      const hexMatch = account.id ? account.id.match(/([a-f0-9]{6})/i) : null;
+      const shortId = hexMatch ? hexMatch[1].toLowerCase() : account.id.substring(0, 6);
+
+      enrichedAccount = {
+        ...account,
+        name: account.name || 'WhatsApp Business',
+        phone_number: account.phone_number || '',
+        short_account_id: shortId,
+        type: account.type || 'Coexistence',
+        name_review_status: account.name_review_status || 'not_reviewed',
+        business_verification_status: account.business_verification_status || 'not_verified',
+        calling: account.calling || 'Off',
+        can_start_conversations: account.can_start_conversations ?? (account.payment_issue ? false : true),
+        health_status: account.health_status || (account.payment_issue ? 'error' : 'healthy'),
+        payment_issue: Boolean(account.payment_issue),
+        payment_error_message: account.payment_error_message || (account.payment_issue ? 'There is an error with the payment method. This will prevent sending template messages until updated in Meta Business Suite.' : undefined),
+      };
     }
 
-    const hexMatch = account?.id ? account.id.match(/([a-f0-9]{6})/i) : null;
-    const shortId = hexMatch ? hexMatch[1].toLowerCase() : (account?.id ? account.id.substring(0, 6) : 'eca6e8');
-
-    const enrichedAccount = account ? {
-      ...account,
-      name: account.name || 'WhatsApp Business',
-      phone_number: account.phone_number || '',
-      short_account_id: shortId,
-      type: account.type || 'Coexistence',
-      name_review_status: account.name_review_status || 'not_reviewed',
-      business_verification_status: account.business_verification_status || 'not_verified',
-      calling: account.calling || 'Off',
-      can_start_conversations: account.can_start_conversations ?? (account.payment_issue ? false : true),
-      health_status: account.health_status || (account.payment_issue ? 'error' : 'healthy'),
-      payment_issue: Boolean(account.payment_issue),
-      payment_error_message: account.payment_error_message || (account.payment_issue ? 'There is an error with the payment method. This will prevent sending template messages until updated in Meta Business Suite.' : undefined),
-    } : null;
+    // Cache the resolved account or null state for 45s to avoid continuous rate-limiting polling
+    await cacheService.set(cacheKey, { account: enrichedAccount }, 45);
 
     return res.json({
-      connected: Boolean(account && account.status !== 'disconnected'),
+      connected: isActuallyConnected,
       account: enrichedAccount,
       sandbox: sandbox || null,
       profileId,
@@ -1329,20 +1353,22 @@ whatsappRouter.post('/api/whatsapp/account/sync', async (req: Request, res: Resp
     // 2. Query upstream Zernio for live accounts
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if (apiKey && apiKey !== 'dummy_dev_key') {
-      const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId);
-      if (liveAccounts.length > 0) {
-        account = whatsappStore.setAccount(liveAccounts[0], userId);
-        await ZernioWhatsAppService.saveWhatsAppAccountToDb(userId, liveAccounts[0]);
+      const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId, true);
+      const activeAccounts = liveAccounts.filter(acc => acc.status === 'connected');
+      if (activeAccounts.length > 0) {
+        account = whatsappStore.setAccount(activeAccounts[0], userId);
+        await ZernioWhatsAppService.saveWhatsAppAccountToDb(userId, activeAccounts[0]);
       }
     }
 
     // Invalidate cached account so fresh state is returned
     await cacheService.invalidateUser(userId);
 
+    const isConnected = Boolean(account && account.status === 'connected' && account.phone_number);
     return res.json({
       success: true,
-      connected: Boolean(account && account.status !== 'disconnected'),
-      account: account || null
+      connected: isConnected,
+      account: isConnected ? account : null
     });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -1362,26 +1388,40 @@ const handleDisconnectWhatsAppAccount = async (req: Request, res: Response) => {
 
     const supabase = getBackendSupabaseClient();
 
-    // 1. Gather all candidate account IDs to disconnect from Zernio and DB
+    // 1. Gather all candidate account IDs and phone numbers to disconnect and purge
     const accountIdsToDisconnect = new Set<string>();
+    const phoneNumbersToPurge = new Set<string>();
+
     if (requestedAccountId && typeof requestedAccountId === 'string' && requestedAccountId !== 'disconnect') {
       accountIdsToDisconnect.add(requestedAccountId);
+    }
+    if (requestedPhone) {
+      const clean = String(requestedPhone).replace(/[^0-9]/g, '');
+      if (clean) phoneNumbersToPurge.add(clean);
     }
 
     // In-memory account
     const memAcc = whatsappStore.getAccount(userId);
     if (memAcc?.id) accountIdsToDisconnect.add(memAcc.id);
+    if (memAcc?.phone_number) {
+      const clean = memAcc.phone_number.replace(/[^0-9]/g, '');
+      if (clean) phoneNumbersToPurge.add(clean);
+    }
 
     // Database: whatsapp_accounts
     try {
       const { data: dbAccs } = await supabase
         .from('whatsapp_accounts')
-        .select('id, phone_number_id')
+        .select('id, phone_number, phone_number_id')
         .eq('user_id', userId);
       if (dbAccs) {
         dbAccs.forEach((a: any) => {
           if (a.id) accountIdsToDisconnect.add(a.id);
           if (a.phone_number_id) accountIdsToDisconnect.add(a.phone_number_id);
+          if (a.phone_number) {
+            const clean = a.phone_number.replace(/[^0-9]/g, '');
+            if (clean) phoneNumbersToPurge.add(clean);
+          }
         });
       }
     } catch (e: any) {
@@ -1392,12 +1432,16 @@ const handleDisconnectWhatsAppAccount = async (req: Request, res: Response) => {
     try {
       const { data: connAccs } = await supabase
         .from('connected_accounts')
-        .select('id')
+        .select('id, username')
         .eq('user_id', userId)
         .ilike('platform', '%whatsapp%');
       if (connAccs) {
         connAccs.forEach((a: any) => {
           if (a.id) accountIdsToDisconnect.add(a.id);
+          if (a.username) {
+            const clean = a.username.replace(/[^0-9]/g, '');
+            if (clean) phoneNumbersToPurge.add(clean);
+          }
         });
       }
     } catch (e: any) {
@@ -1406,17 +1450,31 @@ const handleDisconnectWhatsAppAccount = async (req: Request, res: Response) => {
 
     // Upstream Zernio: List any live accounts under this profile to make sure we disconnect them on Zernio!
     try {
-      const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId);
+      const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId, true);
       if (liveAccounts && Array.isArray(liveAccounts)) {
         liveAccounts.forEach((acc: any) => {
           if (acc.id) accountIdsToDisconnect.add(acc.id);
+          if (acc.phone_number) {
+            const clean = acc.phone_number.replace(/[^0-9]/g, '');
+            if (clean) phoneNumbersToPurge.add(clean);
+          }
         });
       }
     } catch (e: any) {
       console.warn('[disconnect] Zernio live accounts lookup notice:', e?.message);
     }
 
-    // 2. Call Zernio disconnect endpoint for all identified accounts
+    // 2. Set tombstone records in cache so these numbers and accounts can NEVER resurrect
+    for (const accId of accountIdsToDisconnect) {
+      const cleanAccId = String(accId).replace(/^acc_/, '').trim();
+      await cacheService.set(`disconnected_wa_acc_${cleanAccId}`, true, 86400); // 24h tombstone
+      await cacheService.del(`zernio_health_${cleanAccId}`);
+    }
+    for (const p of phoneNumbersToPurge) {
+      await cacheService.set(`disconnected_wa_phone_${p}`, true, 86400); // 24h tombstone
+    }
+
+    // 3. Call Zernio disconnect endpoint for all identified accounts
     for (const accId of accountIdsToDisconnect) {
       try {
         await ZernioWhatsAppService.disconnectAccount(accId, profileId);
@@ -1425,15 +1483,15 @@ const handleDisconnectWhatsAppAccount = async (req: Request, res: Response) => {
       }
     }
 
-    // 3. Update Supabase database
+    // 4. Update Supabase database: PERMANENTLY DELETE ALL RELATED DATA
     try {
-      // 3a. Delete from whatsapp_accounts
+      // 4a. Delete from whatsapp_accounts
       await supabase.from('whatsapp_accounts').delete().eq('user_id', userId);
       if (requestedAccountId) {
         await supabase.from('whatsapp_accounts').delete().eq('id', requestedAccountId);
       }
 
-      // 3b. Delete from connected_accounts
+      // 4b. Delete from connected_accounts
       await supabase
         .from('connected_accounts')
         .delete()
@@ -1444,21 +1502,32 @@ const handleDisconnectWhatsAppAccount = async (req: Request, res: Response) => {
         await supabase.from('connected_accounts').delete().eq('id', accId);
       }
 
-      // 3c. Update whatsapp_numbers if present
+      // 4c. Delete from whatsapp_numbers permanently
       try {
-        await supabase
-          .from('whatsapp_numbers')
-          .update({ status: 'disconnected' })
-          .eq('user_id', userId);
+        await supabase.from('whatsapp_numbers').delete().eq('user_id', userId);
         if (requestedPhone) {
-          await supabase
-            .from('whatsapp_numbers')
-            .update({ status: 'disconnected' })
-            .eq('phone_number', requestedPhone);
+          await supabase.from('whatsapp_numbers').delete().eq('phone_number', requestedPhone);
+        }
+        for (const p of phoneNumbersToPurge) {
+          await supabase.from('whatsapp_numbers').delete().ilike('phone_number', `%${p}%`);
         }
       } catch {}
 
-      // 3d. Recalculate connected_accounts_count in profiles
+      // 4d. Delete all related WhatsApp user data (conversations, messages, templates, campaigns)
+      try {
+        await supabase.from('whatsapp_conversations').delete().eq('user_id', userId);
+      } catch {}
+      try {
+        await supabase.from('whatsapp_messages').delete().eq('user_id', userId);
+      } catch {}
+      try {
+        await supabase.from('whatsapp_templates').delete().eq('user_id', userId);
+      } catch {}
+      try {
+        await supabase.from('whatsapp_campaigns').delete().eq('user_id', userId);
+      } catch {}
+
+      // 4e. Recalculate connected_accounts_count in profiles
       const { data: remaining } = await supabase
         .from('connected_accounts')
         .select('id')
@@ -1473,20 +1542,30 @@ const handleDisconnectWhatsAppAccount = async (req: Request, res: Response) => {
         })
         .eq('id', userId);
 
-      console.log(`[disconnect] Successfully updated profiles.connected_accounts_count to ${remainingCount} for user ${userId}`);
+      console.log(`[disconnect] Successfully purged all WhatsApp data and updated profiles.connected_accounts_count to ${remainingCount} for user ${userId}`);
     } catch (dbErr: any) {
       console.error('[disconnect] Supabase cleanup error:', dbErr?.message || dbErr);
     }
 
-    // 4. Invalidate memory & caches
+    // 5. Purge all in-memory store and invalidate caches
+    whatsappStore.purgeAllUserData(userId, profileId);
     whatsappStore.disconnectAccount(userId);
     await cacheService.invalidateUser(userId);
-    await cacheService.del(cacheService.getUserKey(userId, 'account'));
+
+    // Pre-cache null account state for 60s so subsequent polls immediately return null
+    const cacheKey = cacheService.getUserKey(userId, 'account');
+    await cacheService.set(cacheKey, { account: null }, 60);
+    if (profileId) {
+      await cacheService.del(`zernio_wa_accounts_${profileId}`);
+    }
+    await cacheService.del(`zernio_wa_accounts_all`);
 
     return res.json({
       success: true,
       status: 'disconnected',
-      message: 'WhatsApp account disconnected successfully',
+      connected: false,
+      account: null,
+      message: 'WhatsApp account and all related data have been permanently deleted.',
       disconnectedAccounts: Array.from(accountIdsToDisconnect)
     });
   } catch (err: any) {

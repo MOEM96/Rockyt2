@@ -2,6 +2,7 @@ import { Zernio } from '@zernio/node';
 import { WhatsAppSandboxSession, WhatsAppAccount } from './whatsappTypes';
 import { whatsappStore } from './whatsappStore';
 import { getBackendSupabaseClient } from './backendSupabase';
+import { cacheService } from './cacheService';
 import crypto from 'crypto';
 
 export class ZernioWhatsAppService {
@@ -307,13 +308,22 @@ export class ZernioWhatsAppService {
   /**
    * List connected WhatsApp accounts from Zernio
    */
-  public static async listWhatsAppAccounts(profileId?: string): Promise<WhatsAppAccount[]> {
+  public static async listWhatsAppAccounts(profileId?: string, forceRefresh = false): Promise<WhatsAppAccount[]> {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if (!apiKey) return [];
+
+    const cacheKey = `zernio_wa_accounts_${profileId || 'all'}`;
+    if (!forceRefresh) {
+      const cached = await cacheService.get<WhatsAppAccount[]>(cacheKey);
+      if (cached && Array.isArray(cached)) {
+        return cached;
+      }
+    }
 
     try {
       const url = new URL('https://zernio.com/api/v1/accounts');
       url.searchParams.set('platform', 'whatsapp');
+      url.searchParams.set('status', 'connected'); // As per Zernio docs, status=connected excludes disconnected/dead accounts
       if (profileId) url.searchParams.set('profileId', profileId);
 
       let res = await fetch(url.toString(), {
@@ -332,7 +342,31 @@ export class ZernioWhatsAppService {
       if (res.ok) {
         const json = await res.json();
         const accounts = json.accounts || json.data || [];
-        return accounts.map((acc: any) => {
+        const validAccounts: WhatsAppAccount[] = [];
+
+        for (const acc of accounts) {
+          const accId = acc._id || acc.id;
+          const phoneNum = acc.display_phone_number || acc.phoneNumber || acc.phone || acc.username || acc.selectedPhoneNumber || '';
+          const cleanPhone = phoneNum.replace(/[^0-9]/g, '');
+
+          // Check tombstones for recently disconnected accounts/numbers
+          const isTombstonedAcc = accId ? await cacheService.get(`disconnected_wa_acc_${accId}`) : false;
+          const isTombstonedPhone = cleanPhone ? await cacheService.get(`disconnected_wa_phone_${cleanPhone}`) : false;
+          if (isTombstonedAcc || isTombstonedPhone) {
+            console.log(`[Zernio listWhatsAppAccounts] Skipping disconnected/tombstoned account ${accId} (${phoneNum})`);
+            continue;
+          }
+
+          // Strict verification of active connection
+          if (acc.isActive === false || acc.enabled === false || acc.needsReconnection === true) {
+            continue;
+          }
+
+          const rawStatus = String(acc.status || '').toLowerCase();
+          if (rawStatus === 'disconnected' || rawStatus === 'inactive' || rawStatus === 'disabled' || rawStatus === 'revoked' || rawStatus === 'deleted' || rawStatus === 'unlinked') {
+            continue;
+          }
+
           const metadata = acc.metadata || {};
           const rawNameStatus = String(metadata.nameStatus || metadata.name_status || acc.name_status || '').toUpperCase();
           let nameReviewStatus: 'approved' | 'in_review' | 'declined' | 'not_reviewed' = 'not_reviewed';
@@ -351,14 +385,14 @@ export class ZernioWhatsAppService {
           const hexMatch = (acc._id || acc.id || '').match(/([a-f0-9]{6})/i);
           const shortId = hexMatch ? hexMatch[1].toLowerCase() : (acc._id || acc.id || 'eca6e8').substring(0, 6);
 
-          return {
+          validAccounts.push({
             id: acc._id || acc.id,
             platform: 'whatsapp',
             name: acc.name || acc.username || 'WhatsApp Business Account',
-            phone_number: acc.display_phone_number || acc.phoneNumber || acc.phone || acc.username || acc.selectedPhoneNumber || '',
+            phone_number: phoneNum,
             phone_number_id: acc.phoneNumberId || acc.id,
             waba_id: acc.wabaId,
-            status: (acc.isActive === false || acc.status === 'disconnected') ? 'disconnected' : 'connected',
+            status: 'connected',
             mode: 'production',
             quality_rating: acc.qualityRating || metadata.qualityRating || 'GREEN',
             messaging_limit_tier: acc.messagingLimitTier || metadata.messagingLimitTier || 'TIER_10K',
@@ -369,8 +403,12 @@ export class ZernioWhatsAppService {
             name_review_status: nameReviewStatus,
             business_verification_status: bizVerificationStatus,
             calling,
-          };
-        });
+          });
+        }
+
+        // Cache valid accounts list for 45 seconds to eliminate continuous polling storms
+        await cacheService.set(cacheKey, validAccounts, 45);
+        return validAccounts;
       }
     } catch (err: any) {
       console.warn('[Zernio SDK listWhatsAppAccounts Notice]:', err.message);
@@ -389,6 +427,14 @@ export class ZernioWhatsAppService {
     if (!cleanAccId || cleanAccId === 'disconnect' || cleanAccId === 'acc_primary') {
       return { success: true };
     }
+
+    // Set tombstones & invalidate caches immediately
+    await cacheService.set(`disconnected_wa_acc_${cleanAccId}`, true, 86400); // 24h tombstone
+    await cacheService.del(`zernio_health_${cleanAccId}`);
+    if (profileId) {
+      await cacheService.del(`zernio_wa_accounts_${profileId}`);
+    }
+    await cacheService.del(`zernio_wa_accounts_all`);
 
     try {
       const url = new URL(`https://zernio.com/api/v1/accounts/${encodeURIComponent(cleanAccId)}`);
@@ -436,7 +482,7 @@ export class ZernioWhatsAppService {
   /**
    * Real-time account health and verification status check directly from Zernio / Meta API
    */
-  public static async getAccountHealth(accountId: string): Promise<{
+  public static async getAccountHealth(accountId: string, force = false): Promise<{
     status: 'healthy' | 'warning' | 'error';
     canStartConversations: boolean;
     issues: string[];
@@ -445,8 +491,7 @@ export class ZernioWhatsAppService {
     paymentIssue: boolean;
     paymentErrorMessage?: string;
   }> {
-    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
-    if (!apiKey || !accountId || accountId === 'acc_primary') {
+    if (!accountId || accountId === 'acc_primary') {
       return {
         status: 'warning',
         canStartConversations: false,
@@ -457,8 +502,42 @@ export class ZernioWhatsAppService {
       };
     }
 
+    const cleanAccId = String(accountId).replace(/^acc_/, '').trim();
+
+    // Check tombstone: if account was disconnected by user, do not call Zernio!
+    const isTombstoned = (await cacheService.get(`disconnected_wa_acc_${cleanAccId}`)) ||
+      (await cacheService.get(`disconnected_wa_acc_${accountId}`));
+    if (isTombstoned) {
+      return {
+        status: 'error',
+        canStartConversations: false,
+        issues: ['Account has been disconnected by user.'],
+        recommendations: ['Reconnect WhatsApp via Meta OAuth.'],
+        tokenValid: false,
+        paymentIssue: false,
+      };
+    }
+
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey) {
+      return {
+        status: 'warning',
+        canStartConversations: false,
+        issues: ['API Key missing.'],
+        recommendations: ['Configure Zernio API key.'],
+        tokenValid: false,
+        paymentIssue: false,
+      };
+    }
+
+    const healthCacheKey = `zernio_health_${cleanAccId}`;
+    if (!force) {
+      const cached = await cacheService.get<any>(healthCacheKey);
+      if (cached) return cached;
+    }
+
     try {
-      const res = await fetch(`https://zernio.com/api/v1/accounts/${encodeURIComponent(accountId)}/health`, {
+      const res = await fetch(`https://zernio.com/api/v1/accounts/${encodeURIComponent(cleanAccId)}/health`, {
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
@@ -475,7 +554,7 @@ export class ZernioWhatsAppService {
 
         const canPost = Boolean(data.permissions?.canPost !== false && data.status !== 'error' && !hasPayment);
 
-        return {
+        const result = {
           status: data.status || (hasPayment ? 'error' : 'healthy'),
           canStartConversations: canPost,
           issues,
@@ -484,6 +563,10 @@ export class ZernioWhatsAppService {
           paymentIssue: hasPayment,
           paymentErrorMessage: paymentMsg,
         };
+
+        // Cache health response for 60 seconds to stop repeated rate limit exhaustion
+        await cacheService.set(healthCacheKey, result, 60);
+        return result;
       }
     } catch (err: any) {
       console.warn('[getAccountHealth warning]:', err.message);
