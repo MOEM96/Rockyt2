@@ -1341,7 +1341,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
           ========================================================================= */}
           {currentView === 'whatsapp-templates' && (
             <div className="p-6 max-w-7xl mx-auto">
-              <TemplateStudio />
+              <TemplateStudio userSession={userSession} />
             </div>
           )}
 
@@ -1876,7 +1876,7 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
                   </button>
                 </div>
               </div>
-              <TemplateStudio />
+              <TemplateStudio userSession={userSession} />
             </div>
           )}
 

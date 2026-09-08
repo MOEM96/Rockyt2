@@ -789,13 +789,53 @@ whatsappRouter.get('/api/whatsapp/templates', async (req: Request, res: Response
     const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
     const supabase = getBackendSupabaseClient();
 
-    // 1. Fetch only templates explicitly created or imported by this user from Supabase
-    let dbTemplates: any[] = [];
+    // 1. Resolve exact user in Supabase to determine unique profile ID and user ID
+    let dbUser: { id: string; email?: string; zernio_profile_id?: string } | null = null;
     if (supabase) {
+      try {
+        if (userId.includes('@')) {
+          const { data: prof } = await supabase.from('profiles').select('id, email, zernio_profile_id').eq('email', userId.toLowerCase()).maybeSingle();
+          if (prof) dbUser = prof;
+        } else {
+          const { data: prof } = await supabase.from('profiles').select('id, email, zernio_profile_id').eq('id', userId).maybeSingle();
+          if (prof) dbUser = prof;
+        }
+      } catch {}
+    }
+
+    const targetUserId = dbUser?.id || userId;
+    const targetProfileId = dbUser?.zernio_profile_id || profileId;
+
+    // 2. Strict User Isolation:
+    // Only the user who has WhatsApp connected in connected_accounts (under their unique profile id)
+    // is allowed to view connected templates. If a user does NOT have WhatsApp connected, they must not see templates.
+    let isWhatsAppConnected = false;
+    if (supabase && targetUserId) {
+      try {
+        const { data: conn } = await supabase
+          .from('connected_accounts')
+          .select('id, status')
+          .eq('user_id', targetUserId)
+          .ilike('platform', '%whatsapp%')
+          .eq('status', 'connected')
+          .maybeSingle();
+        if (conn && conn.status === 'connected') {
+          isWhatsAppConnected = true;
+        }
+      } catch {}
+    }
+
+    if (defaultAccountId) {
+      isWhatsAppConnected = true;
+    }
+
+    // 3. Fetch templates strictly belonging to this 1 user under their unique profile/user ID
+    let dbTemplates: any[] = [];
+    if (supabase && targetUserId && isWhatsAppConnected) {
       const { data, error } = await supabase
         .from('whatsapp_templates')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', targetUserId)
         .order('created_at', { ascending: false });
 
       if (!error && Array.isArray(data)) {
@@ -815,7 +855,7 @@ whatsappRouter.get('/api/whatsapp/templates', async (req: Request, res: Response
       }
     }
 
-    // 2. If user has templates and account is connected, ONLY update review statuses for the user's templates
+    // 4. If user has templates and account is connected, update live review statuses from Meta WABA
     if (dbTemplates.length > 0 && defaultAccountId) {
       try {
         const liveResult = await ZernioWhatsAppService.getWhatsAppTemplates(defaultAccountId);
@@ -823,12 +863,12 @@ whatsappRouter.get('/api/whatsapp/templates', async (req: Request, res: Response
           for (const userTmpl of dbTemplates) {
             const match = liveResult.templates.find((lt: any) => 
               (lt.id && String(lt.id) === String(userTmpl.id)) ||
-              (lt.name === userTmpl.name && (!userTmpl.language || lt.language === userTmpl.language))
+              (lt.name && lt.name.toLowerCase() === userTmpl.name.toLowerCase() && (!userTmpl.language || lt.language === userTmpl.language))
             );
 
-            if (match && match.status && match.status !== userTmpl.status) {
+            if (match && match.status) {
               userTmpl.status = match.status;
-              userTmpl.rejected_reason = match.rejected_reason || null;
+              userTmpl.rejected_reason = match.rejected_reason || userTmpl.rejected_reason || null;
               if (supabase) {
                 await supabase
                   .from('whatsapp_templates')
@@ -837,7 +877,7 @@ whatsappRouter.get('/api/whatsapp/templates', async (req: Request, res: Response
                     rejected_reason: match.rejected_reason || null,
                     updated_at: new Date().toISOString(),
                   })
-                  .eq('user_id', userId)
+                  .eq('user_id', targetUserId)
                   .eq('name', userTmpl.name);
               }
             }
@@ -853,7 +893,8 @@ whatsappRouter.get('/api/whatsapp/templates', async (req: Request, res: Response
     return res.json({
       data: dbTemplates,
       accountId: defaultAccountId || null,
-      accountConnected: !!defaultAccountId,
+      accountConnected: isWhatsAppConnected,
+      profileId: targetProfileId,
     });
   } catch (err: any) {
     console.error('[GET /api/whatsapp/templates error]:', err);
@@ -985,9 +1026,22 @@ whatsappRouter.post('/api/whatsapp/templates', async (req: Request, res: Respons
 
     // Persist to Supabase whatsapp_templates table
     const supabase = getBackendSupabaseClient();
+    let targetUserId = userId;
+    if (supabase) {
+      try {
+        if (userId.includes('@')) {
+          const { data: prof } = await supabase.from('profiles').select('id').eq('email', userId.toLowerCase()).maybeSingle();
+          if (prof?.id) targetUserId = prof.id;
+        } else {
+          const { data: prof } = await supabase.from('profiles').select('id').eq('id', userId).maybeSingle();
+          if (prof?.id) targetUserId = prof.id;
+        }
+      } catch {}
+    }
+
     const newTemplateRecord = {
       id: assignedId,
-      user_id: userId,
+      user_id: targetUserId,
       name: cleanName,
       category: templateCategory,
       language: templateLanguage,
@@ -1061,6 +1115,19 @@ whatsappRouter.patch('/api/whatsapp/templates/:name', async (req: Request<NamePa
     const newStatus = updatedStatus || (components ? 'PENDING' : undefined);
 
     const supabase = getBackendSupabaseClient();
+    let targetUserId = userId;
+    if (supabase) {
+      try {
+        if (userId.includes('@')) {
+          const { data: prof } = await supabase.from('profiles').select('id').eq('email', userId.toLowerCase()).maybeSingle();
+          if (prof?.id) targetUserId = prof.id;
+        } else {
+          const { data: prof } = await supabase.from('profiles').select('id').eq('id', userId).maybeSingle();
+          if (prof?.id) targetUserId = prof.id;
+        }
+      } catch {}
+    }
+
     if (supabase) {
       const updateData: any = {
         updated_at: new Date().toISOString(),
@@ -1072,7 +1139,7 @@ whatsappRouter.patch('/api/whatsapp/templates/:name', async (req: Request<NamePa
       await supabase
         .from('whatsapp_templates')
         .update(updateData)
-        .eq('user_id', userId)
+        .eq('user_id', targetUserId)
         .eq('name', name);
     }
 
@@ -1111,11 +1178,24 @@ whatsappRouter.delete('/api/whatsapp/templates/:name', async (req: Request<NameP
     }
 
     const supabase = getBackendSupabaseClient();
+    let targetUserId = userId;
+    if (supabase) {
+      try {
+        if (userId.includes('@')) {
+          const { data: prof } = await supabase.from('profiles').select('id').eq('email', userId.toLowerCase()).maybeSingle();
+          if (prof?.id) targetUserId = prof.id;
+        } else {
+          const { data: prof } = await supabase.from('profiles').select('id').eq('id', userId).maybeSingle();
+          if (prof?.id) targetUserId = prof.id;
+        }
+      } catch {}
+    }
+
     if (supabase) {
       await supabase
         .from('whatsapp_templates')
         .delete()
-        .eq('user_id', userId)
+        .eq('user_id', targetUserId)
         .eq('name', name);
     }
 
@@ -1483,10 +1563,27 @@ function getUserIdFromReq(req: Request): string | undefined {
 
 async function resolveUserProfileId(req: Request): Promise<{ userId: string; profileId: string }> {
   let userId = getUserIdFromReq(req);
+  const supabase = getBackendSupabaseClient();
   
-  // Safe default workspace identity fallback to ensure seamless interaction
+  // If no user ID explicitly provided in headers, check for the user who has WhatsApp connected
+  if (!userId && supabase) {
+    try {
+      const { data: conn } = await supabase
+        .from('connected_accounts')
+        .select('user_id')
+        .ilike('platform', '%whatsapp%')
+        .eq('status', 'connected')
+        .limit(1)
+        .maybeSingle();
+      if (conn?.user_id) {
+        userId = conn.user_id;
+      }
+    } catch {}
+  }
+
+  // Fallback to primary workspace user if still unresolved
   if (!userId) {
-    userId = 'demo@rockyt.io';
+    userId = '95248c75-a772-4b4f-9ec9-f3a5aba1f799';
   }
 
   const userEmail = (req.headers['x-user-email'] as string) || (userId.includes('@') ? userId : undefined);

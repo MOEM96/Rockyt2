@@ -214,7 +214,7 @@ const App: React.FC = () => {
       <Suspense fallback={<div className="min-h-screen bg-white flex items-center justify-center font-sans text-emerald-600 text-sm font-bold">LOADING ROCKYT WORKSPACE...</div>}>
         {isDashboardRoute ? (
           <WhatsAppDashboard 
-            userSession={userSession || { name: 'Moamen', email: 'moamen@company.com' }} 
+            userSession={userSession || { id: '95248c75-a772-4b4f-9ec9-f3a5aba1f799', name: 'Moamen Emam', email: 'moamenemam966@gmail.com' }} 
             onBackHome={() => navigateTo('/')} 
             onSignOut={handleSignOut}
           />

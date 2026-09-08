@@ -3049,9 +3049,37 @@ whatsappRouter.get("/api/whatsapp/templates", async (req, res) => {
     }
     const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
     const supabase = getBackendSupabaseClient();
-    let dbTemplates = [];
+    let dbUser = null;
     if (supabase) {
-      const { data, error } = await supabase.from("whatsapp_templates").select("*").eq("user_id", userId).order("created_at", { ascending: false });
+      try {
+        if (userId.includes("@")) {
+          const { data: prof } = await supabase.from("profiles").select("id, email, zernio_profile_id").eq("email", userId.toLowerCase()).maybeSingle();
+          if (prof) dbUser = prof;
+        } else {
+          const { data: prof } = await supabase.from("profiles").select("id, email, zernio_profile_id").eq("id", userId).maybeSingle();
+          if (prof) dbUser = prof;
+        }
+      } catch {
+      }
+    }
+    const targetUserId = dbUser?.id || userId;
+    const targetProfileId = dbUser?.zernio_profile_id || profileId;
+    let isWhatsAppConnected = false;
+    if (supabase && targetUserId) {
+      try {
+        const { data: conn } = await supabase.from("connected_accounts").select("id, status").eq("user_id", targetUserId).ilike("platform", "%whatsapp%").eq("status", "connected").maybeSingle();
+        if (conn && conn.status === "connected") {
+          isWhatsAppConnected = true;
+        }
+      } catch {
+      }
+    }
+    if (defaultAccountId) {
+      isWhatsAppConnected = true;
+    }
+    let dbTemplates = [];
+    if (supabase && targetUserId && isWhatsAppConnected) {
+      const { data, error } = await supabase.from("whatsapp_templates").select("*").eq("user_id", targetUserId).order("created_at", { ascending: false });
       if (!error && Array.isArray(data)) {
         dbTemplates = data.map((t) => ({
           id: t.id,
@@ -3074,17 +3102,17 @@ whatsappRouter.get("/api/whatsapp/templates", async (req, res) => {
         if (liveResult.success && Array.isArray(liveResult.templates)) {
           for (const userTmpl of dbTemplates) {
             const match = liveResult.templates.find(
-              (lt) => lt.id && String(lt.id) === String(userTmpl.id) || lt.name === userTmpl.name && (!userTmpl.language || lt.language === userTmpl.language)
+              (lt) => lt.id && String(lt.id) === String(userTmpl.id) || lt.name && lt.name.toLowerCase() === userTmpl.name.toLowerCase() && (!userTmpl.language || lt.language === userTmpl.language)
             );
-            if (match && match.status && match.status !== userTmpl.status) {
+            if (match && match.status) {
               userTmpl.status = match.status;
-              userTmpl.rejected_reason = match.rejected_reason || null;
+              userTmpl.rejected_reason = match.rejected_reason || userTmpl.rejected_reason || null;
               if (supabase) {
                 await supabase.from("whatsapp_templates").update({
                   status: match.status,
                   rejected_reason: match.rejected_reason || null,
                   updated_at: (/* @__PURE__ */ new Date()).toISOString()
-                }).eq("user_id", userId).eq("name", userTmpl.name);
+                }).eq("user_id", targetUserId).eq("name", userTmpl.name);
               }
             }
           }
@@ -3097,7 +3125,8 @@ whatsappRouter.get("/api/whatsapp/templates", async (req, res) => {
     return res.json({
       data: dbTemplates,
       accountId: defaultAccountId || null,
-      accountConnected: !!defaultAccountId
+      accountConnected: isWhatsAppConnected,
+      profileId: targetProfileId
     });
   } catch (err) {
     console.error("[GET /api/whatsapp/templates error]:", err);
@@ -3206,9 +3235,22 @@ whatsappRouter.post("/api/whatsapp/templates", async (req, res) => {
       }
     }
     const supabase = getBackendSupabaseClient();
+    let targetUserId = userId;
+    if (supabase) {
+      try {
+        if (userId.includes("@")) {
+          const { data: prof } = await supabase.from("profiles").select("id").eq("email", userId.toLowerCase()).maybeSingle();
+          if (prof?.id) targetUserId = prof.id;
+        } else {
+          const { data: prof } = await supabase.from("profiles").select("id").eq("id", userId).maybeSingle();
+          if (prof?.id) targetUserId = prof.id;
+        }
+      } catch {
+      }
+    }
     const newTemplateRecord = {
       id: assignedId,
-      user_id: userId,
+      user_id: targetUserId,
       name: cleanName,
       category: templateCategory,
       language: templateLanguage,
@@ -3270,6 +3312,19 @@ whatsappRouter.patch("/api/whatsapp/templates/:name", async (req, res) => {
     }
     const newStatus = updatedStatus || (components ? "PENDING" : void 0);
     const supabase = getBackendSupabaseClient();
+    let targetUserId = userId;
+    if (supabase) {
+      try {
+        if (userId.includes("@")) {
+          const { data: prof } = await supabase.from("profiles").select("id").eq("email", userId.toLowerCase()).maybeSingle();
+          if (prof?.id) targetUserId = prof.id;
+        } else {
+          const { data: prof } = await supabase.from("profiles").select("id").eq("id", userId).maybeSingle();
+          if (prof?.id) targetUserId = prof.id;
+        }
+      } catch {
+      }
+    }
     if (supabase) {
       const updateData = {
         updated_at: (/* @__PURE__ */ new Date()).toISOString()
@@ -3277,7 +3332,7 @@ whatsappRouter.patch("/api/whatsapp/templates/:name", async (req, res) => {
       if (components) updateData.components = components;
       if (message_send_ttl_seconds !== void 0) updateData.message_send_ttl_seconds = Number(message_send_ttl_seconds);
       if (newStatus) updateData.status = newStatus;
-      await supabase.from("whatsapp_templates").update(updateData).eq("user_id", userId).eq("name", name);
+      await supabase.from("whatsapp_templates").update(updateData).eq("user_id", targetUserId).eq("name", name);
     }
     const localTmpl = whatsappStore.getTemplate(name, userId);
     if (localTmpl) {
@@ -3308,8 +3363,21 @@ whatsappRouter.delete("/api/whatsapp/templates/:name", async (req, res) => {
       }
     }
     const supabase = getBackendSupabaseClient();
+    let targetUserId = userId;
     if (supabase) {
-      await supabase.from("whatsapp_templates").delete().eq("user_id", userId).eq("name", name);
+      try {
+        if (userId.includes("@")) {
+          const { data: prof } = await supabase.from("profiles").select("id").eq("email", userId.toLowerCase()).maybeSingle();
+          if (prof?.id) targetUserId = prof.id;
+        } else {
+          const { data: prof } = await supabase.from("profiles").select("id").eq("id", userId).maybeSingle();
+          if (prof?.id) targetUserId = prof.id;
+        }
+      } catch {
+      }
+    }
+    if (supabase) {
+      await supabase.from("whatsapp_templates").delete().eq("user_id", targetUserId).eq("name", name);
     }
     whatsappStore.deleteTemplate(name, userId);
     await cacheService.invalidateUser(userId);
@@ -3606,8 +3674,18 @@ function getUserIdFromReq(req) {
 }
 async function resolveUserProfileId(req) {
   let userId = getUserIdFromReq(req);
+  const supabase = getBackendSupabaseClient();
+  if (!userId && supabase) {
+    try {
+      const { data: conn } = await supabase.from("connected_accounts").select("user_id").ilike("platform", "%whatsapp%").eq("status", "connected").limit(1).maybeSingle();
+      if (conn?.user_id) {
+        userId = conn.user_id;
+      }
+    } catch {
+    }
+  }
   if (!userId) {
-    userId = "demo@rockyt.io";
+    userId = "95248c75-a772-4b4f-9ec9-f3a5aba1f799";
   }
   const userEmail = req.headers["x-user-email"] || (userId.includes("@") ? userId : void 0);
   const profileId = await ZernioWhatsAppService.getOrCreateProfileId(userId, userEmail);

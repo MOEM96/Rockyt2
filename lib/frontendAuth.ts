@@ -1,5 +1,10 @@
-export function getAuthHeaders(): Record<string, string> {
+export function getAuthHeaders(userSession?: any): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+
+  if (userSession?.id) headers['x-user-id'] = userSession.id;
+  if (userSession?.email) headers['x-user-email'] = userSession.email;
+  if (userSession?.accessToken) headers['Authorization'] = `Bearer ${userSession.accessToken}`;
+
   if (typeof window === 'undefined') return headers;
 
   try {
@@ -8,9 +13,9 @@ export function getAuthHeaders(): Record<string, string> {
     if (sessionStr) {
       try {
         const parsed = JSON.parse(sessionStr);
-        if (parsed.id) headers['x-user-id'] = parsed.id;
-        if (parsed.email) headers['x-user-email'] = parsed.email;
-        if (parsed.accessToken) headers['Authorization'] = `Bearer ${parsed.accessToken}`;
+        if (parsed.id && !headers['x-user-id']) headers['x-user-id'] = parsed.id;
+        if (parsed.email && !headers['x-user-email']) headers['x-user-email'] = parsed.email;
+        if (parsed.accessToken && !headers['Authorization']) headers['Authorization'] = `Bearer ${parsed.accessToken}`;
       } catch {}
     }
 
