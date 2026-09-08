@@ -1485,6 +1485,32 @@ export const TemplateStudio: React.FC = () => {
                   </button>
                 </div>
               </div>
+            ) : templates.length === 0 ? (
+              <div className="py-20 text-center text-gray-400 dark:text-zinc-500 space-y-3">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800/80 flex items-center justify-center text-emerald-600 dark:text-emerald-400 mx-auto">
+                  <LayoutTemplate className="w-6 h-6" />
+                </div>
+                <h3 className="text-sm font-bold text-gray-800 dark:text-zinc-200">No Templates Created Yet</h3>
+                <p className="text-xs max-w-sm mx-auto leading-relaxed text-gray-500 dark:text-zinc-400">
+                  Only templates you explicitly create or import will appear here. Create your own custom message template or choose from Meta's pre-approved library to start sending.
+                </p>
+                <div className="flex items-center justify-center gap-2 pt-2">
+                  <button
+                    onClick={() => handleStartCreate(true)}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-sm inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Create Custom Template</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveView('library')}
+                    className="px-4 py-2 bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 hover:bg-gray-50 text-gray-700 dark:text-zinc-200 rounded-xl text-xs font-semibold shadow-xs inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <BookOpen className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Browse Meta Library</span>
+                  </button>
+                </div>
+              </div>
             ) : (
               <div className="py-20 text-center text-gray-400 dark:text-zinc-500 space-y-3">
                 <LayoutTemplate className="w-10 h-10 mx-auto text-emerald-500/50" />
@@ -1494,7 +1520,7 @@ export const TemplateStudio: React.FC = () => {
                 </p>
                 <button
                   onClick={() => handleStartCreate(true)}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-sm inline-flex items-center gap-1.5"
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-sm inline-flex items-center gap-1.5 cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>Create Template</span>

@@ -781,7 +781,7 @@ whatsappRouter.get('/api/whatsapp/templates', async (req: Request, res: Response
 
     if (!forceRefresh) {
       const cached = await cacheService.get<any[]>(cacheKey);
-      if (cached && Array.isArray(cached) && cached.length > 0) {
+      if (cached && Array.isArray(cached)) {
         return res.json({ data: cached });
       }
     }
@@ -789,58 +789,7 @@ whatsappRouter.get('/api/whatsapp/templates', async (req: Request, res: Response
     const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
     const supabase = getBackendSupabaseClient();
 
-    // 1. If an account is connected to Zernio, query live templates from Meta and sync into Supabase
-    if (defaultAccountId) {
-      try {
-        const liveResult = await ZernioWhatsAppService.getWhatsAppTemplates(defaultAccountId);
-        if (liveResult.success && Array.isArray(liveResult.templates)) {
-          for (const lt of liveResult.templates) {
-            const tmplName = lt.name;
-            const tmplLang = lt.language || 'en_US';
-            const tmplStatus = lt.status || 'PENDING';
-            const tmplCategory = lt.category || 'MARKETING';
-            const tmplComponents = lt.components || [];
-            const tmplTTL = lt.message_send_ttl_seconds || null;
-            const tmplReason = lt.rejected_reason || null;
-
-            if (supabase) {
-              await supabase.from('whatsapp_templates').upsert({
-                id: String(lt.id || `tmpl_${Date.now()}_${tmplName}`),
-                user_id: userId,
-                name: tmplName,
-                category: tmplCategory,
-                language: tmplLang,
-                status: tmplStatus,
-                components: tmplComponents,
-                account_id: defaultAccountId,
-                message_send_ttl_seconds: tmplTTL,
-                rejected_reason: tmplReason,
-                updated_at: new Date().toISOString(),
-              }, { onConflict: 'id' });
-            }
-
-            // Also keep local store up to date
-            whatsappStore.saveTemplate({
-              id: String(lt.id || `tmpl_${Date.now()}`),
-              name: tmplName,
-              category: tmplCategory,
-              language: tmplLang,
-              status: tmplStatus,
-              components: tmplComponents,
-              account_id: defaultAccountId,
-              rejected_reason: tmplReason,
-              message_send_ttl_seconds: tmplTTL,
-              created_at: new Date().toISOString(),
-              last_updated: new Date().toISOString(),
-            }, userId);
-          }
-        }
-      } catch (syncErr: any) {
-        console.warn('[Zernio live templates sync warning]:', syncErr.message);
-      }
-    }
-
-    // 2. Fetch all templates for this user from Supabase
+    // 1. Fetch only templates explicitly created or imported by this user from Supabase
     let dbTemplates: any[] = [];
     if (supabase) {
       const { data, error } = await supabase
@@ -866,11 +815,36 @@ whatsappRouter.get('/api/whatsapp/templates', async (req: Request, res: Response
       }
     }
 
-    // 3. Fallback / merge with memory store if database is empty
-    if (dbTemplates.length === 0) {
-      const memoryTemplates = whatsappStore.getTemplates(userId);
-      if (memoryTemplates.length > 0) {
-        dbTemplates = memoryTemplates;
+    // 2. If user has templates and account is connected, ONLY update review statuses for the user's templates
+    if (dbTemplates.length > 0 && defaultAccountId) {
+      try {
+        const liveResult = await ZernioWhatsAppService.getWhatsAppTemplates(defaultAccountId);
+        if (liveResult.success && Array.isArray(liveResult.templates)) {
+          for (const userTmpl of dbTemplates) {
+            const match = liveResult.templates.find((lt: any) => 
+              (lt.id && String(lt.id) === String(userTmpl.id)) ||
+              (lt.name === userTmpl.name && (!userTmpl.language || lt.language === userTmpl.language))
+            );
+
+            if (match && match.status && match.status !== userTmpl.status) {
+              userTmpl.status = match.status;
+              userTmpl.rejected_reason = match.rejected_reason || null;
+              if (supabase) {
+                await supabase
+                  .from('whatsapp_templates')
+                  .update({
+                    status: match.status,
+                    rejected_reason: match.rejected_reason || null,
+                    updated_at: new Date().toISOString(),
+                  })
+                  .eq('user_id', userId)
+                  .eq('name', userTmpl.name);
+              }
+            }
+          }
+        }
+      } catch (syncErr: any) {
+        console.warn('[Zernio user templates status sync warning]:', syncErr.message);
       }
     }
 

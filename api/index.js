@@ -3043,58 +3043,12 @@ whatsappRouter.get("/api/whatsapp/templates", async (req, res) => {
     const cacheKey = cacheService.getUserKey(userId, "templates");
     if (!forceRefresh) {
       const cached = await cacheService.get(cacheKey);
-      if (cached && Array.isArray(cached) && cached.length > 0) {
+      if (cached && Array.isArray(cached)) {
         return res.json({ data: cached });
       }
     }
     const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
     const supabase = getBackendSupabaseClient();
-    if (defaultAccountId) {
-      try {
-        const liveResult = await ZernioWhatsAppService.getWhatsAppTemplates(defaultAccountId);
-        if (liveResult.success && Array.isArray(liveResult.templates)) {
-          for (const lt of liveResult.templates) {
-            const tmplName = lt.name;
-            const tmplLang = lt.language || "en_US";
-            const tmplStatus = lt.status || "PENDING";
-            const tmplCategory = lt.category || "MARKETING";
-            const tmplComponents = lt.components || [];
-            const tmplTTL = lt.message_send_ttl_seconds || null;
-            const tmplReason = lt.rejected_reason || null;
-            if (supabase) {
-              await supabase.from("whatsapp_templates").upsert({
-                id: String(lt.id || `tmpl_${Date.now()}_${tmplName}`),
-                user_id: userId,
-                name: tmplName,
-                category: tmplCategory,
-                language: tmplLang,
-                status: tmplStatus,
-                components: tmplComponents,
-                account_id: defaultAccountId,
-                message_send_ttl_seconds: tmplTTL,
-                rejected_reason: tmplReason,
-                updated_at: (/* @__PURE__ */ new Date()).toISOString()
-              }, { onConflict: "id" });
-            }
-            whatsappStore.saveTemplate({
-              id: String(lt.id || `tmpl_${Date.now()}`),
-              name: tmplName,
-              category: tmplCategory,
-              language: tmplLang,
-              status: tmplStatus,
-              components: tmplComponents,
-              account_id: defaultAccountId,
-              rejected_reason: tmplReason,
-              message_send_ttl_seconds: tmplTTL,
-              created_at: (/* @__PURE__ */ new Date()).toISOString(),
-              last_updated: (/* @__PURE__ */ new Date()).toISOString()
-            }, userId);
-          }
-        }
-      } catch (syncErr) {
-        console.warn("[Zernio live templates sync warning]:", syncErr.message);
-      }
-    }
     let dbTemplates = [];
     if (supabase) {
       const { data, error } = await supabase.from("whatsapp_templates").select("*").eq("user_id", userId).order("created_at", { ascending: false });
@@ -3114,10 +3068,29 @@ whatsappRouter.get("/api/whatsapp/templates", async (req, res) => {
         }));
       }
     }
-    if (dbTemplates.length === 0) {
-      const memoryTemplates = whatsappStore.getTemplates(userId);
-      if (memoryTemplates.length > 0) {
-        dbTemplates = memoryTemplates;
+    if (dbTemplates.length > 0 && defaultAccountId) {
+      try {
+        const liveResult = await ZernioWhatsAppService.getWhatsAppTemplates(defaultAccountId);
+        if (liveResult.success && Array.isArray(liveResult.templates)) {
+          for (const userTmpl of dbTemplates) {
+            const match = liveResult.templates.find(
+              (lt) => lt.id && String(lt.id) === String(userTmpl.id) || lt.name === userTmpl.name && (!userTmpl.language || lt.language === userTmpl.language)
+            );
+            if (match && match.status && match.status !== userTmpl.status) {
+              userTmpl.status = match.status;
+              userTmpl.rejected_reason = match.rejected_reason || null;
+              if (supabase) {
+                await supabase.from("whatsapp_templates").update({
+                  status: match.status,
+                  rejected_reason: match.rejected_reason || null,
+                  updated_at: (/* @__PURE__ */ new Date()).toISOString()
+                }).eq("user_id", userId).eq("name", userTmpl.name);
+              }
+            }
+          }
+        }
+      } catch (syncErr) {
+        console.warn("[Zernio user templates status sync warning]:", syncErr.message);
       }
     }
     await cacheService.set(cacheKey, dbTemplates, 60);
