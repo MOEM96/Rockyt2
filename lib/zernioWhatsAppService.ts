@@ -1,5 +1,5 @@
 import { Zernio } from '@zernio/node';
-import { WhatsAppSandboxSession, WhatsAppAccount } from './whatsappTypes';
+import { WhatsAppSandboxSession, WhatsAppAccount, WhatsAppFlow, WhatsAppFlowResponse, WhatsAppFlowVersion } from './whatsappTypes';
 import { whatsappStore } from './whatsappStore';
 import { getBackendSupabaseClient } from './backendSupabase';
 import { cacheService } from './cacheService';
@@ -1267,6 +1267,418 @@ export class ZernioWhatsAppService {
 
     const data = await res.json().catch(() => ({}));
     return data.template || data;
+  }
+
+  // ==========================================
+  // WHATSAPP FLOWS API METHODS
+  // ==========================================
+
+  /**
+   * List WhatsApp Flows under an account
+   */
+  public static async listWhatsAppFlows(accountId: string): Promise<WhatsAppFlow[]> {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey) return [];
+
+    try {
+      const res = await fetch(`https://zernio.com/api/v1/whatsapp/flows?accountId=${encodeURIComponent(accountId)}`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (!res.ok) {
+        const err = await res.text().catch(() => '');
+        console.warn(`[listWhatsAppFlows error ${res.status}]:`, err);
+        return [];
+      }
+      const data = await res.json().catch(() => ({}));
+      return Array.isArray(data.data) ? data.data : (Array.isArray(data.flows) ? data.flows : []);
+    } catch (e: any) {
+      console.warn('[listWhatsAppFlows exception]:', e.message);
+      return [];
+    }
+  }
+
+  /**
+   * Create a new WhatsApp Flow (Step 1)
+   */
+  public static async createWhatsAppFlow(params: {
+    accountId: string;
+    name: string;
+    categories: string[];
+    cloneFlowId?: string;
+    asVersion?: boolean;
+    endpointUri?: string;
+  }): Promise<{ success: boolean; flow?: any; error?: string }> {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey) {
+      return { success: false, error: 'Zernio API key not configured' };
+    }
+
+    try {
+      const payload: any = {
+        accountId: params.accountId,
+        name: params.name,
+        categories: params.categories,
+      };
+      if (params.cloneFlowId) {
+        payload.cloneFlowId = params.cloneFlowId;
+        if (params.asVersion) payload.asVersion = true;
+      }
+      if (params.endpointUri) {
+        payload.endpointUri = params.endpointUri;
+      }
+
+      const res = await fetch('https://zernio.com/api/v1/whatsapp/flows', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return {
+          success: false,
+          error: data.message || data.error || `HTTP ${res.status} error creating flow`,
+        };
+      }
+      return { success: true, flow: data.flow || data };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Error creating WhatsApp flow' };
+    }
+  }
+
+  /**
+   * Upload Flow JSON definition (Step 2)
+   */
+  public static async uploadWhatsAppFlowJson(
+    flowId: string,
+    accountId: string,
+    flowJson: any
+  ): Promise<{ success: boolean; validation_errors?: any[]; error?: string }> {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey) {
+      return { success: false, error: 'Zernio API key not configured' };
+    }
+
+    try {
+      const res = await fetch(`https://zernio.com/api/v1/whatsapp/flows/${encodeURIComponent(flowId)}/json`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          accountId,
+          flow_json: flowJson,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return {
+          success: false,
+          validation_errors: data.validation_errors || [],
+          error: data.message || data.error || `HTTP ${res.status} uploading Flow JSON`,
+        };
+      }
+
+      return {
+        success: data.success ?? true,
+        validation_errors: data.validation_errors || [],
+      };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Error uploading Flow JSON' };
+    }
+  }
+
+  /**
+   * Publish WhatsApp Flow (Step 3 - Irreversible)
+   */
+  public static async publishWhatsAppFlow(
+    flowId: string,
+    accountId: string
+  ): Promise<{ success: boolean; error?: string }> {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey) {
+      return { success: false, error: 'Zernio API key not configured' };
+    }
+
+    try {
+      const res = await fetch(`https://zernio.com/api/v1/whatsapp/flows/${encodeURIComponent(flowId)}/publish`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ accountId }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return {
+          success: false,
+          error: data.message || data.error || `HTTP ${res.status} publishing flow`,
+        };
+      }
+      return { success: data.success ?? true };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Error publishing flow' };
+    }
+  }
+
+  /**
+   * Send WhatsApp Flow message (Step 4)
+   */
+  public static async sendWhatsAppFlowMessage(params: {
+    accountId: string;
+    to: string;
+    flow_id: string;
+    flow_cta: string;
+    flow_action?: 'navigate' | 'data_exchange';
+    flow_action_payload?: any;
+    body: string;
+    draft?: boolean;
+  }): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey) {
+      return { success: false, error: 'Zernio API key not configured' };
+    }
+
+    try {
+      const res = await fetch('https://zernio.com/api/v1/whatsapp/flows/send', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          accountId: params.accountId,
+          to: params.to,
+          flow_id: params.flow_id,
+          flow_cta: params.flow_cta,
+          flow_action: params.flow_action || 'navigate',
+          flow_action_payload: params.flow_action_payload || { screen: 'LEAD_FORM' },
+          body: params.body,
+          ...(params.draft ? { draft: true } : {}),
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return {
+          success: false,
+          error: data.message || data.error || `HTTP ${res.status} sending flow message`,
+        };
+      }
+      return { success: true, messageId: data.messageId || data.id };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Error sending flow message' };
+    }
+  }
+
+  /**
+   * Read flow responses / submissions (Step 5)
+   */
+  public static async listWhatsAppFlowResponses(
+    accountId: string,
+    flowId: string
+  ): Promise<{ success: boolean; responses: WhatsAppFlowResponse[]; error?: string }> {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey) {
+      return { success: true, responses: [] };
+    }
+
+    try {
+      const res = await fetch(
+        `https://zernio.com/api/v1/whatsapp/flow-responses?accountId=${encodeURIComponent(accountId)}&flowId=${encodeURIComponent(flowId)}`,
+        {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        }
+      );
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return {
+          success: false,
+          responses: [],
+          error: data.message || data.error || `HTTP ${res.status} fetching responses`,
+        };
+      }
+
+      const rawList = Array.isArray(data.responses) ? data.responses : [];
+      const responses: WhatsAppFlowResponse[] = rawList.map((r: any) => ({
+        id: r.id || `wamid.${Date.now()}`,
+        flow_id: flowId,
+        from_phone: r.from || '',
+        sender_name: r.senderName || '',
+        conversation_id: r.conversationId,
+        flow_token: r.flowToken,
+        data: r.data || {},
+        received_at: r.receivedAt || new Date().toISOString(),
+      }));
+
+      return { success: true, responses };
+    } catch (e: any) {
+      return { success: false, responses: [], error: e.message };
+    }
+  }
+
+  /**
+   * Get Meta Flow web preview URL
+   */
+  public static async getWhatsAppFlowPreview(
+    flowId: string,
+    accountId: string,
+    invalidate = false
+  ): Promise<{ preview_url?: string; expires_at?: string; error?: string }> {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey) {
+      return { error: 'Zernio API key not configured' };
+    }
+
+    try {
+      const res = await fetch(
+        `https://zernio.com/api/v1/whatsapp/flows/${encodeURIComponent(flowId)}/preview?accountId=${encodeURIComponent(accountId)}${invalidate ? '&invalidate=true' : ''}`,
+        {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        }
+      );
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { error: data.message || `HTTP ${res.status} getting preview` };
+      }
+      return {
+        preview_url: data.preview_url || data.preview?.preview_url,
+        expires_at: data.expires_at || data.preview?.expires_at,
+      };
+    } catch (e: any) {
+      return { error: e.message };
+    }
+  }
+
+  /**
+   * List flow versions in lineage
+   */
+  public static async listWhatsAppFlowVersions(
+    flowId: string,
+    accountId: string
+  ): Promise<WhatsAppFlowVersion[]> {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey) return [];
+
+    try {
+      const res = await fetch(
+        `https://zernio.com/api/v1/whatsapp/flows/${encodeURIComponent(flowId)}/versions?accountId=${encodeURIComponent(accountId)}`,
+        {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        }
+      );
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return [];
+      return Array.isArray(data.versions) ? data.versions : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Deprecate a published flow
+   */
+  public static async deprecateWhatsAppFlow(
+    flowId: string,
+    accountId: string
+  ): Promise<boolean> {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey) return false;
+
+    try {
+      const res = await fetch(`https://zernio.com/api/v1/whatsapp/flows/${encodeURIComponent(flowId)}/deprecate`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ accountId }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Delete a draft flow
+   */
+  public static async deleteWhatsAppFlow(
+    flowId: string,
+    accountId?: string
+  ): Promise<boolean> {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey) return false;
+
+    try {
+      const url = accountId
+        ? `https://zernio.com/api/v1/whatsapp/flows/${encodeURIComponent(flowId)}?accountId=${encodeURIComponent(accountId)}`
+        : `https://zernio.com/api/v1/whatsapp/flows/${encodeURIComponent(flowId)}`;
+      const res = await fetch(url, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Register business RSA public encryption key for data_exchange flows
+   */
+  public static async registerFlowEncryptionKey(
+    accountId: string,
+    businessPublicKey: string
+  ): Promise<{ success: boolean; error?: string }> {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey) return { success: false, error: 'API key not configured' };
+
+    try {
+      const res = await fetch('https://zernio.com/api/v1/whatsapp/flows/encryption-key', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ accountId, businessPublicKey }),
+      });
+      const data = await res.json().catch(() => ({}));
+      return { success: res.ok, error: data.message };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  }
+
+  /**
+   * Get encryption key status for account
+   */
+  public static async getFlowEncryptionKey(accountId: string): Promise<any> {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey) return null;
+
+    try {
+      const res = await fetch(
+        `https://zernio.com/api/v1/whatsapp/flows/encryption-key?accountId=${encodeURIComponent(accountId)}`,
+        {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        }
+      );
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
   }
 }
 

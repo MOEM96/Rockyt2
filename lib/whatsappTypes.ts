@@ -272,3 +272,156 @@ export interface WhatsAppSandboxSession {
   user_id?: string;
   profile_id?: string;
 }
+
+// ==========================================
+// WHATSAPP FLOWS & FLOW BUILDER TYPES
+// ==========================================
+
+export type WhatsAppFlowCategory = 
+  | 'SIGN_UP'
+  | 'SIGN_IN'
+  | 'APPOINTMENT_BOOKING'
+  | 'LEAD_GENERATION'
+  | 'CONTACT_US'
+  | 'CUSTOMER_SUPPORT'
+  | 'SURVEY'
+  | 'OTHER';
+
+export type WhatsAppFlowStatus = 
+  | 'DRAFT'
+  | 'PUBLISHED'
+  | 'DEPRECATED'
+  | 'BLOCKED'
+  | 'THROTTLED';
+
+export type FlowComponentType =
+  | 'TextHeading'
+  | 'TextSubheading'
+  | 'TextBody'
+  | 'TextCaption'
+  | 'TextInput'
+  | 'TextArea'
+  | 'Dropdown'
+  | 'RadioButtonsGroup'
+  | 'CheckboxGroup'
+  | 'DatePicker'
+  | 'OptIn'
+  | 'Footer'
+  | 'EmbeddedLink';
+
+export interface FlowComponentDataSourceItem {
+  id: string;
+  title: string;
+  description?: string;
+}
+
+export interface FlowOnClickAction {
+  name: 'navigate' | 'complete' | 'data_exchange';
+  next?: {
+    type: 'screen';
+    name: string;
+  };
+  payload?: Record<string, any>;
+}
+
+export interface FlowComponent {
+  type: FlowComponentType;
+  id?: string;
+  name?: string;
+  label?: string;
+  text?: string;
+  description?: string;
+  required?: boolean;
+  'input-type'?: 'text' | 'number' | 'email' | 'password' | 'phone';
+  'min-chars'?: number;
+  'max-chars'?: number;
+  'helper-text'?: string;
+  'error-message'?: string;
+  'init-value'?: any;
+  'data-source'?: FlowComponentDataSourceItem[];
+  visible?: boolean | string;
+  enabled?: boolean | string;
+  'on-click-action'?: FlowOnClickAction;
+}
+
+export interface FlowScreenLayout {
+  type: 'SingleColumnLayout';
+  children: FlowComponent[];
+}
+
+export interface FlowScreen {
+  id: string; // e.g. 'LEAD_FORM', 'DETAILS_SCREEN'
+  title?: string;
+  terminal?: boolean;
+  success?: boolean;
+  refresh_on_back?: boolean;
+  sensitive?: string[];
+  data?: Record<string, { type: string; __example__?: any }>;
+  layout: FlowScreenLayout;
+}
+
+export interface FlowJSON {
+  version: string; // e.g. '6.0'
+  data_api_version?: string; // '3.0'
+  routing_model?: Record<string, string[]>;
+  screens: FlowScreen[];
+}
+
+export interface WhatsAppFlowValidationError {
+  error: string;
+  error_type: string;
+  message: string;
+  line_start?: number;
+  line_end?: number;
+  column_start?: number;
+  column_end?: number;
+  pointers?: Array<{
+    line_start?: number;
+    line_end?: number;
+    column_start?: number;
+    column_end?: number;
+    path: string;
+  }>;
+}
+
+export interface WhatsAppFlow {
+  id: string;
+  name: string;
+  status: WhatsAppFlowStatus;
+  categories: WhatsAppFlowCategory[];
+  version?: number;
+  lineage_id?: string;
+  parent_flow_id?: string;
+  flow_json?: FlowJSON;
+  endpoint_uri?: string;
+  data_api_version?: string;
+  preview_url?: string;
+  preview_expires_at?: string;
+  validation_errors?: WhatsAppFlowValidationError[];
+  account_id?: string;
+  user_id?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WhatsAppFlowResponse {
+  id: string;
+  flow_id: string;
+  from_phone: string;
+  sender_name?: string;
+  conversation_id?: string;
+  flow_token?: string;
+  data: Record<string, any>;
+  received_at: string;
+  created_at?: string;
+}
+
+export interface WhatsAppFlowVersion {
+  flowId: string;
+  version: number;
+  parentFlowId?: string | null;
+  name: string;
+  status: WhatsAppFlowStatus;
+  missing?: boolean;
+}
+

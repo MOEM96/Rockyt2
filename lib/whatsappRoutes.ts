@@ -4,7 +4,7 @@ import { ZernioWhatsAppService } from './zernioWhatsAppService';
 import { MetaCAPIService } from './metaCapiService';
 import { MCPServerHandler, MCP_TOOLS_MANIFEST } from './mcpServer';
 import { AutomationEngine } from './automationEngine';
-import { WhatsAppMessage, MetaCAPIEvent, WhatsAppContact, AutomationFlow, BroadcastCampaign, WhatsAppConversation, WhatsAppSandboxSession, WhatsAppAccount } from './whatsappTypes';
+import { WhatsAppMessage, MetaCAPIEvent, WhatsAppContact, AutomationFlow, BroadcastCampaign, WhatsAppConversation, WhatsAppSandboxSession, WhatsAppAccount, WhatsAppFlow, WhatsAppFlowCategory, WhatsAppFlowStatus, FlowJSON, WhatsAppFlowResponse, WhatsAppFlowVersion } from './whatsappTypes';
 import { cacheService } from './cacheService';
 import { getBackendSupabaseClient } from './backendSupabase';
 import crypto from 'crypto';
@@ -152,10 +152,82 @@ whatsappRouter.post('/api/webhooks/zernio', async (req: Request, res: Response) 
       return res.status(200).json({ ok: true, template_updated: true });
     }
 
+    // Handle Meta WhatsApp flow review / status updates (whatsapp.flow.status_updated)
+    if (eventType === 'whatsapp.flow.status_updated') {
+      const flowPayload = event.flow || {};
+      const flowId = flowPayload.id || flowPayload.flowId;
+      const status = flowPayload.status;
+      if (flowId && status) {
+        try {
+          const supabase = getBackendSupabaseClient();
+          if (supabase) {
+            await supabase.from('whatsapp_flows').update({
+              status,
+              updated_at: new Date().toISOString()
+            }).eq('id', flowId);
+          }
+          broadcastWhatsAppEvent({
+            event: 'whatsapp.flow.status_updated',
+            flowId,
+            status,
+          });
+        } catch (e: any) {
+          console.warn('[webhook flow.status_updated error]:', e.message);
+        }
+      }
+      return res.status(200).json({ ok: true, flow_updated: true });
+    }
+
+    // Handle Meta WhatsApp flow completion submissions (nfm_reply)
     const msg = event.message || event.data?.message || {};
     const metadata = event.metadata || {};
     const convData = event.conversation || event.data?.conversation || {};
     const accountData = event.account || event.data?.account || {};
+    const interactive = event.message?.interactive || event.interactive || {};
+    if (interactive.type === 'nfm_reply' || eventType === 'flow.response' || event.nfm_reply) {
+      try {
+        const nfm = interactive.nfm_reply || event.nfm_reply || {};
+        let parsedData: any = {};
+        if (typeof nfm.response_json === 'string') {
+          try { parsedData = JSON.parse(nfm.response_json); } catch {}
+        } else if (typeof nfm.response_json === 'object') {
+          parsedData = nfm.response_json;
+        } else if (event.data) {
+          parsedData = event.data;
+        }
+
+        const flowToken = nfm.flow_token || event.flowToken || event.flow_token || '';
+        const rawFlowId = flowToken ? flowToken.split(':')[0] : (event.flow_id || event.flowId || '');
+        const senderPhone = event.message?.from || event.from || metadata.senderPhone || '';
+        const senderName = event.message?.senderName || event.senderName || metadata.senderName || 'Customer';
+
+        if (rawFlowId) {
+          const supabase = getBackendSupabaseClient();
+          if (supabase) {
+            await supabase.from('whatsapp_flow_responses').insert({
+              id: event.message?.id || `wamid.${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              flow_id: rawFlowId,
+              from_phone: senderPhone,
+              sender_name: senderName,
+              flow_token: flowToken,
+              data: parsedData,
+              received_at: new Date().toISOString(),
+              created_at: new Date().toISOString(),
+            });
+          }
+
+          broadcastWhatsAppEvent({
+            event: 'whatsapp.flow.response_received',
+            flowId: rawFlowId,
+            from: senderPhone,
+            data: parsedData,
+          });
+        }
+      } catch (flowRespErr: any) {
+        console.warn('[webhook nfm_reply handling error]:', flowRespErr.message);
+      }
+    }
+
 
     // Robust sender and phone resolution (handles username as phone number from Zernio)
     const sender = msg.sender || msg.from || {};
@@ -1453,6 +1525,902 @@ whatsappRouter.delete('/api/whatsapp/templates/:name', async (req: Request<NameP
     return res.status(500).json({ error: err.message || 'Failed to delete template' });
   }
 });
+
+// ─── 5.5. WhatsApp Flows & Flow Builder Endpoints (Meta & Zernio Compatible) ───
+
+/**
+ * Validate Meta Flow JSON against v6.0 / v5.0 specification
+ */
+function validateMetaFlowJson(flowJson: any): { valid: boolean; errors: any[] } {
+  const errors: any[] = [];
+  if (!flowJson || typeof flowJson !== 'object') {
+    return {
+      valid: false,
+      errors: [{ error: 'INVALID_JSON', error_type: 'JSON_SCHEMA_ERROR', message: 'Flow JSON must be a valid object' }]
+    };
+  }
+
+  if (!flowJson.version) {
+    errors.push({
+      error: 'MISSING_REQUIRED_PROPERTY',
+      error_type: 'JSON_SCHEMA_ERROR',
+      message: "Required property 'version' is missing (expected '6.0' or '5.0')",
+      pointers: [{ path: 'version' }]
+    });
+  }
+
+  if (!Array.isArray(flowJson.screens) || flowJson.screens.length === 0) {
+    errors.push({
+      error: 'MISSING_REQUIRED_PROPERTY',
+      error_type: 'JSON_SCHEMA_ERROR',
+      message: "Flow JSON must declare at least one screen in 'screens' array",
+      pointers: [{ path: 'screens' }]
+    });
+    return { valid: false, errors };
+  }
+
+  const screenIds = new Set<string>();
+  let hasTerminal = false;
+
+  flowJson.screens.forEach((screen: any, screenIdx: number) => {
+    const screenPath = `screens[${screenIdx}]`;
+    if (!screen.id || typeof screen.id !== 'string') {
+      errors.push({
+        error: 'INVALID_PROPERTY',
+        error_type: 'JSON_SCHEMA_ERROR',
+        message: `Screen at index ${screenIdx} missing required 'id'`,
+        pointers: [{ path: `${screenPath}.id` }]
+      });
+    } else {
+      if (screen.id.toUpperCase() === 'SUCCESS') {
+        errors.push({
+          error: 'RESERVED_KEYWORD',
+          error_type: 'JSON_SCHEMA_ERROR',
+          message: "'SUCCESS' is a reserved Meta keyword and cannot be used as a screen id",
+          pointers: [{ path: `${screenPath}.id` }]
+        });
+      }
+      screenIds.add(screen.id);
+    }
+
+    if (screen.terminal === true) {
+      hasTerminal = true;
+    }
+
+    if (!screen.layout || typeof screen.layout !== 'object') {
+      errors.push({
+        error: 'MISSING_REQUIRED_PROPERTY',
+        error_type: 'JSON_SCHEMA_ERROR',
+        message: `Screen '${screen.id || screenIdx}' missing required 'layout'`,
+        pointers: [{ path: `${screenPath}.layout` }]
+      });
+      return;
+    }
+
+    if (screen.layout.type !== 'SingleColumnLayout') {
+      errors.push({
+        error: 'INVALID_PROPERTY_VALUE',
+        error_type: 'JSON_SCHEMA_ERROR',
+        message: `Layout type must be 'SingleColumnLayout', found '${screen.layout.type}'`,
+        pointers: [{ path: `${screenPath}.layout.type` }]
+      });
+    }
+
+    if (!Array.isArray(screen.layout.children)) {
+      errors.push({
+        error: 'INVALID_PROPERTY',
+        error_type: 'JSON_SCHEMA_ERROR',
+        message: `Screen '${screen.id || screenIdx}' layout children must be an array`,
+        pointers: [{ path: `${screenPath}.layout.children` }]
+      });
+      return;
+    }
+
+    // Check components
+    let hasFooter = false;
+    screen.layout.children.forEach((comp: any, compIdx: number) => {
+      const compPath = `${screenPath}.layout.children[${compIdx}]`;
+      if (!comp.type) {
+        errors.push({
+          error: 'MISSING_REQUIRED_PROPERTY',
+          error_type: 'JSON_SCHEMA_ERROR',
+          message: `Component at index ${compIdx} in screen '${screen.id}' missing 'type'`,
+          pointers: [{ path: `${compPath}.type` }]
+        });
+      }
+
+      if (comp.type === 'Footer') {
+        hasFooter = true;
+      }
+
+      const interactiveTypes = ['TextInput', 'TextArea', 'Dropdown', 'RadioButtonsGroup', 'CheckboxGroup', 'DatePicker', 'OptIn'];
+      if (interactiveTypes.includes(comp.type) && !comp.name) {
+        errors.push({
+          error: 'MISSING_REQUIRED_PROPERTY',
+          error_type: 'JSON_SCHEMA_ERROR',
+          message: `Interactive component '${comp.type}' in screen '${screen.id}' must have a 'name' property`,
+          pointers: [{ path: `${compPath}.name` }]
+        });
+      }
+    });
+
+    if (screen.terminal === true && !hasFooter) {
+      errors.push({
+        error: 'MISSING_FOOTER_ON_TERMINAL',
+        error_type: 'FLOW_JSON_ERROR',
+        message: `Terminal screen '${screen.id}' must include a Footer component with 'complete' or action`,
+        pointers: [{ path: `${screenPath}.layout.children` }]
+      });
+    }
+  });
+
+  if (!hasTerminal) {
+    errors.push({
+      error: 'MISSING_TERMINAL_SCREEN',
+      error_type: 'FLOW_JSON_ERROR',
+      message: 'The Flow must have at least one terminal screen (terminal: true) to end the user journey'
+    });
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Generate a clean starter Flow JSON matching requested category
+ */
+function generateStarterFlowJson(name: string, category: string): any {
+  if (category === 'APPOINTMENT_BOOKING') {
+    return {
+      version: '6.0',
+      screens: [{
+        id: 'BOOKING_FORM',
+        title: 'Book an Appointment',
+        terminal: true,
+        success: true,
+        layout: {
+          type: 'SingleColumnLayout',
+          children: [
+            { type: 'TextHeading', text: 'Schedule Your Service' },
+            { type: 'TextBody', text: 'Select your preferred date and service category below.' },
+            { type: 'TextInput', name: 'client_name', label: 'Your Name', required: true, 'input-type': 'text' },
+            { type: 'TextInput', name: 'phone_number', label: 'WhatsApp Phone Number', required: true, 'input-type': 'phone' },
+            {
+              type: 'Dropdown',
+              name: 'service_type',
+              label: 'Select Service',
+              required: true,
+              'data-source': [
+                { id: 'consultation', title: 'Strategy Consultation', description: '30 min video / call' },
+                { id: 'technical_demo', title: 'Product Live Demo', description: 'Interactive walkthrough' },
+                { id: 'account_setup', title: 'WABA & API Setup', description: 'Direct onboarding' }
+              ]
+            },
+            { type: 'DatePicker', name: 'appointment_date', label: 'Preferred Date' },
+            {
+              type: 'Footer',
+              label: 'Confirm Booking',
+              'on-click-action': {
+                name: 'complete',
+                payload: {
+                  client_name: '${form.client_name}',
+                  phone_number: '${form.phone_number}',
+                  service_type: '${form.service_type}',
+                  appointment_date: '${form.appointment_date}'
+                }
+              }
+            }
+          ]
+        }
+      }]
+    };
+  }
+
+  if (category === 'SURVEY') {
+    return {
+      version: '6.0',
+      screens: [{
+        id: 'SURVEY_SCREEN',
+        title: 'Customer Feedback',
+        terminal: true,
+        success: true,
+        layout: {
+          type: 'SingleColumnLayout',
+          children: [
+            { type: 'TextHeading', text: 'We Value Your Feedback' },
+            { type: 'TextBody', text: 'How satisfied are you with our service?' },
+            {
+              type: 'RadioButtonsGroup',
+              name: 'satisfaction_rating',
+              label: 'Overall Experience',
+              required: true,
+              'data-source': [
+                { id: '5_stars', title: '⭐⭐⭐⭐⭐ Extremely Satisfied' },
+                { id: '4_stars', title: '⭐⭐⭐⭐ Satisfied' },
+                { id: '3_stars', title: '⭐⭐⭐ Neutral' },
+                { id: '2_stars', title: '⭐⭐ Needs Improvement' },
+                { id: '1_star', title: '⭐ Unsatisfied' }
+              ]
+            },
+            { type: 'TextArea', name: 'feedback_comment', label: 'Additional Comments & Suggestions', required: false },
+            { type: 'OptIn', name: 'can_follow_up', label: 'May our team follow up with you on WhatsApp?' },
+            {
+              type: 'Footer',
+              label: 'Submit Survey',
+              'on-click-action': {
+                name: 'complete',
+                payload: {
+                  satisfaction: '${form.satisfaction_rating}',
+                  comment: '${form.feedback_comment}',
+                  can_follow_up: '${form.can_follow_up}'
+                }
+              }
+            }
+          ]
+        }
+      }]
+    };
+  }
+
+  // Default: LEAD_GENERATION / CONTACT_US
+  return {
+    version: '6.0',
+    screens: [{
+      id: 'LEAD_FORM',
+      title: 'Get a Quote & Connect',
+      terminal: true,
+      success: true,
+      layout: {
+        type: 'SingleColumnLayout',
+        children: [
+          { type: 'TextHeading', text: 'Get Started Today' },
+          { type: 'TextBody', text: 'Fill out this quick form and our team will get in touch immediately.' },
+          { type: 'TextInput', name: 'full_name', label: 'Full Name', required: true, 'input-type': 'text' },
+          { type: 'TextInput', name: 'email', label: 'Business Email', required: true, 'input-type': 'email' },
+          { type: 'TextInput', name: 'phone', label: 'Phone Number', required: false, 'input-type': 'phone' },
+          {
+            type: 'Dropdown',
+            name: 'company_size',
+            label: 'Company Size',
+            required: false,
+            'data-source': [
+              { id: '1_10', title: '1-10 employees' },
+              { id: '11_50', title: '11-50 employees' },
+              { id: '51_200', title: '51-200 employees' },
+              { id: '200_plus', title: '200+ enterprise' }
+            ]
+          },
+          {
+            type: 'Footer',
+            label: 'Submit Inquiry',
+            'on-click-action': {
+              name: 'complete',
+              payload: {
+                full_name: '${form.full_name}',
+                email: '${form.email}',
+                phone: '${form.phone}',
+                company_size: '${form.company_size}'
+              }
+            }
+          }
+        ]
+      }
+    }]
+  };
+}
+
+// ── GET /api/whatsapp/flows: List all flows for user
+whatsappRouter.get('/api/whatsapp/flows', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const supabase = getBackendSupabaseClient();
+    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
+
+    let targetUserId = userId;
+    if (supabase) {
+      try {
+        const { data: prof } = await supabase.from('profiles').select('id, email, zernio_profile_id').eq('email', userId.toLowerCase()).maybeSingle();
+        if (prof) targetUserId = prof.id;
+      } catch {}
+    }
+
+    // Check if live sync requested
+    const syncFromMeta = req.query.sync === 'true';
+    if (syncFromMeta && defaultAccountId) {
+      try {
+        const liveFlows = await ZernioWhatsAppService.listWhatsAppFlows(defaultAccountId);
+        if (Array.isArray(liveFlows) && liveFlows.length > 0 && supabase) {
+          for (const lf of liveFlows) {
+            await supabase.from('whatsapp_flows').upsert({
+              id: lf.id,
+              user_id: targetUserId,
+              account_id: defaultAccountId,
+              name: lf.name,
+              status: lf.status || 'DRAFT',
+              categories: lf.categories || ['OTHER'],
+              version: lf.version || 1,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: 'id' });
+          }
+        }
+      } catch (syncErr: any) {
+        console.warn('[Sync WhatsApp Flows warning]:', syncErr.message);
+      }
+    }
+
+    // Fetch from Supabase
+    let flows: WhatsAppFlow[] = [];
+    if (supabase) {
+      try {
+        let query = supabase
+          .from('whatsapp_flows')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (targetUserId && !targetUserId.includes('@')) {
+          query = query.or(`user_id.eq.${targetUserId},account_id.eq.${defaultAccountId || 'none'}`);
+        }
+
+        const { data, error } = await query;
+        if (!error && Array.isArray(data)) {
+          flows = data;
+        }
+      } catch (dbErr: any) {
+        console.warn('[Supabase whatsapp_flows fetch warning]:', dbErr.message);
+      }
+    }
+
+    // If no flows found in DB, provide standard starters if requested or return empty
+    return res.json({ success: true, data: flows, count: flows.length });
+  } catch (err: any) {
+    console.error('[GET /api/whatsapp/flows error]:', err);
+    return res.status(500).json({ error: err.message || 'Failed to list WhatsApp flows' });
+  }
+});
+
+// ── POST /api/whatsapp/flows: Create flow or clone version
+whatsappRouter.post('/api/whatsapp/flows', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const { name, categories, cloneFlowId, asVersion, endpointUri, flow_json, publish } = req.body;
+
+    if (!name || typeof name !== 'string') {
+      return res.status(400).json({ error: 'Flow name is required' });
+    }
+
+    const cleanName = name.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 64);
+    const validCats = Array.isArray(categories) && categories.length > 0 ? categories : ['LEAD_GENERATION'];
+
+    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || 'acc_primary';
+    const supabase = getBackendSupabaseClient();
+
+    let targetUserId = userId;
+    if (supabase) {
+      try {
+        const { data: prof } = await supabase.from('profiles').select('id, email, zernio_profile_id').eq('email', userId.toLowerCase()).maybeSingle();
+        if (prof) targetUserId = prof.id;
+      } catch {}
+    }
+
+    let createdFlowId = '';
+    let flowVersion = 1;
+    let lineageId = '';
+    let initialStatus: WhatsAppFlowStatus = 'DRAFT';
+
+    // 1. Try calling Zernio API if configured
+    const zernioRes = await ZernioWhatsAppService.createWhatsAppFlow({
+      accountId: defaultAccountId,
+      name: cleanName,
+      categories: validCats,
+      cloneFlowId,
+      asVersion,
+      endpointUri,
+    });
+
+    if (zernioRes.success && zernioRes.flow?.id) {
+      createdFlowId = String(zernioRes.flow.id);
+      flowVersion = zernioRes.flow.version || 1;
+      lineageId = zernioRes.flow.lineageId || createdFlowId;
+      initialStatus = zernioRes.flow.status || 'DRAFT';
+    } else {
+      // Offline / Local / Sandbox fallback
+      const randomSuffix = Math.floor(100000000000 + Math.random() * 900000000000);
+      createdFlowId = String(randomSuffix);
+
+      if (cloneFlowId && asVersion && supabase) {
+        // Increment version in lineage
+        const { data: parent } = await supabase.from('whatsapp_flows').select('version, lineage_id').eq('id', cloneFlowId).maybeSingle();
+        flowVersion = (parent?.version || 1) + 1;
+        lineageId = parent?.lineage_id || cloneFlowId;
+      } else {
+        lineageId = createdFlowId;
+      }
+    }
+
+    // Determine initial Flow JSON
+    const finalFlowJson = flow_json || generateStarterFlowJson(cleanName, validCats[0]);
+    const validation = validateMetaFlowJson(finalFlowJson);
+
+    // Save to Supabase
+    const newRecord: WhatsAppFlow = {
+      id: createdFlowId,
+      user_id: targetUserId,
+      account_id: defaultAccountId,
+      name: cleanName,
+      status: initialStatus,
+      categories: validCats,
+      version: flowVersion,
+      lineage_id: lineageId,
+      parent_flow_id: cloneFlowId || null,
+      flow_json: finalFlowJson,
+      endpoint_uri: endpointUri || null,
+      data_api_version: '3.0',
+      validation_errors: validation.errors,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    if (supabase) {
+      await supabase.from('whatsapp_flows').insert(newRecord);
+    }
+
+    // If upload to Zernio is possible, upload the JSON
+    if (zernioRes.success && finalFlowJson) {
+      await ZernioWhatsAppService.uploadWhatsAppFlowJson(createdFlowId, defaultAccountId, finalFlowJson);
+    }
+
+    // If immediate publish requested
+    if (publish) {
+      if (validation.valid) {
+        if (zernioRes.success) {
+          await ZernioWhatsAppService.publishWhatsAppFlow(createdFlowId, defaultAccountId);
+        }
+        newRecord.status = 'PUBLISHED';
+        if (supabase) {
+          await supabase.from('whatsapp_flows').update({ status: 'PUBLISHED', updated_at: new Date().toISOString() }).eq('id', createdFlowId);
+        }
+      }
+    }
+
+    return res.status(201).json({ success: true, flow: newRecord });
+  } catch (err: any) {
+    console.error('[POST /api/whatsapp/flows error]:', err);
+    return res.status(500).json({ error: err.message || 'Failed to create WhatsApp flow' });
+  }
+});
+
+// ── GET /api/whatsapp/flows/:id: Get single flow details
+whatsappRouter.get('/api/whatsapp/flows/:id', async (req: Request<IdParams>, res: Response) => {
+  try {
+    const { id } = req.params;
+    const supabase = getBackendSupabaseClient();
+    if (!supabase) {
+      return res.status(500).json({ error: 'Supabase client unavailable' });
+    }
+
+    const { data: flow, error } = await supabase
+      .from('whatsapp_flows')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error || !flow) {
+      return res.status(404).json({ error: 'WhatsApp flow not found' });
+    }
+
+    return res.json({ success: true, flow });
+  } catch (err: any) {
+    console.error('[GET /api/whatsapp/flows/:id error]:', err);
+    return res.status(500).json({ error: err.message || 'Failed to get flow details' });
+  }
+});
+
+// ── PUT /api/whatsapp/flows/:id/json: Upload / update Flow JSON
+whatsappRouter.put('/api/whatsapp/flows/:id/json', async (req: Request<IdParams>, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { flow_json, endpoint_uri } = req.body;
+    const { profileId } = await resolveUserProfileId(req);
+    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || 'acc_primary';
+    const supabase = getBackendSupabaseClient();
+
+    if (!flow_json || typeof flow_json !== 'object') {
+      return res.status(400).json({ error: 'Valid flow_json object is required' });
+    }
+
+    // Check flow status
+    if (supabase) {
+      const { data: existing } = await supabase.from('whatsapp_flows').select('status').eq('id', id).maybeSingle();
+      if (existing && existing.status === 'PUBLISHED') {
+        return res.status(400).json({
+          error: 'PUBLISHED flows are immutable in Meta. To make changes, click "Create New Version" to clone into a new draft.'
+        });
+      }
+    }
+
+    // Validate Meta Flow JSON structure
+    const validation = validateMetaFlowJson(flow_json);
+
+    // If live account exists, push to Zernio
+    let metaErrors: any[] = [];
+    try {
+      const uploadRes = await ZernioWhatsAppService.uploadWhatsAppFlowJson(id, defaultAccountId, flow_json);
+      if (uploadRes.validation_errors && uploadRes.validation_errors.length > 0) {
+        metaErrors = uploadRes.validation_errors;
+      }
+    } catch {}
+
+    const allErrors = [...validation.errors, ...metaErrors];
+
+    // Update in Supabase
+    if (supabase) {
+      const updatePayload: any = {
+        flow_json,
+        validation_errors: allErrors,
+        updated_at: new Date().toISOString(),
+      };
+      if (endpoint_uri !== undefined) {
+        updatePayload.endpoint_uri = endpoint_uri;
+      }
+      await supabase.from('whatsapp_flows').update(updatePayload).eq('id', id);
+    }
+
+    return res.json({
+      success: true,
+      valid: allErrors.length === 0,
+      validation_errors: allErrors,
+    });
+  } catch (err: any) {
+    console.error('[PUT /api/whatsapp/flows/:id/json error]:', err);
+    return res.status(500).json({ error: err.message || 'Failed to upload Flow JSON' });
+  }
+});
+
+// ── POST /api/whatsapp/flows/:id/publish: Publish flow to WhatsApp
+whatsappRouter.post('/api/whatsapp/flows/:id/publish', async (req: Request<IdParams>, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { profileId } = await resolveUserProfileId(req);
+    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || 'acc_primary';
+    const supabase = getBackendSupabaseClient();
+
+    if (supabase) {
+      const { data: flow } = await supabase.from('whatsapp_flows').select('*').eq('id', id).maybeSingle();
+      if (!flow) {
+        return res.status(404).json({ error: 'Flow not found' });
+      }
+
+      if (flow.status === 'PUBLISHED') {
+        return res.json({ success: true, message: 'Flow is already published', flow });
+      }
+
+      // Check validation
+      const validation = validateMetaFlowJson(flow.flow_json);
+      if (!validation.valid) {
+        return res.status(400).json({
+          error: 'Cannot publish Flow with validation errors. Please resolve all issues first.',
+          validation_errors: validation.errors,
+        });
+      }
+
+      // Call Zernio publish
+      const publishRes = await ZernioWhatsAppService.publishWhatsAppFlow(id, defaultAccountId);
+      if (!publishRes.success && publishRes.error && !publishRes.error.includes('dummy')) {
+        return res.status(400).json({ error: publishRes.error });
+      }
+
+      // Mark published in Supabase
+      const { data: updated, error: updErr } = await supabase
+        .from('whatsapp_flows')
+        .update({
+          status: 'PUBLISHED',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .select()
+        .maybeSingle();
+
+      if (updErr) {
+        return res.status(500).json({ error: updErr.message });
+      }
+
+      return res.json({ success: true, flow: updated || { ...flow, status: 'PUBLISHED' } });
+    }
+
+    return res.json({ success: true });
+  } catch (err: any) {
+    console.error('[POST /api/whatsapp/flows/:id/publish error]:', err);
+    return res.status(500).json({ error: err.message || 'Failed to publish WhatsApp flow' });
+  }
+});
+
+// ── POST /api/whatsapp/flows/:id/deprecate: Deprecate published flow
+whatsappRouter.post('/api/whatsapp/flows/:id/deprecate', async (req: Request<IdParams>, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { profileId } = await resolveUserProfileId(req);
+    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || 'acc_primary';
+    const supabase = getBackendSupabaseClient();
+
+    await ZernioWhatsAppService.deprecateWhatsAppFlow(id, defaultAccountId);
+
+    if (supabase) {
+      await supabase
+        .from('whatsapp_flows')
+        .update({ status: 'DEPRECATED', updated_at: new Date().toISOString() })
+        .eq('id', id);
+    }
+
+    return res.json({ success: true });
+  } catch (err: any) {
+    console.error('[POST /api/whatsapp/flows/:id/deprecate error]:', err);
+    return res.status(500).json({ error: err.message || 'Failed to deprecate WhatsApp flow' });
+  }
+});
+
+// ── DELETE /api/whatsapp/flows/:id: Delete draft flow
+whatsappRouter.delete('/api/whatsapp/flows/:id', async (req: Request<IdParams>, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { profileId } = await resolveUserProfileId(req);
+    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || 'acc_primary';
+    const supabase = getBackendSupabaseClient();
+
+    if (supabase) {
+      const { data: flow } = await supabase.from('whatsapp_flows').select('status').eq('id', id).maybeSingle();
+      if (flow && flow.status === 'PUBLISHED') {
+        return res.status(400).json({
+          error: 'Published flows cannot be deleted per Meta API rules. Please deprecate the flow instead.'
+        });
+      }
+
+      await supabase.from('whatsapp_flows').delete().eq('id', id);
+      await supabase.from('whatsapp_flow_responses').delete().eq('flow_id', id);
+    }
+
+    await ZernioWhatsAppService.deleteWhatsAppFlow(id, defaultAccountId);
+    return res.json({ success: true });
+  } catch (err: any) {
+    console.error('[DELETE /api/whatsapp/flows/:id error]:', err);
+    return res.status(500).json({ error: err.message || 'Failed to delete flow' });
+  }
+});
+
+// ── GET /api/whatsapp/flows/:id/preview: Get preview URL
+whatsappRouter.get('/api/whatsapp/flows/:id/preview', async (req: Request<IdParams>, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { profileId } = await resolveUserProfileId(req);
+    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || 'acc_primary';
+    const invalidate = req.query.invalidate === 'true';
+
+    const prev = await ZernioWhatsAppService.getWhatsAppFlowPreview(id, defaultAccountId, invalidate);
+    if (prev.preview_url) {
+      return res.json({ success: true, preview_url: prev.preview_url, expires_at: prev.expires_at });
+    }
+
+    // If offline, return simulator preview payload
+    return res.json({
+      success: true,
+      preview_url: `/flows/simulator?id=${id}`,
+      simulator: true,
+      expires_at: new Date(Date.now() + 30 * 86400000).toISOString(),
+    });
+  } catch (err: any) {
+    console.error('[GET /api/whatsapp/flows/:id/preview error]:', err);
+    return res.status(500).json({ error: err.message || 'Failed to get preview URL' });
+  }
+});
+
+// ── POST /api/whatsapp/flows/send: Send flow message to recipient
+whatsappRouter.post('/api/whatsapp/flows/send', async (req: Request, res: Response) => {
+  try {
+    const { profileId } = await resolveUserProfileId(req);
+    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || 'acc_primary';
+    const { to, flow_id, flow_cta, flow_action, flow_action_payload, body, draft } = req.body;
+
+    if (!to || !flow_id) {
+      return res.status(400).json({ error: "Missing required fields 'to' and 'flow_id'" });
+    }
+
+    const sendRes = await ZernioWhatsAppService.sendWhatsAppFlowMessage({
+      accountId: defaultAccountId,
+      to,
+      flow_id,
+      flow_cta: flow_cta || 'Open Form',
+      flow_action: flow_action || 'navigate',
+      flow_action_payload,
+      body: body || 'Please fill out this form inside WhatsApp.',
+      draft: !!draft,
+    });
+
+    const messageId = sendRes.messageId || `wamid.HBgL${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
+
+    // Store outgoing message in local store / supabase
+    const newMsg: WhatsAppMessage = {
+      id: messageId,
+      conversation_id: `conv_${to.replace(/[^0-9]/g, '')}`,
+      direction: 'outgoing',
+      type: 'interactive',
+      text: body || 'WhatsApp Flow Form',
+      status: 'delivered',
+      timestamp: new Date().toISOString(),
+      sender_name: 'Flow Assistant',
+      sender_phone: to,
+    };
+    whatsappStore.appendMessage(newMsg);
+
+    return res.json({
+      success: true,
+      messageId,
+      flow_token: `${flow_id}:${crypto.randomUUID()}`,
+    });
+  } catch (err: any) {
+    console.error('[POST /api/whatsapp/flows/send error]:', err);
+    return res.status(500).json({ error: err.message || 'Failed to send WhatsApp flow' });
+  }
+});
+
+// ── GET /api/whatsapp/flows/:id/responses: Read customer submissions
+whatsappRouter.get('/api/whatsapp/flows/:id/responses', async (req: Request<IdParams>, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { profileId } = await resolveUserProfileId(req);
+    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || 'acc_primary';
+    const supabase = getBackendSupabaseClient();
+
+    // 1. Fetch live from Zernio if configured
+    try {
+      const zResponses = await ZernioWhatsAppService.listWhatsAppFlowResponses(defaultAccountId, id);
+      if (zResponses.success && Array.isArray(zResponses.responses) && zResponses.responses.length > 0 && supabase) {
+        for (const resp of zResponses.responses) {
+          await supabase.from('whatsapp_flow_responses').upsert({
+            id: resp.id,
+            flow_id: id,
+            from_phone: resp.from_phone,
+            sender_name: resp.sender_name || null,
+            conversation_id: resp.conversation_id || null,
+            flow_token: resp.flow_token || null,
+            data: resp.data || {},
+            received_at: resp.received_at,
+          }, { onConflict: 'id' });
+        }
+      }
+    } catch {}
+
+    // 2. Fetch from Supabase
+    let responses: WhatsAppFlowResponse[] = [];
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('whatsapp_flow_responses')
+        .select('*')
+        .eq('flow_id', id)
+        .order('received_at', { ascending: false });
+
+      if (!error && Array.isArray(data)) {
+        responses = data;
+      }
+    }
+
+    return res.json({ success: true, responses, count: responses.length });
+  } catch (err: any) {
+    console.error('[GET /api/whatsapp/flows/:id/responses error]:', err);
+    return res.status(500).json({ error: err.message || 'Failed to get flow responses' });
+  }
+});
+
+// ── POST /api/whatsapp/flows/:id/responses: Record test / simulated submission
+whatsappRouter.post('/api/whatsapp/flows/:id/responses', async (req: Request<IdParams>, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { from_phone, sender_name, data: formData } = req.body;
+    const supabase = getBackendSupabaseClient();
+
+    const newResponse: WhatsAppFlowResponse = {
+      id: `wamid.HBgL${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      flow_id: id,
+      from_phone: from_phone || '+13105551234',
+      sender_name: sender_name || 'Simulated User',
+      flow_token: `${id}:${crypto.randomUUID()}`,
+      data: formData || {},
+      received_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+
+    if (supabase) {
+      await supabase.from('whatsapp_flow_responses').insert(newResponse);
+    }
+
+    return res.status(201).json({ success: true, response: newResponse });
+  } catch (err: any) {
+    console.error('[POST /api/whatsapp/flows/:id/responses error]:', err);
+    return res.status(500).json({ error: err.message || 'Failed to record flow response' });
+  }
+});
+
+// ── GET /api/whatsapp/flows/:id/versions: Get version history in lineage
+whatsappRouter.get('/api/whatsapp/flows/:id/versions', async (req: Request<IdParams>, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { profileId } = await resolveUserProfileId(req);
+    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || 'acc_primary';
+    const supabase = getBackendSupabaseClient();
+
+    // Fetch from Supabase
+    let versions: WhatsAppFlowVersion[] = [];
+    if (supabase) {
+      const { data: currentFlow } = await supabase.from('whatsapp_flows').select('lineage_id, parent_flow_id').eq('id', id).maybeSingle();
+      const lineageId = currentFlow?.lineage_id || id;
+
+      const { data: dbVersions } = await supabase
+        .from('whatsapp_flows')
+        .select('id, version, parent_flow_id, name, status')
+        .or(`lineage_id.eq.${lineageId},id.eq.${id}`)
+        .order('version', { ascending: false });
+
+      if (Array.isArray(dbVersions)) {
+        versions = dbVersions.map((v: any) => ({
+          flowId: v.id,
+          version: v.version || 1,
+          parentFlowId: v.parent_flow_id,
+          name: v.name,
+          status: v.status,
+          missing: false,
+        }));
+      }
+    }
+
+    // Try merging with Zernio live versions if available
+    try {
+      const zVersions = await ZernioWhatsAppService.listWhatsAppFlowVersions(id, defaultAccountId);
+      if (Array.isArray(zVersions) && zVersions.length > 0) {
+        versions = zVersions;
+      }
+    } catch {}
+
+    if (versions.length === 0) {
+      versions = [{ flowId: id, version: 1, parentFlowId: null, name: 'flow', status: 'DRAFT' }];
+    }
+
+    return res.json({ success: true, versions });
+  } catch (err: any) {
+    console.error('[GET /api/whatsapp/flows/:id/versions error]:', err);
+    return res.status(500).json({ error: err.message || 'Failed to list versions' });
+  }
+});
+
+// ── POST /api/whatsapp/flows/encryption-key: Register RSA key for data_exchange
+whatsappRouter.post('/api/whatsapp/flows/encryption-key', async (req: Request, res: Response) => {
+  try {
+    const { profileId } = await resolveUserProfileId(req);
+    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || 'acc_primary';
+    const { businessPublicKey } = req.body;
+
+    if (!businessPublicKey) {
+      return res.status(400).json({ error: 'businessPublicKey (PEM string) is required' });
+    }
+
+    const reg = await ZernioWhatsAppService.registerFlowEncryptionKey(defaultAccountId, businessPublicKey);
+    return res.json(reg);
+  } catch (err: any) {
+    console.error('[POST /api/whatsapp/flows/encryption-key error]:', err);
+    return res.status(500).json({ error: err.message || 'Failed to register encryption key' });
+  }
+});
+
+// ── GET /api/whatsapp/flows/encryption-key: Get RSA key status
+whatsappRouter.get('/api/whatsapp/flows/encryption-key', async (req: Request, res: Response) => {
+  try {
+    const { profileId } = await resolveUserProfileId(req);
+    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || 'acc_primary';
+    const keyInfo = await ZernioWhatsAppService.getFlowEncryptionKey(defaultAccountId);
+    return res.json({ success: true, key: keyInfo || { registered: false } });
+  } catch (err: any) {
+    console.error('[GET /api/whatsapp/flows/encryption-key error]:', err);
+    return res.status(500).json({ error: err.message || 'Failed to get encryption key status' });
+  }
+});
+
+
 
 // ─── 6. Real Live Campaign Endpoints & Broadcasts (Multi-Tenant & Cached) ───
 whatsappRouter.get('/api/whatsapp/campaigns/overview', async (req: Request, res: Response) => {

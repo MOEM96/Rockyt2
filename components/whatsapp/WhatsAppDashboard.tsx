@@ -14,6 +14,7 @@ import { WhatsAppInbox } from './WhatsAppInbox';
 // AutomationBuilder removed in favor of WhatsApp expandable tab
 import { CTWAHub } from './CTWAHub';
 import { TemplateStudio } from './TemplateStudio';
+import { FlowsStudio } from './FlowsStudio';
 import { BroadcastManager } from './BroadcastManager';
 import { MCPGateway } from './MCPGateway';
 import { ContactsCRM } from './ContactsCRM';
@@ -1344,8 +1345,8 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
           )}
 
           {currentView === 'whatsapp-flows' && (
-            <div className="p-6">
-              <BroadcastManager />
+            <div className="p-6 max-w-7xl mx-auto">
+              <FlowsStudio userSession={userSession} />
             </div>
           )}
 
