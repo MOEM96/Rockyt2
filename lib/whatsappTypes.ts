@@ -361,7 +361,7 @@ export interface FlowScreen {
 }
 
 export interface FlowJSON {
-  version: string; // e.g. '6.0'
+  version: string; // e.g. '7.3'
   data_api_version?: string; // '3.0'
   routing_model?: Record<string, string[]>;
   screens: FlowScreen[];

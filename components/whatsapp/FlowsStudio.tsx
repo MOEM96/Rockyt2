@@ -195,13 +195,14 @@ const PRESET_FLOW_TEMPLATES: {
     category: 'LEAD_GENERATION',
     description: 'Capture name, email, phone number, and project budget with high-converting native WhatsApp form.',
     flow_json: {
-      version: '6.0',
+      version: '7.3',
       screens: [
         {
           id: 'LEAD_FORM',
           title: 'Request a Quote',
           terminal: true,
           success: true,
+          data: {},
           layout: {
             type: 'SingleColumnLayout',
             children: [
@@ -248,12 +249,13 @@ const PRESET_FLOW_TEMPLATES: {
     category: 'APPOINTMENT_BOOKING',
     description: 'Multi-screen flow where customers pick a service on screen 1, then choose appointment date on screen 2.',
     flow_json: {
-      version: '6.0',
+      version: '7.3',
       screens: [
         {
           id: 'SELECT_SERVICE',
           title: 'Step 1: Choose Service',
           terminal: false,
+          data: {},
           layout: {
             type: 'SingleColumnLayout',
             children: [
@@ -289,6 +291,7 @@ const PRESET_FLOW_TEMPLATES: {
           title: 'Step 2: Pick Date',
           terminal: true,
           success: true,
+          data: {},
           layout: {
             type: 'SingleColumnLayout',
             children: [
@@ -332,13 +335,14 @@ const PRESET_FLOW_TEMPLATES: {
     category: 'SURVEY',
     description: 'Collect 5-star ratings, qualitative feedback comments, and follow-up consent in seconds.',
     flow_json: {
-      version: '6.0',
+      version: '7.3',
       screens: [
         {
           id: 'SURVEY_FORM',
           title: 'Feedback Survey',
           terminal: true,
           success: true,
+          data: {},
           layout: {
             type: 'SingleColumnLayout',
             children: [
@@ -383,13 +387,14 @@ const PRESET_FLOW_TEMPLATES: {
     category: 'SIGN_UP',
     description: 'Fast registration flow with job title, company size, and guest count.',
     flow_json: {
-      version: '6.0',
+      version: '7.3',
       screens: [
         {
           id: 'RSVP_SCREEN',
           title: 'Reserve Your Seat',
           terminal: true,
           success: true,
+          data: {},
           layout: {
             type: 'SingleColumnLayout',
             children: [
@@ -433,13 +438,14 @@ const PRESET_FLOW_TEMPLATES: {
     category: 'CONTACT_US',
     description: 'Structured ticket submission with issue categorization, severity rating, and problem description.',
     flow_json: {
-      version: '6.0',
+      version: '7.3',
       screens: [
         {
           id: 'TICKET_SCREEN',
           title: 'Submit Support Ticket',
           terminal: true,
           success: true,
+          data: {},
           layout: {
             type: 'SingleColumnLayout',
             children: [
@@ -493,7 +499,7 @@ const PRESET_FLOW_TEMPLATES: {
     category: 'OTHER',
     description: 'Advanced flow powered by a custom HTTPS server endpoint with dynamic screen evaluation.',
     flow_json: {
-      version: '6.0',
+      version: '7.3',
       data_api_version: '3.0',
       routing_model: {
         LOOKUP_SCREEN: ['CONFIRM_SCREEN'],
@@ -504,6 +510,7 @@ const PRESET_FLOW_TEMPLATES: {
           id: 'LOOKUP_SCREEN',
           title: 'Account Lookup',
           terminal: false,
+          data: {},
           layout: {
             type: 'SingleColumnLayout',
             children: [
@@ -529,6 +536,7 @@ const PRESET_FLOW_TEMPLATES: {
           terminal: true,
           success: true,
           refresh_on_back: true,
+          data: {},
           layout: {
             type: 'SingleColumnLayout',
             children: [
@@ -688,6 +696,7 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
           title: 'Get a Quote',
           terminal: true,
           success: true,
+          data: {},
           layout: {
             type: 'SingleColumnLayout',
             children: [
@@ -718,7 +727,7 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
         categories: ['LEAD_GENERATION'],
         version: 1,
         flow_json: {
-          version: '6.0',
+          version: '7.3',
           screens: defaultScreens,
         },
         created_at: new Date().toISOString(),
@@ -730,7 +739,7 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
       setActiveScreenIndex(0);
       setSelectedComponentIndex(null);
       setEndpointUri('');
-      setRawJsonText(JSON.stringify({ version: '6.0', screens: defaultScreens }, null, 2));
+      setRawJsonText(JSON.stringify({ version: '7.3', screens: defaultScreens }, null, 2));
       initSimulator(defaultScreens, 0);
     }
 
@@ -787,9 +796,44 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
 
   // ── Sync Visual Builder to Flow JSON ──
   const currentCompiledJson: FlowJSON = useMemo(() => {
+    // Format and sanitize each screen for Meta v7.3 specification
+    const formattedScreens: FlowScreen[] = builderScreens.map(s => {
+      const cleanId = (s.id || 'SCREEN')
+        .toUpperCase()
+        .replace(/[^A-Z_]/g, '_')
+        .replace(/^[0-9]+/, '') || 'SCREEN_DETAILS';
+
+      const screenObj: FlowScreen = {
+        id: cleanId === 'SUCCESS' ? 'SUCCESS_SCREEN' : cleanId,
+        title: s.title || 'Screen',
+        terminal: !!s.terminal,
+        data: s.data || {},
+        layout: {
+          type: 'SingleColumnLayout',
+          children: (s.layout?.children || []).map(comp => {
+            const cleanComp: any = { type: comp.type };
+            if (comp.text !== undefined) cleanComp.text = comp.text;
+            if (comp.name !== undefined) cleanComp.name = comp.name;
+            if (comp.label !== undefined) cleanComp.label = comp.label;
+            if (comp.required !== undefined) cleanComp.required = !!comp.required;
+            if (comp['input-type'] !== undefined) cleanComp['input-type'] = comp['input-type'];
+            if (comp['helper-text']) cleanComp['helper-text'] = comp['helper-text'];
+            if (comp['error-message']) cleanComp['error-message'] = comp['error-message'];
+            if (comp['data-source']) cleanComp['data-source'] = comp['data-source'];
+            if (comp['on-click-action']) cleanComp['on-click-action'] = comp['on-click-action'];
+            return cleanComp;
+          }),
+        },
+      };
+      if (s.terminal) {
+        screenObj.success = s.success !== false;
+      }
+      return screenObj;
+    });
+
     const base: FlowJSON = {
-      version: '6.0',
-      screens: builderScreens,
+      version: '7.3',
+      screens: formattedScreens,
     };
     if (endpointUri.trim()) {
       base.data_api_version = '3.0';
@@ -805,12 +849,45 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
   }, [currentCompiledJson, builderTab]);
 
   // ── Screen Management Handlers ──
+  const SCREEN_NAME_SEQUENCE = [
+    'DETAILS_SCREEN',
+    'OPTIONS_SCREEN',
+    'CONTACT_SCREEN',
+    'SCHEDULE_SCREEN',
+    'CONFIRM_SCREEN',
+    'SUMMARY_SCREEN',
+    'FEEDBACK_SCREEN',
+    'VERIFY_SCREEN',
+    'ADDITIONAL_INFO',
+    'FINAL_SCREEN',
+  ];
+
+  const NUMBER_WORDS_MAP: Record<number, string> = {
+    1: 'ONE', 2: 'TWO', 3: 'THREE', 4: 'FOUR', 5: 'FIVE',
+    6: 'SIX', 7: 'SEVEN', 8: 'EIGHT', 9: 'NINE', 10: 'TEN',
+    11: 'ELEVEN', 12: 'TWELVE', 13: 'THIRTEEN', 14: 'FOURTEEN', 15: 'FIFTEEN'
+  };
+
   const addScreen = () => {
-    const newScreenId = `SCREEN_${builderScreens.length + 1}`;
+    // Generate an ID that strictly matches ^[A-Za-z_]+$ with NO numbers
+    let candidateId = '';
+    for (const name of SCREEN_NAME_SEQUENCE) {
+      if (!builderScreens.some(s => s.id === name)) {
+        candidateId = name;
+        break;
+      }
+    }
+    if (!candidateId) {
+      const stepIdx = builderScreens.length + 1;
+      const word = NUMBER_WORDS_MAP[stepIdx] || `EXTRA_${stepIdx}`.replace(/[0-9]/g, 'X');
+      candidateId = `SCREEN_${word}`;
+    }
+
     const newScreen: FlowScreen = {
-      id: newScreenId,
+      id: candidateId,
       title: `Screen ${builderScreens.length + 1}`,
       terminal: false,
+      data: {},
       layout: {
         type: 'SingleColumnLayout',
         children: [
@@ -846,7 +923,50 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
 
   const updateScreenProperty = (key: keyof FlowScreen, val: any) => {
     if (!activeScreen) return;
-    const updated = [...builderScreens];
+    const oldId = activeScreen.id;
+    let updated = [...builderScreens];
+
+    if (key === 'id') {
+      // Strictly enforce uppercase letters and underscores only (Meta specification)
+      const sanitizedId = String(val).toUpperCase().replace(/[^A-Z_]/g, '');
+      const finalId = sanitizedId === 'SUCCESS' ? 'SUCCESS_SCREEN' : sanitizedId;
+
+      updated = updated.map((s, idx) => {
+        if (idx === activeScreenIndex) {
+          return { ...s, id: finalId };
+        }
+        // Cascade rename to any navigation referencing oldId
+        const updatedChildren = s.layout.children.map(comp => {
+          if (comp['on-click-action']?.next?.name === oldId) {
+            return {
+              ...comp,
+              'on-click-action': {
+                ...comp['on-click-action'],
+                next: {
+                  ...comp['on-click-action'].next,
+                  name: finalId,
+                },
+              },
+            };
+          }
+          return comp;
+        });
+        return {
+          ...s,
+          layout: {
+            ...s.layout,
+            children: updatedChildren,
+          },
+        };
+      });
+
+      if (simScreenId === oldId) {
+        setSimScreenId(finalId);
+      }
+      setBuilderScreens(updated);
+      return;
+    }
+
     updated[activeScreenIndex] = {
       ...updated[activeScreenIndex],
       [key]: val,
@@ -948,7 +1068,30 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
     setErrorBanner(null);
 
     try {
-      const flowJsonToSave = currentCompiledJson;
+      let flowJsonToSave = currentCompiledJson;
+
+      // If user is currently editing in the raw JSON tab, parse and save those edits
+      if (builderTab === 'json') {
+        try {
+          const parsed = JSON.parse(rawJsonText);
+          if (parsed && Array.isArray(parsed.screens) && parsed.screens.length > 0) {
+            flowJsonToSave = parsed;
+          }
+        } catch (e: any) {
+          throw new Error('Cannot save: Invalid JSON syntax in editor - ' + e.message);
+        }
+      }
+
+      // Pre-flight check on Screen IDs: Meta requires letters and underscores only
+      for (let i = 0; i < (flowJsonToSave.screens || []).length; i++) {
+        const sc = flowJsonToSave.screens[i];
+        if (!sc.id || !/^[a-zA-Z_]+$/.test(sc.id)) {
+          throw new Error(`Screen [${i}] ID "${sc.id}" is invalid. Meta Flow specification requires Screen IDs to consist ONLY of alphabets and underscores (no digits or hyphens).`);
+        }
+        if (sc.id.toUpperCase() === 'SUCCESS') {
+          throw new Error(`Screen [${i}] ID "${sc.id}" is forbidden. "SUCCESS" is a reserved Meta keyword.`);
+        }
+      }
 
       if (isNewDraft || editingFlow.id.startsWith('draft_')) {
         // Create new flow
@@ -1346,7 +1489,7 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
             <div>
               <h1 className="text-xl font-bold text-gray-900 tracking-tight">WhatsApp Flows Studio</h1>
               <p className="text-xs text-gray-500 mt-0.5">
-                Design native multi-screen forms, surveys &amp; bookings directly inside WhatsApp with Meta Flow JSON v6.0.
+                Design native multi-screen forms, surveys &amp; bookings directly inside WhatsApp with Meta Flow JSON v7.3.
               </p>
             </div>
           </div>
@@ -1410,7 +1553,7 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
         <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-xs">
           <span className="text-[11px] font-medium text-gray-500 uppercase tracking-wider">Meta Flow JSON</span>
           <div className="mt-1 flex items-baseline justify-between">
-            <span className="text-2xl font-bold text-indigo-600">v6.0</span>
+            <span className="text-2xl font-bold text-indigo-600">v7.3</span>
             <Code size={16} className="text-indigo-400" />
           </div>
         </div>
@@ -1719,7 +1862,7 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
                       {editingFlow.status}
                     </span>
                   </div>
-                  <span className="text-[10px] text-gray-400">Meta Flow JSON v6.0 Schema</span>
+                  <span className="text-[10px] text-gray-400">Meta Flow JSON v7.3 Schema</span>
                 </div>
               </div>
 
@@ -1855,13 +1998,27 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
                       </span>
 
                       <div>
-                        <label className="text-[10px] font-semibold text-gray-600 block mb-0.5">Screen ID</label>
+                        <div className="flex items-center justify-between mb-0.5">
+                          <label className="text-[10px] font-semibold text-gray-600 block">Screen ID</label>
+                          <span className="text-[9px] text-emerald-600 font-medium">A-Z & _ only (Meta Spec)</span>
+                        </div>
                         <input
                           type="text"
                           value={activeScreen.id}
-                          onChange={e => updateScreenProperty('id', e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))}
-                          className="w-full px-2 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-emerald-500 font-mono"
+                          onChange={e => updateScreenProperty('id', e.target.value.toUpperCase().replace(/[^A-Z_]/g, ''))}
+                          placeholder="e.g. DETAILS_SCREEN"
+                          className="w-full px-2 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-emerald-500 font-mono font-semibold text-gray-800"
                         />
+                        {/[0-9]/.test(activeScreen.id) && (
+                          <p className="text-[10px] text-red-600 mt-1 flex items-center gap-1 font-medium">
+                            <AlertCircle size={10} /> Numbers are forbidden by Meta in Screen IDs
+                          </p>
+                        )}
+                        {activeScreen.id.toUpperCase() === 'SUCCESS' && (
+                          <p className="text-[10px] text-red-600 mt-1 flex items-center gap-1 font-medium">
+                            <AlertCircle size={10} /> 'SUCCESS' is a reserved Meta keyword
+                          </p>
+                        )}
                       </div>
 
                       <div>
@@ -2543,7 +2700,7 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
                     <div className="flex-1 p-4 bg-gray-900 text-gray-100 flex flex-col overflow-hidden text-xs font-mono">
                       <div className="flex items-center justify-between pb-2 border-b border-gray-800 mb-2">
                         <span className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider">
-                          Meta Flow JSON v6.0
+                          Meta Flow JSON v7.3
                         </span>
                         <button
                           onClick={copyFlowJson}

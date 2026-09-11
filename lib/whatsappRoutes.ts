@@ -1528,8 +1528,151 @@ whatsappRouter.delete('/api/whatsapp/templates/:name', async (req: Request<NameP
 
 // ─── 5.5. WhatsApp Flows & Flow Builder Endpoints (Meta & Zernio Compatible) ───
 
+const META_DIGIT_WORDS: Record<string, string> = {
+  '0': 'ZERO',
+  '1': 'ONE',
+  '2': 'TWO',
+  '3': 'THREE',
+  '4': 'FOUR',
+  '5': 'FIVE',
+  '6': 'SIX',
+  '7': 'SEVEN',
+  '8': 'EIGHT',
+  '9': 'NINE'
+};
+
 /**
- * Validate Meta Flow JSON against v6.0 / v5.0 specification
+ * Clean, sanitize and normalize Flow JSON for strict Meta WhatsApp Manager v7.3 compliance:
+ * 1. Screen IDs must strictly consist of alphabets and underscores only (^[A-Za-z_]+$).
+ * 2. Digits in screen IDs (e.g. SCREEN_2) are converted to English word equivalents (SCREEN_TWO).
+ * 3. Navigation references and expressions (on-click-action next screen) are cascaded.
+ * 4. Flow JSON version is standardized to '7.3'.
+ * 5. Every screen explicitly contains `data: {}` per Meta schema.
+ * 6. Terminal screens enforce `success: true`.
+ * 7. Null and undefined fields are recursively stripped (Meta RFC 8927 rule).
+ */
+export function cleanAndNormalizeMetaFlowJson(rawJson: any): any {
+  if (!rawJson || typeof rawJson !== 'object') return rawJson;
+
+  const cloned = JSON.parse(JSON.stringify(rawJson));
+
+  // Default version to '7.3' (Meta latest WhatsApp Flows standard)
+  if (!cloned.version || cloned.version === '6.0' || cloned.version === '5.0' || cloned.version === '4.0') {
+    cloned.version = '7.3';
+  }
+
+  if (!Array.isArray(cloned.screens) || cloned.screens.length === 0) {
+    return cloned;
+  }
+
+  const idMap = new Map<string, string>();
+
+  // 1. Sanitize all screen IDs
+  cloned.screens.forEach((screen: any, idx: number) => {
+    const rawId = typeof screen.id === 'string' ? screen.id.trim() : `SCREEN_${idx + 1}`;
+    let newId = rawId;
+
+    // Convert digits to English words
+    if (/[0-9]/.test(newId)) {
+      newId = newId.replace(/[0-9]/g, (d: string) => `_${META_DIGIT_WORDS[d] || 'EXTRA'}_`);
+    }
+
+    // Replace non-alphabet and non-underscore characters (hyphens, spaces, etc.) with '_'
+    newId = newId.toUpperCase().replace(/[^A-Z_]/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+
+    // Fallback if empty
+    if (!newId) {
+      newId = `SCREEN_${idx === 0 ? 'START' : 'STEP_' + (META_DIGIT_WORDS[String(idx + 1)] || 'EXTRA')}`;
+    }
+
+    // Meta reserved keyword: SUCCESS cannot be a screen ID
+    if (newId === 'SUCCESS') {
+      newId = 'SUCCESS_SCREEN';
+    }
+
+    if (newId !== rawId) {
+      idMap.set(rawId, newId);
+    }
+    screen.id = newId;
+
+    // Ensure data object exists on all screens per Meta v7.3 schema
+    if (!screen.data || typeof screen.data !== 'object' || Array.isArray(screen.data)) {
+      screen.data = {};
+    }
+
+    // Ensure terminal / success flags are clean booleans
+    if (screen.terminal === true) {
+      screen.terminal = true;
+      if (screen.success === undefined) {
+        screen.success = true;
+      }
+    }
+  });
+
+  // 2. Cascade updated screen IDs to navigation and expressions
+  if (idMap.size > 0) {
+    // Update routing_model if present
+    if (cloned.routing_model && typeof cloned.routing_model === 'object') {
+      const newRouting: Record<string, string[]> = {};
+      for (const [key, targets] of Object.entries(cloned.routing_model)) {
+        const mappedKey = idMap.get(key) || key;
+        const mappedTargets = Array.isArray(targets)
+          ? (targets as string[]).map(t => idMap.get(t) || t)
+          : targets;
+        newRouting[mappedKey] = mappedTargets as string[];
+      }
+      cloned.routing_model = newRouting;
+    }
+
+    // Update on-click-action next screen references and payload expressions
+    cloned.screens.forEach((screen: any) => {
+      if (screen.layout && Array.isArray(screen.layout.children)) {
+        screen.layout.children.forEach((comp: any) => {
+          const action = comp['on-click-action'];
+          if (action) {
+            if (action.next && action.next.type === 'screen' && typeof action.next.name === 'string') {
+              if (idMap.has(action.next.name)) {
+                action.next.name = idMap.get(action.next.name);
+              }
+            }
+            if (action.payload && typeof action.payload === 'object') {
+              for (const [pk, pv] of Object.entries(action.payload)) {
+                if (typeof pv === 'string') {
+                  let updatedStr = pv;
+                  idMap.forEach((newI, oldI) => {
+                    updatedStr = updatedStr.split(`screen.${oldI}.`).join(`screen.${newI}.`);
+                  });
+                  action.payload[pk] = updatedStr;
+                }
+              }
+            }
+          }
+        });
+      }
+    });
+  }
+
+  // 3. Strip null and undefined values recursively (Meta RFC 8927 rule)
+  function stripNulls(obj: any): any {
+    if (Array.isArray(obj)) {
+      return obj.map(stripNulls);
+    } else if (obj !== null && typeof obj === 'object') {
+      const clean: any = {};
+      for (const [k, v] of Object.entries(obj)) {
+        if (v !== null && v !== undefined) {
+          clean[k] = stripNulls(v);
+        }
+      }
+      return clean;
+    }
+    return obj;
+  }
+
+  return stripNulls(cloned);
+}
+
+/**
+ * Validate Meta Flow JSON against v7.3 / v6.0 / v5.0 specification
  */
 function validateMetaFlowJson(flowJson: any): { valid: boolean; errors: any[] } {
   const errors: any[] = [];
@@ -1544,7 +1687,7 @@ function validateMetaFlowJson(flowJson: any): { valid: boolean; errors: any[] } 
     errors.push({
       error: 'MISSING_REQUIRED_PROPERTY',
       error_type: 'JSON_SCHEMA_ERROR',
-      message: "Required property 'version' is missing (expected '6.0' or '5.0')",
+      message: "Required property 'version' is missing (expected '7.3', '6.0' or '5.0')",
       pointers: [{ path: 'version' }]
     });
   }
@@ -1572,6 +1715,16 @@ function validateMetaFlowJson(flowJson: any): { valid: boolean; errors: any[] } 
         pointers: [{ path: `${screenPath}.id` }]
       });
     } else {
+      // META VALIDATION: Property 'id' should only consist of alphabets and underscores.
+      if (!/^[a-zA-Z_]+$/.test(screen.id)) {
+        errors.push({
+          error: 'INVALID_SCREEN_ID',
+          error_type: 'JSON_SCHEMA_ERROR',
+          message: `Property 'id' should only consist of alphabets and underscores. (screen: '${screen.id}')`,
+          pointers: [{ path: `${screenPath}.id` }]
+        });
+      }
+
       if (screen.id.toUpperCase() === 'SUCCESS') {
         errors.push({
           error: 'RESERVED_KEYWORD',
@@ -1671,12 +1824,13 @@ function validateMetaFlowJson(flowJson: any): { valid: boolean; errors: any[] } 
 function generateStarterFlowJson(name: string, category: string): any {
   if (category === 'APPOINTMENT_BOOKING') {
     return {
-      version: '6.0',
+      version: '7.3',
       screens: [{
         id: 'BOOKING_FORM',
         title: 'Book an Appointment',
         terminal: true,
         success: true,
+        data: {},
         layout: {
           type: 'SingleColumnLayout',
           children: [
@@ -1717,12 +1871,13 @@ function generateStarterFlowJson(name: string, category: string): any {
 
   if (category === 'SURVEY') {
     return {
-      version: '6.0',
+      version: '7.3',
       screens: [{
         id: 'SURVEY_SCREEN',
         title: 'Customer Feedback',
         terminal: true,
         success: true,
+        data: {},
         layout: {
           type: 'SingleColumnLayout',
           children: [
@@ -1763,12 +1918,13 @@ function generateStarterFlowJson(name: string, category: string): any {
 
   // Default: LEAD_GENERATION / CONTACT_US
   return {
-    version: '6.0',
+    version: '7.3',
     screens: [{
       id: 'LEAD_FORM',
       title: 'Get a Quote & Connect',
       terminal: true,
       success: true,
+      data: {},
       layout: {
         type: 'SingleColumnLayout',
         children: [
@@ -1936,8 +2092,9 @@ whatsappRouter.post('/api/whatsapp/flows', async (req: Request, res: Response) =
       }
     }
 
-    // Determine initial Flow JSON
-    const finalFlowJson = flow_json || generateStarterFlowJson(cleanName, validCats[0]);
+    // Determine initial Flow JSON and sanitize
+    const rawFlowJson = flow_json || generateStarterFlowJson(cleanName, validCats[0]);
+    const finalFlowJson = cleanAndNormalizeMetaFlowJson(rawFlowJson);
     const validation = validateMetaFlowJson(finalFlowJson);
 
     // Save to Supabase
@@ -1963,7 +2120,7 @@ whatsappRouter.post('/api/whatsapp/flows', async (req: Request, res: Response) =
       await supabase.from('whatsapp_flows').insert(newRecord);
     }
 
-    // If upload to Zernio is possible, upload the JSON
+    // If upload to Zernio is possible, upload the clean normalized JSON
     if (zernioRes.success && finalFlowJson) {
       await ZernioWhatsAppService.uploadWhatsAppFlowJson(createdFlowId, defaultAccountId, finalFlowJson);
     }
@@ -2037,13 +2194,14 @@ whatsappRouter.put('/api/whatsapp/flows/:id/json', async (req: Request<IdParams>
       }
     }
 
-    // Validate Meta Flow JSON structure
-    const validation = validateMetaFlowJson(flow_json);
+    // Sanitize and normalize Meta Flow JSON structure
+    const normalizedFlowJson = cleanAndNormalizeMetaFlowJson(flow_json);
+    const validation = validateMetaFlowJson(normalizedFlowJson);
 
     // If live account exists, push to Zernio
     let metaErrors: any[] = [];
     try {
-      const uploadRes = await ZernioWhatsAppService.uploadWhatsAppFlowJson(id, defaultAccountId, flow_json);
+      const uploadRes = await ZernioWhatsAppService.uploadWhatsAppFlowJson(id, defaultAccountId, normalizedFlowJson);
       if (uploadRes.validation_errors && uploadRes.validation_errors.length > 0) {
         metaErrors = uploadRes.validation_errors;
       }
@@ -2054,7 +2212,7 @@ whatsappRouter.put('/api/whatsapp/flows/:id/json', async (req: Request<IdParams>
     // Update in Supabase
     if (supabase) {
       const updatePayload: any = {
-        flow_json,
+        flow_json: normalizedFlowJson,
         validation_errors: allErrors,
         updated_at: new Date().toISOString(),
       };

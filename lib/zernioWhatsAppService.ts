@@ -1363,6 +1363,7 @@ export class ZernioWhatsAppService {
     }
 
     try {
+      const normalizedJson = typeof flowJson === 'string' ? JSON.parse(flowJson) : flowJson;
       const res = await fetch(`https://zernio.com/api/v1/whatsapp/flows/${encodeURIComponent(flowId)}/json`, {
         method: 'PUT',
         headers: {
@@ -1371,8 +1372,8 @@ export class ZernioWhatsAppService {
         },
         body: JSON.stringify({
           accountId,
-          flow_json: flowJson,
-        }),
+          flow_json: normalizedJson,
+        }, null, 2),
       });
 
       const data = await res.json().catch(() => ({}));

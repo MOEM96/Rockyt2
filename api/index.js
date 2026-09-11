@@ -1808,6 +1808,7 @@ var ZernioWhatsAppService = class _ZernioWhatsAppService {
       return { success: false, error: "Zernio API key not configured" };
     }
     try {
+      const normalizedJson = typeof flowJson === "string" ? JSON.parse(flowJson) : flowJson;
       const res = await fetch(`https://zernio.com/api/v1/whatsapp/flows/${encodeURIComponent(flowId)}/json`, {
         method: "PUT",
         headers: {
@@ -1816,8 +1817,8 @@ var ZernioWhatsAppService = class _ZernioWhatsAppService {
         },
         body: JSON.stringify({
           accountId,
-          flow_json: flowJson
-        })
+          flow_json: normalizedJson
+        }, null, 2)
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -3993,6 +3994,107 @@ whatsappRouter.delete("/api/whatsapp/templates/:name", async (req, res) => {
     return res.status(500).json({ error: err.message || "Failed to delete template" });
   }
 });
+var META_DIGIT_WORDS = {
+  "0": "ZERO",
+  "1": "ONE",
+  "2": "TWO",
+  "3": "THREE",
+  "4": "FOUR",
+  "5": "FIVE",
+  "6": "SIX",
+  "7": "SEVEN",
+  "8": "EIGHT",
+  "9": "NINE"
+};
+function cleanAndNormalizeMetaFlowJson(rawJson) {
+  if (!rawJson || typeof rawJson !== "object") return rawJson;
+  const cloned = JSON.parse(JSON.stringify(rawJson));
+  if (!cloned.version || cloned.version === "6.0" || cloned.version === "5.0" || cloned.version === "4.0") {
+    cloned.version = "7.3";
+  }
+  if (!Array.isArray(cloned.screens) || cloned.screens.length === 0) {
+    return cloned;
+  }
+  const idMap = /* @__PURE__ */ new Map();
+  cloned.screens.forEach((screen, idx) => {
+    const rawId = typeof screen.id === "string" ? screen.id.trim() : `SCREEN_${idx + 1}`;
+    let newId = rawId;
+    if (/[0-9]/.test(newId)) {
+      newId = newId.replace(/[0-9]/g, (d) => `_${META_DIGIT_WORDS[d] || "EXTRA"}_`);
+    }
+    newId = newId.toUpperCase().replace(/[^A-Z_]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+    if (!newId) {
+      newId = `SCREEN_${idx === 0 ? "START" : "STEP_" + (META_DIGIT_WORDS[String(idx + 1)] || "EXTRA")}`;
+    }
+    if (newId === "SUCCESS") {
+      newId = "SUCCESS_SCREEN";
+    }
+    if (newId !== rawId) {
+      idMap.set(rawId, newId);
+    }
+    screen.id = newId;
+    if (!screen.data || typeof screen.data !== "object" || Array.isArray(screen.data)) {
+      screen.data = {};
+    }
+    if (screen.terminal === true) {
+      screen.terminal = true;
+      if (screen.success === void 0) {
+        screen.success = true;
+      }
+    }
+  });
+  if (idMap.size > 0) {
+    if (cloned.routing_model && typeof cloned.routing_model === "object") {
+      const newRouting = {};
+      for (const [key, targets] of Object.entries(cloned.routing_model)) {
+        const mappedKey = idMap.get(key) || key;
+        const mappedTargets = Array.isArray(targets) ? targets.map((t) => idMap.get(t) || t) : targets;
+        newRouting[mappedKey] = mappedTargets;
+      }
+      cloned.routing_model = newRouting;
+    }
+    cloned.screens.forEach((screen) => {
+      if (screen.layout && Array.isArray(screen.layout.children)) {
+        screen.layout.children.forEach((comp) => {
+          const action = comp["on-click-action"];
+          if (action) {
+            if (action.next && action.next.type === "screen" && typeof action.next.name === "string") {
+              if (idMap.has(action.next.name)) {
+                action.next.name = idMap.get(action.next.name);
+              }
+            }
+            if (action.payload && typeof action.payload === "object") {
+              for (const [pk, pv] of Object.entries(action.payload)) {
+                if (typeof pv === "string") {
+                  let updatedStr = pv;
+                  idMap.forEach((newI, oldI) => {
+                    updatedStr = updatedStr.split(`screen.${oldI}.`).join(`screen.${newI}.`);
+                  });
+                  action.payload[pk] = updatedStr;
+                }
+              }
+            }
+          }
+        });
+      }
+    });
+  }
+  function stripNulls(obj) {
+    if (Array.isArray(obj)) {
+      return obj.map(stripNulls);
+    } else if (obj !== null && typeof obj === "object") {
+      const clean = {};
+      for (const [k, v] of Object.entries(obj)) {
+        if (v !== null && v !== void 0) {
+          clean[k] = stripNulls(v);
+        }
+      }
+      return clean;
+    }
+    return obj;
+  }
+  return stripNulls(cloned);
+}
 function validateMetaFlowJson(flowJson) {
   const errors = [];
   if (!flowJson || typeof flowJson !== "object") {
@@ -4005,7 +4107,7 @@ function validateMetaFlowJson(flowJson) {
     errors.push({
       error: "MISSING_REQUIRED_PROPERTY",
       error_type: "JSON_SCHEMA_ERROR",
-      message: "Required property 'version' is missing (expected '6.0' or '5.0')",
+      message: "Required property 'version' is missing (expected '7.3', '6.0' or '5.0')",
       pointers: [{ path: "version" }]
     });
   }
@@ -4030,6 +4132,14 @@ function validateMetaFlowJson(flowJson) {
         pointers: [{ path: `${screenPath}.id` }]
       });
     } else {
+      if (!/^[a-zA-Z_]+$/.test(screen.id)) {
+        errors.push({
+          error: "INVALID_SCREEN_ID",
+          error_type: "JSON_SCHEMA_ERROR",
+          message: `Property 'id' should only consist of alphabets and underscores. (screen: '${screen.id}')`,
+          pointers: [{ path: `${screenPath}.id` }]
+        });
+      }
       if (screen.id.toUpperCase() === "SUCCESS") {
         errors.push({
           error: "RESERVED_KEYWORD",
@@ -4114,12 +4224,13 @@ function validateMetaFlowJson(flowJson) {
 function generateStarterFlowJson(name, category) {
   if (category === "APPOINTMENT_BOOKING") {
     return {
-      version: "6.0",
+      version: "7.3",
       screens: [{
         id: "BOOKING_FORM",
         title: "Book an Appointment",
         terminal: true,
         success: true,
+        data: {},
         layout: {
           type: "SingleColumnLayout",
           children: [
@@ -4159,12 +4270,13 @@ function generateStarterFlowJson(name, category) {
   }
   if (category === "SURVEY") {
     return {
-      version: "6.0",
+      version: "7.3",
       screens: [{
         id: "SURVEY_SCREEN",
         title: "Customer Feedback",
         terminal: true,
         success: true,
+        data: {},
         layout: {
           type: "SingleColumnLayout",
           children: [
@@ -4203,12 +4315,13 @@ function generateStarterFlowJson(name, category) {
     };
   }
   return {
-    version: "6.0",
+    version: "7.3",
     screens: [{
       id: "LEAD_FORM",
       title: "Get a Quote & Connect",
       terminal: true,
       success: true,
+      data: {},
       layout: {
         type: "SingleColumnLayout",
         children: [
@@ -4350,7 +4463,8 @@ whatsappRouter.post("/api/whatsapp/flows", async (req, res) => {
         lineageId = createdFlowId;
       }
     }
-    const finalFlowJson = flow_json || generateStarterFlowJson(cleanName, validCats[0]);
+    const rawFlowJson = flow_json || generateStarterFlowJson(cleanName, validCats[0]);
+    const finalFlowJson = cleanAndNormalizeMetaFlowJson(rawFlowJson);
     const validation = validateMetaFlowJson(finalFlowJson);
     const newRecord = {
       id: createdFlowId,
@@ -4427,10 +4541,11 @@ whatsappRouter.put("/api/whatsapp/flows/:id/json", async (req, res) => {
         });
       }
     }
-    const validation = validateMetaFlowJson(flow_json);
+    const normalizedFlowJson = cleanAndNormalizeMetaFlowJson(flow_json);
+    const validation = validateMetaFlowJson(normalizedFlowJson);
     let metaErrors = [];
     try {
-      const uploadRes = await ZernioWhatsAppService.uploadWhatsAppFlowJson(id, defaultAccountId, flow_json);
+      const uploadRes = await ZernioWhatsAppService.uploadWhatsAppFlowJson(id, defaultAccountId, normalizedFlowJson);
       if (uploadRes.validation_errors && uploadRes.validation_errors.length > 0) {
         metaErrors = uploadRes.validation_errors;
       }
@@ -4439,7 +4554,7 @@ whatsappRouter.put("/api/whatsapp/flows/:id/json", async (req, res) => {
     const allErrors = [...validation.errors, ...metaErrors];
     if (supabase) {
       const updatePayload = {
-        flow_json,
+        flow_json: normalizedFlowJson,
         validation_errors: allErrors,
         updated_at: (/* @__PURE__ */ new Date()).toISOString()
       };
