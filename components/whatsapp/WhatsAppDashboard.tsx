@@ -303,8 +303,6 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
         setAccount(null);
         setCompletedSteps(prev => ({ ...prev, 1: false }));
         setManageSenderDropdownOpen(false);
-        setAccountHealthModalOpen(false);
-        setAddChannelModalOpen(false);
         setOauthBanner(null);
 
         // Permanently purge all WhatsApp data from localStorage

@@ -11,7 +11,8 @@ function apiPlugin(): Plugin {
     configureServer(server) {
       const apiApp = express();
       apiApp.use(cookieParser());
-      apiApp.use(express.json());
+      apiApp.use(express.json({ limit: '50mb' }));
+      apiApp.use(express.urlencoded({ extended: true, limit: '50mb' }));
       apiApp.use(whatsappRouter);
       server.middlewares.use(apiApp);
     },

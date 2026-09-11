@@ -101,21 +101,47 @@ export type WhatsAppTemplateStatus =
   | 'DISABLED' 
   | 'PENDING_DELETION';
 
+export type WhatsAppButtonType = 
+  | 'QUICK_REPLY' 
+  | 'URL' 
+  | 'PHONE_NUMBER' 
+  | 'COPY_CODE' 
+  | 'FLOW' 
+  | 'REQUEST_CONTACT' 
+  | 'CATALOG' 
+  | 'MPM'
+  | 'quick_reply'
+  | 'url'
+  | 'phone_number'
+  | 'copy_code'
+  | 'flow'
+  | 'request_contact'
+  | 'catalog'
+  | 'mpm';
+
 export interface WhatsAppTemplateComponent {
   type: 'HEADER' | 'BODY' | 'FOOTER' | 'BUTTONS' | 'header' | 'body' | 'footer' | 'buttons';
   format?: 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT';
   text?: string;
+  media_url?: string;
   example?: {
     header_text?: string[];
     body_text?: string[][];
     header_handle?: string[];
+    header_url?: string[];
   };
   buttons?: Array<{
-    type: 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER' | 'FLOW';
+    type: WhatsAppButtonType | string;
     text: string;
     url?: string;
+    url_type?: 'static' | 'dynamic';
+    url_example?: string;
     phone_number?: string;
-    example?: string[];
+    code?: string;
+    flow_id?: string;
+    flow_action?: 'navigate' | 'data_exchange' | string;
+    navigate_screen?: string;
+    example?: string[] | string;
   }>;
 }
 
@@ -127,6 +153,8 @@ export interface WhatsAppTemplate {
   status: WhatsAppTemplateStatus;
   components: WhatsAppTemplateComponent[];
   account_id?: string;
+  header_type?: string;
+  media_url?: string;
   rejected_reason?: string;
   message_send_ttl_seconds?: number;
   created_at?: string;

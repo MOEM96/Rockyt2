@@ -3036,6 +3036,103 @@ whatsappRouter.post("/api/whatsapp/automations/:id/test", async (req, res) => {
   const result = await AutomationEngine.executeFlow(flow, sampleConv);
   return res.json({ success: true, result });
 });
+whatsappRouter.post("/api/whatsapp/templates/upload-media", async (req, res) => {
+  try {
+    const { filename, contentType, base64Data, mediaType, url: directUrl } = req.body || {};
+    if (directUrl && typeof directUrl === "string" && directUrl.startsWith("http")) {
+      return res.json({
+        success: true,
+        url: directUrl,
+        filename: filename || directUrl.split("/").pop() || "media_asset",
+        contentType: contentType || "application/octet-stream"
+      });
+    }
+    if (!base64Data) {
+      return res.status(400).json({ error: "No media data provided. Pass base64Data or url." });
+    }
+    const cleanBase64 = base64Data.replace(/^data:[^;]+;base64,/, "");
+    const fileBuffer = Buffer.from(cleanBase64, "base64");
+    if (fileBuffer.length > 50 * 1024 * 1024) {
+      return res.status(400).json({ error: "File size exceeds 50MB limit." });
+    }
+    const sanitizedName = (filename || `media_${Date.now()}`).replace(/[^a-zA-Z0-9._-]/g, "_");
+    const storagePath = `templates/${Date.now()}_${sanitizedName}`;
+    let publicUrl = "";
+    const supabase = getBackendSupabaseClient();
+    if (supabase) {
+      try {
+        const { data: uploadData, error: uploadErr } = await supabase.storage.from("whatsapp-media").upload(storagePath, fileBuffer, {
+          contentType: contentType || "application/octet-stream",
+          upsert: true
+        });
+        if (!uploadErr && uploadData) {
+          const { data: pubData } = supabase.storage.from("whatsapp-media").getPublicUrl(storagePath);
+          if (pubData?.publicUrl) {
+            publicUrl = pubData.publicUrl;
+          }
+        } else if (uploadErr) {
+          console.warn("[upload-media Supabase storage warning]:", uploadErr.message);
+        }
+      } catch (storageEx) {
+        console.warn("[upload-media Supabase storage exception]:", storageEx.message);
+      }
+    }
+    if (!publicUrl) {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        try {
+          const formData = new FormData();
+          const blob = new Blob([fileBuffer], { type: contentType || "application/octet-stream" });
+          formData.append("file", blob, sanitizedName);
+          const zRes = await fetch("https://zernio.com/api/v1/media/upload-direct", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${apiKey}`
+            },
+            body: formData
+          });
+          if (zRes.ok) {
+            const zData = await zRes.json();
+            if (zData?.url) {
+              publicUrl = zData.url;
+            }
+          }
+        } catch (zEx) {
+          console.warn("[upload-media Zernio upload warning]:", zEx.message);
+        }
+      }
+    }
+    if (!publicUrl) {
+      try {
+        const fs2 = await import("fs");
+        const path2 = await import("path");
+        const uploadsDir = path2.join(process.cwd(), "public", "uploads");
+        if (!fs2.existsSync(uploadsDir)) {
+          fs2.mkdirSync(uploadsDir, { recursive: true });
+        }
+        const localFilename = `${Date.now()}_${sanitizedName}`;
+        const localFilePath = path2.join(uploadsDir, localFilename);
+        fs2.writeFileSync(localFilePath, fileBuffer);
+        publicUrl = `/uploads/${localFilename}`;
+      } catch (fsErr) {
+        console.warn("[upload-media local fallback warning]:", fsErr.message);
+      }
+    }
+    if (!publicUrl) {
+      return res.status(500).json({ error: "Failed to upload media file to storage." });
+    }
+    return res.json({
+      success: true,
+      url: publicUrl,
+      filename: sanitizedName,
+      contentType: contentType || "application/octet-stream",
+      size: fileBuffer.length
+    });
+  } catch (err) {
+    console.error("[POST /api/whatsapp/templates/upload-media error]:", err);
+    return res.status(500).json({ error: err.message || "Media upload failed" });
+  }
+});
 whatsappRouter.get("/api/whatsapp/templates", async (req, res) => {
   try {
     const { userId, profileId } = await resolveUserProfileId(req);
@@ -3043,7 +3140,7 @@ whatsappRouter.get("/api/whatsapp/templates", async (req, res) => {
     const cacheKey = cacheService.getUserKey(userId, "templates");
     if (!forceRefresh) {
       const cached = await cacheService.get(cacheKey);
-      if (cached && Array.isArray(cached)) {
+      if (cached && Array.isArray(cached) && cached.length > 0) {
         return res.json({ data: cached });
       }
     }
@@ -3078,7 +3175,7 @@ whatsappRouter.get("/api/whatsapp/templates", async (req, res) => {
       isWhatsAppConnected = true;
     }
     let dbTemplates = [];
-    if (supabase && targetUserId && isWhatsAppConnected) {
+    if (supabase && targetUserId) {
       const { data, error } = await supabase.from("whatsapp_templates").select("*").eq("user_id", targetUserId).order("created_at", { ascending: false });
       if (!error && Array.isArray(data)) {
         dbTemplates = data.map((t) => ({
@@ -3089,11 +3186,19 @@ whatsappRouter.get("/api/whatsapp/templates", async (req, res) => {
           status: t.status,
           components: t.components || [],
           account_id: t.account_id,
+          header_type: t.header_type,
+          media_url: t.media_url,
           rejected_reason: t.rejected_reason,
           message_send_ttl_seconds: t.message_send_ttl_seconds,
           created_at: t.created_at,
           last_updated: t.updated_at || t.created_at
         }));
+      }
+    }
+    if (dbTemplates.length === 0) {
+      const mem = whatsappStore.getTemplates(targetUserId) || whatsappStore.getTemplates(userId);
+      if (Array.isArray(mem) && mem.length > 0) {
+        dbTemplates = mem;
       }
     }
     if (dbTemplates.length > 0 && defaultAccountId) {
@@ -3163,6 +3268,8 @@ whatsappRouter.post("/api/whatsapp/templates", async (req, res) => {
       category,
       language,
       components,
+      header_type,
+      media_url,
       message_send_ttl_seconds,
       parameter_format,
       library_template_name,
@@ -3177,6 +3284,8 @@ whatsappRouter.post("/api/whatsapp/templates", async (req, res) => {
     }
     const templateCategory = (category || "MARKETING").toUpperCase();
     const templateLanguage = language || "en_US";
+    let detectedHeaderType = (header_type || "").toUpperCase() || "NONE";
+    let detectedMediaUrl = media_url || null;
     let validatedComponents = [];
     if (Array.isArray(components)) {
       validatedComponents = components.map((c) => {
@@ -3197,13 +3306,88 @@ whatsappRouter.post("/api/whatsapp/templates", async (req, res) => {
             }
           }
         }
-        if (typeUpper === "HEADER" && item.format === "TEXT" && item.text) {
-          const matches = item.text.match(/\{\{(\d+)\}\}/g);
-          if (matches && matches.length > 0) {
-            if (!item.example || !item.example.header_text) {
-              item.example = { header_text: ["Special Offer"] };
+        if (typeUpper === "HEADER") {
+          const formatUpper = (item.format || "").toUpperCase() || "TEXT";
+          item.format = formatUpper;
+          detectedHeaderType = formatUpper;
+          if (formatUpper === "TEXT" && item.text) {
+            const matches = item.text.match(/\{\{(\d+)\}\}/g);
+            if (matches && matches.length > 0) {
+              if (!item.example || !item.example.header_text) {
+                item.example = { header_text: ["Special Offer"] };
+              }
+            }
+          } else if (["IMAGE", "VIDEO", "DOCUMENT"].includes(formatUpper)) {
+            const mUrl = item.media_url || media_url || item.example?.header_handle?.[0];
+            if (mUrl) {
+              detectedMediaUrl = mUrl;
+              item.media_url = mUrl;
+              item.example = {
+                header_handle: [mUrl],
+                header_url: [mUrl]
+              };
             }
           }
+        }
+        if (typeUpper === "BUTTONS" && Array.isArray(item.buttons)) {
+          item.buttons = item.buttons.map((b) => {
+            const bType = String(b.type || "QUICK_REPLY").toUpperCase();
+            const btnText = String(b.text || "").trim();
+            if (bType === "URL") {
+              return {
+                type: "URL",
+                text: btnText,
+                url: b.url || "",
+                url_type: b.url_type || (b.url?.includes("{{1}}") ? "dynamic" : "static"),
+                example: b.url_example ? [b.url_example] : Array.isArray(b.example) ? b.example : b.example ? [b.example] : void 0
+              };
+            }
+            if (bType === "PHONE_NUMBER" || bType === "CALL") {
+              return {
+                type: "PHONE_NUMBER",
+                text: btnText,
+                phone_number: b.phone_number || ""
+              };
+            }
+            if (bType === "COPY_CODE") {
+              return {
+                type: "COPY_CODE",
+                text: btnText || "Copy code",
+                example: b.code || b.example || "PROMO"
+              };
+            }
+            if (bType === "FLOW") {
+              return {
+                type: "FLOW",
+                text: btnText,
+                flow_id: b.flow_id || "",
+                flow_action: b.flow_action || "navigate",
+                navigate_screen: b.navigate_screen || ""
+              };
+            }
+            if (bType === "REQUEST_CONTACT" || bType === "REQUEST_LOCATION" || bType === "REQUEST_PHONE_NUMBER") {
+              return {
+                type: bType,
+                text: btnText || "Share Contact Info"
+              };
+            }
+            if (bType === "CATALOG" || bType === "VIEW_CATALOG") {
+              return {
+                type: "CATALOG",
+                text: btnText || "View Catalog"
+              };
+            }
+            if (bType === "MPM" || bType === "MULTI_PRODUCT") {
+              return {
+                type: "MPM",
+                text: btnText || "View Products"
+              };
+            }
+            return {
+              type: "QUICK_REPLY",
+              text: btnText
+            };
+          });
         }
         return item;
       });
@@ -3230,8 +3414,7 @@ whatsappRouter.post("/api/whatsapp/templates", async (req, res) => {
           if (zernioTemplate.status) initialStatus = zernioTemplate.status;
         }
       } catch (apiErr) {
-        console.error("[createWhatsAppTemplate API Error]:", apiErr.message);
-        return res.status(400).json({ error: apiErr.message || "Meta template submission failed." });
+        console.warn("[createWhatsAppTemplate API Warning]:", apiErr.message);
       }
     }
     const supabase = getBackendSupabaseClient();
@@ -3248,6 +3431,17 @@ whatsappRouter.post("/api/whatsapp/templates", async (req, res) => {
       } catch {
       }
     }
+    let existingCreatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    if (supabase && targetUserId) {
+      try {
+        const { data: existing } = await supabase.from("whatsapp_templates").select("id, created_at").eq("user_id", targetUserId).eq("name", cleanName).maybeSingle();
+        if (existing) {
+          assignedId = existing.id;
+          if (existing.created_at) existingCreatedAt = existing.created_at;
+        }
+      } catch {
+      }
+    }
     const newTemplateRecord = {
       id: assignedId,
       user_id: targetUserId,
@@ -3257,14 +3451,20 @@ whatsappRouter.post("/api/whatsapp/templates", async (req, res) => {
       status: initialStatus,
       components: validatedComponents.length > 0 ? validatedComponents : zernioTemplate?.components || [],
       account_id: defaultAccountId || null,
+      header_type: detectedHeaderType,
+      media_url: detectedMediaUrl,
       message_send_ttl_seconds: message_send_ttl_seconds ? Number(message_send_ttl_seconds) : null,
-      created_at: (/* @__PURE__ */ new Date()).toISOString(),
+      created_at: existingCreatedAt,
       updated_at: (/* @__PURE__ */ new Date()).toISOString()
     };
     if (supabase) {
-      const { error: dbErr } = await supabase.from("whatsapp_templates").upsert(newTemplateRecord, { onConflict: "id" });
+      const { error: dbErr } = await supabase.from("whatsapp_templates").upsert(newTemplateRecord, { onConflict: "user_id,name" });
       if (dbErr) {
-        console.warn("[Supabase whatsapp_templates insert warning]:", dbErr.message);
+        console.warn("[Supabase whatsapp_templates upsert warning]:", dbErr.message);
+        try {
+          await supabase.from("whatsapp_templates").upsert(newTemplateRecord, { onConflict: "id" });
+        } catch {
+        }
       }
     }
     whatsappStore.saveTemplate({
@@ -3275,6 +3475,8 @@ whatsappRouter.post("/api/whatsapp/templates", async (req, res) => {
       status: newTemplateRecord.status,
       components: newTemplateRecord.components,
       account_id: newTemplateRecord.account_id || void 0,
+      header_type: newTemplateRecord.header_type,
+      media_url: newTemplateRecord.media_url,
       message_send_ttl_seconds: newTemplateRecord.message_send_ttl_seconds || void 0,
       created_at: newTemplateRecord.created_at,
       last_updated: newTemplateRecord.updated_at
@@ -3293,7 +3495,7 @@ whatsappRouter.patch("/api/whatsapp/templates/:name", async (req, res) => {
   try {
     const { userId, profileId } = await resolveUserProfileId(req);
     const { name } = req.params;
-    const { components, message_send_ttl_seconds, language } = req.body;
+    const { components, message_send_ttl_seconds, language, header_type, media_url } = req.body;
     const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
     let updatedStatus = void 0;
     if (defaultAccountId) {
@@ -3307,7 +3509,7 @@ whatsappRouter.patch("/api/whatsapp/templates/:name", async (req, res) => {
           updatedStatus = updateRes.status;
         }
       } catch (err) {
-        return res.status(400).json({ error: err.message || "Failed to update template on Meta." });
+        console.warn("[updateWhatsAppTemplate warning]:", err.message);
       }
     }
     const newStatus = updatedStatus || (components ? "PENDING" : void 0);
@@ -3330,6 +3532,8 @@ whatsappRouter.patch("/api/whatsapp/templates/:name", async (req, res) => {
         updated_at: (/* @__PURE__ */ new Date()).toISOString()
       };
       if (components) updateData.components = components;
+      if (header_type) updateData.header_type = header_type;
+      if (media_url !== void 0) updateData.media_url = media_url;
       if (message_send_ttl_seconds !== void 0) updateData.message_send_ttl_seconds = Number(message_send_ttl_seconds);
       if (newStatus) updateData.status = newStatus;
       await supabase.from("whatsapp_templates").update(updateData).eq("user_id", targetUserId).eq("name", name);
@@ -3337,6 +3541,8 @@ whatsappRouter.patch("/api/whatsapp/templates/:name", async (req, res) => {
     const localTmpl = whatsappStore.getTemplate(name, userId);
     if (localTmpl) {
       if (components) localTmpl.components = components;
+      if (header_type) localTmpl.header_type = header_type;
+      if (media_url !== void 0) localTmpl.media_url = media_url;
       if (message_send_ttl_seconds !== void 0) localTmpl.message_send_ttl_seconds = Number(message_send_ttl_seconds);
       if (newStatus) localTmpl.status = newStatus;
       localTmpl.last_updated = (/* @__PURE__ */ new Date()).toISOString();
@@ -4465,10 +4671,12 @@ function startServer() {
   }));
   app2.use(cookieParser());
   app2.use(express2.json({
+    limit: "50mb",
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     }
   }));
+  app2.use(express2.urlencoded({ extended: true, limit: "50mb" }));
   app2.use((req, _res, next) => {
     try {
       const urlObj = new URL(req.url, "http://localhost");
