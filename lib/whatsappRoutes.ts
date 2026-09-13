@@ -4461,12 +4461,56 @@ whatsappRouter.get('/api/whatsapp/account/health', async (req: Request, res: Res
 // 10. META BUSINESS AGENT (ASTRA) ENDPOINTS
 // =========================================================================
 
+async function resolveAgentAccount(req: Request): Promise<{ userId: string; profileId: string; accountId: string; account: WhatsAppAccount | null }> {
+  const { userId, profileId } = await resolveUserProfileId(req);
+  let account = whatsappStore.getAccount(userId);
+
+  if (!account && userId) {
+    try {
+      const supabase = getBackendSupabaseClient();
+      if (supabase) {
+        const { data: dbAcc } = await supabase
+          .from('whatsapp_accounts')
+          .select('*')
+          .eq('user_id', userId)
+          .neq('status', 'disconnected')
+          .order('connected_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (dbAcc) {
+          account = whatsappStore.setAccount({
+            id: dbAcc.id,
+            platform: dbAcc.platform || 'whatsapp',
+            name: dbAcc.name || 'Connected WhatsApp Account',
+            phone_number: dbAcc.phone_number,
+            phone_number_id: dbAcc.phone_number_id,
+            waba_id: dbAcc.waba_id,
+            status: dbAcc.status || 'connected',
+            mode: dbAcc.mode || 'production',
+            quality_rating: dbAcc.quality_rating || 'GREEN',
+            messaging_limit_tier: dbAcc.messaging_limit_tier,
+            verified_name: dbAcc.verified_name,
+            connected_at: dbAcc.connected_at || new Date().toISOString(),
+          }, userId);
+        }
+      }
+    } catch (e: any) {
+      console.warn('[resolveAgentAccount db lookup notice]:', e.message);
+    }
+  }
+
+  const queryAccountId = req.query.accountId as string;
+  const bodyAccountId = req.body?.accountId as string;
+  const accountId = queryAccountId || bodyAccountId || account?.id || (userId ? `acc_${userId.replace(/[^a-zA-Z0-9_-]/g, '_')}` : 'acc_primary');
+
+  return { userId, profileId, accountId, account };
+}
+
 // GET /api/whatsapp/business-agent/status
 whatsappRouter.get('/api/whatsapp/business-agent/status', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
     return res.json({ success: true, data: state });
   } catch (err: any) {
@@ -4477,9 +4521,7 @@ whatsappRouter.get('/api/whatsapp/business-agent/status', async (req: Request, r
 // POST /api/whatsapp/business-agent/eligibility
 whatsappRouter.post('/api/whatsapp/business-agent/eligibility', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.body.accountId as string) || (req.query.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const eligibility = await ZernioBusinessAgentService.checkEligibility(accountId, profileId);
     return res.json({ success: true, data: eligibility });
   } catch (err: any) {
@@ -4490,9 +4532,7 @@ whatsappRouter.post('/api/whatsapp/business-agent/eligibility', async (req: Requ
 // POST /api/whatsapp/business-agent/onboard
 whatsappRouter.post('/api/whatsapp/business-agent/onboard', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const result = await ZernioBusinessAgentService.onboardAgent(accountId, profileId);
     return res.json(result);
   } catch (err: any) {
@@ -4503,9 +4543,7 @@ whatsappRouter.post('/api/whatsapp/business-agent/onboard', async (req: Request,
 // GET & PUT /api/whatsapp/business-agent/business-info
 whatsappRouter.get('/api/whatsapp/business-agent/business-info', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
     return res.json({ success: true, data: state.business_info });
   } catch (err: any) {
@@ -4515,9 +4553,7 @@ whatsappRouter.get('/api/whatsapp/business-agent/business-info', async (req: Req
 
 whatsappRouter.put('/api/whatsapp/business-agent/business-info', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const updated = await ZernioBusinessAgentService.updateBusinessInfo(accountId, req.body.business_info || req.body, profileId);
     return res.json({ success: true, data: updated });
   } catch (err: any) {
@@ -4528,9 +4564,7 @@ whatsappRouter.put('/api/whatsapp/business-agent/business-info', async (req: Req
 // FAQs
 whatsappRouter.get('/api/whatsapp/business-agent/faqs', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
     return res.json({ success: true, data: state.faqs });
   } catch (err: any) {
@@ -4540,9 +4574,7 @@ whatsappRouter.get('/api/whatsapp/business-agent/faqs', async (req: Request, res
 
 whatsappRouter.post('/api/whatsapp/business-agent/faqs', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const newFaq = await ZernioBusinessAgentService.addFaq(accountId, req.body.faq || req.body, profileId);
     return res.json({ success: true, data: newFaq });
   } catch (err: any) {
@@ -4552,9 +4584,7 @@ whatsappRouter.post('/api/whatsapp/business-agent/faqs', async (req: Request, re
 
 whatsappRouter.delete('/api/whatsapp/business-agent/faqs/:id', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     await ZernioBusinessAgentService.deleteFaq(accountId, req.params.id, profileId);
     return res.json({ success: true });
   } catch (err: any) {
@@ -4565,9 +4595,7 @@ whatsappRouter.delete('/api/whatsapp/business-agent/faqs/:id', async (req: Reque
 // Websites
 whatsappRouter.get('/api/whatsapp/business-agent/websites', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
     return res.json({ success: true, data: state.websites });
   } catch (err: any) {
@@ -4577,9 +4605,7 @@ whatsappRouter.get('/api/whatsapp/business-agent/websites', async (req: Request,
 
 whatsappRouter.post('/api/whatsapp/business-agent/websites', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const web = await ZernioBusinessAgentService.addWebsite(accountId, req.body.url, profileId);
     return res.json({ success: true, data: web });
   } catch (err: any) {
@@ -4589,9 +4615,7 @@ whatsappRouter.post('/api/whatsapp/business-agent/websites', async (req: Request
 
 whatsappRouter.delete('/api/whatsapp/business-agent/websites/:id', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     await ZernioBusinessAgentService.deleteWebsite(accountId, req.params.id, profileId);
     return res.json({ success: true });
   } catch (err: any) {
@@ -4602,9 +4626,7 @@ whatsappRouter.delete('/api/whatsapp/business-agent/websites/:id', async (req: R
 // Files
 whatsappRouter.get('/api/whatsapp/business-agent/files', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
     return res.json({ success: true, data: state.files });
   } catch (err: any) {
@@ -4614,9 +4636,7 @@ whatsappRouter.get('/api/whatsapp/business-agent/files', async (req: Request, re
 
 whatsappRouter.post('/api/whatsapp/business-agent/files', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const file = await ZernioBusinessAgentService.addFile(accountId, req.body, profileId);
     return res.json({ success: true, data: file });
   } catch (err: any) {
@@ -4626,9 +4646,7 @@ whatsappRouter.post('/api/whatsapp/business-agent/files', async (req: Request, r
 
 whatsappRouter.delete('/api/whatsapp/business-agent/files/:id', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     await ZernioBusinessAgentService.deleteFile(accountId, req.params.id, profileId);
     return res.json({ success: true });
   } catch (err: any) {
@@ -4639,9 +4657,7 @@ whatsappRouter.delete('/api/whatsapp/business-agent/files/:id', async (req: Requ
 // Skills & Voice
 whatsappRouter.get('/api/whatsapp/business-agent/skills', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
     return res.json({ success: true, data: state.skills });
   } catch (err: any) {
@@ -4651,9 +4667,7 @@ whatsappRouter.get('/api/whatsapp/business-agent/skills', async (req: Request, r
 
 whatsappRouter.post('/api/whatsapp/business-agent/skills', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const updated = await ZernioBusinessAgentService.updateSkills(accountId, req.body.skills || req.body, profileId);
     return res.json({ success: true, data: updated });
   } catch (err: any) {
@@ -4664,9 +4678,7 @@ whatsappRouter.post('/api/whatsapp/business-agent/skills', async (req: Request, 
 // Connectors (Bookings, Payments, Custom Tools)
 whatsappRouter.get('/api/whatsapp/business-agent/connectors', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
     return res.json({ success: true, data: state.connectors });
   } catch (err: any) {
@@ -4676,9 +4688,7 @@ whatsappRouter.get('/api/whatsapp/business-agent/connectors', async (req: Reques
 
 whatsappRouter.post('/api/whatsapp/business-agent/connectors/:id', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const connectors = await ZernioBusinessAgentService.updateConnector(accountId, req.params.id, req.body, profileId);
     return res.json({ success: true, data: connectors });
   } catch (err: any) {
@@ -4689,9 +4699,7 @@ whatsappRouter.post('/api/whatsapp/business-agent/connectors/:id', async (req: R
 // Interactive Sandbox Tester (Zero Token Cost)
 whatsappRouter.post('/api/whatsapp/business-agent/test-messages', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const { message, history } = req.body;
     if (!message) {
       return res.status(400).json({ error: 'Missing message parameter' });
@@ -4706,9 +4714,7 @@ whatsappRouter.post('/api/whatsapp/business-agent/test-messages', async (req: Re
 // Rollout & Settings
 whatsappRouter.patch('/api/whatsapp/business-agent/settings', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const settings = await ZernioBusinessAgentService.updateSettings(accountId, req.body.settings || req.body, profileId);
     return res.json({ success: true, data: settings });
   } catch (err: any) {
@@ -4719,9 +4725,7 @@ whatsappRouter.patch('/api/whatsapp/business-agent/settings', async (req: Reques
 // Allowlist
 whatsappRouter.get('/api/whatsapp/business-agent/allowlist', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
     return res.json({ success: true, data: state.allowlist });
   } catch (err: any) {
@@ -4731,9 +4735,7 @@ whatsappRouter.get('/api/whatsapp/business-agent/allowlist', async (req: Request
 
 whatsappRouter.post('/api/whatsapp/business-agent/allowlist', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const entry = await ZernioBusinessAgentService.addAllowlistEntry(accountId, req.body.consumer_phone_number || req.body.phone, req.body.name, profileId);
     return res.json({ success: true, data: entry });
   } catch (err: any) {
@@ -4743,9 +4745,7 @@ whatsappRouter.post('/api/whatsapp/business-agent/allowlist', async (req: Reques
 
 whatsappRouter.delete('/api/whatsapp/business-agent/allowlist/:id', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     await ZernioBusinessAgentService.deleteAllowlistEntry(accountId, req.params.id, profileId);
     return res.json({ success: true });
   } catch (err: any) {
@@ -4756,9 +4756,7 @@ whatsappRouter.delete('/api/whatsapp/business-agent/allowlist/:id', async (req: 
 // Budget
 whatsappRouter.get('/api/whatsapp/business-agent/budget', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
     return res.json({ success: true, data: state.budget });
   } catch (err: any) {
@@ -4768,9 +4766,7 @@ whatsappRouter.get('/api/whatsapp/business-agent/budget', async (req: Request, r
 
 whatsappRouter.put('/api/whatsapp/business-agent/budget', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const budget = await ZernioBusinessAgentService.updateBudget(accountId, req.body.budget || req.body, profileId);
     return res.json({ success: true, data: budget });
   } catch (err: any) {
@@ -4781,9 +4777,7 @@ whatsappRouter.put('/api/whatsapp/business-agent/budget', async (req: Request, r
 // Thread Control (Inbox Handover)
 whatsappRouter.post('/api/whatsapp/business-agent/thread-control', async (req: Request, res: Response) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const { accountId } = await resolveAgentAccount(req);
     const { action, to, metadata } = req.body;
     if (!action || !to) {
       return res.status(400).json({ error: 'Missing action or to parameter' });

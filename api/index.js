@@ -2104,8 +2104,8 @@ var ZernioWhatsAppService = class _ZernioWhatsAppService {
 // lib/zernioBusinessAgentService.ts
 var inMemoryAgentState = /* @__PURE__ */ new Map();
 var DEFAULT_BUSINESS_INFO = {
-  name: "Rockyt Store",
-  description: "Premium WhatsApp commerce and customer engagement platform.",
+  name: "",
+  description: "",
   vertical: "Retail & E-commerce",
   business_hours: {
     monday: { open: "09:00", close: "18:00" },
@@ -2116,22 +2116,22 @@ var DEFAULT_BUSINESS_INFO = {
     saturday: { open: "10:00", close: "16:00" },
     sunday: { open: "00:00", close: "00:00", closed: true }
   },
-  address: "100 Market Street, San Francisco, CA",
-  email: "support@rockyt.io",
-  phone: "+13105551234",
-  website: "https://rockyt.io",
-  return_policy: "30-day hassle-free return and exchange policy on all items in original condition.",
-  shipping_policy: "Free standard shipping on orders over $50. Express delivery available.",
+  address: "",
+  email: "",
+  phone: "",
+  website: "",
+  return_policy: "",
+  shipping_policy: "",
   currency: "USD"
 };
 var DEFAULT_SKILLS = {
   id: "skill_default",
   name: "Astra Customer Concierge",
-  system_instructions: "You are Astra, the friendly and knowledgeable AI customer assistant for Rockyt. Greet customers warmly, answer inquiries using the business knowledge base, assist with order lookups and booking appointments, and gracefully hand off to a human representative when customer requests refunds or human escalation.",
+  system_instructions: "You are Astra, the friendly and knowledgeable AI customer assistant. Greet customers warmly, answer inquiries accurately using our verified business knowledge base, and assist with bookings and purchases.",
   tone: "friendly",
-  human_handoff_threshold: 0.75,
+  human_handoff_threshold: 0.8,
   human_handoff_message: "I am connecting you with one of our human team members right away. Please hold on a moment!",
-  escalation_contact: "+13105551234",
+  escalation_contact: "",
   language: "en"
 };
 var DEFAULT_SETTINGS = {
@@ -2139,17 +2139,17 @@ var DEFAULT_SETTINGS = {
   ai_audience: "ALLOWLISTED_ONLY",
   language: "en",
   handoff: {
-    threshold: 0.75,
+    threshold: 0.8,
     handoff_message: "Transferring you to a human agent...",
-    escalation_number: "+13105551234"
+    escalation_number: ""
   }
 };
 var DEFAULT_BUDGET = {
   token_cap: 5e5,
   turn_cap: 1e4,
   window_hours: 24,
-  current_tokens_used: 12450,
-  current_turns_used: 280,
+  current_tokens_used: 0,
+  current_turns_used: 0,
   currency: "USD"
 };
 var DEFAULT_CONNECTORS = [
@@ -2158,10 +2158,10 @@ var DEFAULT_CONNECTORS = [
     name: "Appointment & Booking Service",
     type: "booking",
     description: "Allows customers to schedule consultations, appointments, or service slots directly in chat.",
-    enabled: true,
+    enabled: false,
     config: {
       booking_service: "cal_com",
-      booking_link: "https://cal.com/rockyt/consultation"
+      booking_link: ""
     }
   },
   {
@@ -2169,10 +2169,11 @@ var DEFAULT_CONNECTORS = [
     name: "Dodo Payments & Checkout Links",
     type: "payment",
     description: "Generates direct payment links and confirms order payments via Dodo Payments.",
-    enabled: true,
+    enabled: false,
     config: {
       payment_provider: "dodo_payments",
-      payment_currency: "USD"
+      payment_currency: "USD",
+      payment_link: ""
     }
   },
   {
@@ -2180,9 +2181,9 @@ var DEFAULT_CONNECTORS = [
     name: "Order Lookup & Tracking",
     type: "order_lookup",
     description: "Retrieves live shipping status and fulfillment tracking for customer order numbers.",
-    enabled: true,
+    enabled: false,
     config: {
-      webhook_url: "https://rockyt.io/api/orders/lookup"
+      webhook_url: ""
     }
   }
 ];
@@ -2191,14 +2192,89 @@ var ZernioBusinessAgentService = class {
     return process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY || "";
   }
   /**
+   * Sanitizes state to ensure no legacy mock or hardcoded fake links are returned to real users.
+   */
+  static sanitizeState(state) {
+    if (!state) return state;
+    if (Array.isArray(state.connectors)) {
+      state.connectors = state.connectors.map((c) => {
+        if (c.id === "conn_booking") {
+          const link = c.config?.booking_link || "";
+          const isFake = link.includes("cal.com/rockyt") || link.length > 0 && !link.startsWith("http");
+          return {
+            ...c,
+            enabled: isFake ? false : Boolean(c.enabled && link),
+            config: {
+              ...c.config,
+              booking_link: isFake ? "" : link,
+              booking_service: c.config?.booking_service || "cal_com"
+            }
+          };
+        }
+        if (c.id === "conn_orders") {
+          const url = c.config?.webhook_url || "";
+          const isFake = url.includes("rockyt.io") || url.length > 0 && !url.startsWith("http");
+          return {
+            ...c,
+            enabled: isFake ? false : Boolean(c.enabled && url),
+            config: {
+              ...c.config,
+              webhook_url: isFake ? "" : url
+            }
+          };
+        }
+        if (c.id === "conn_payment") {
+          const link = c.config?.payment_link || "";
+          const isConfigured = Boolean(link || c.config?.api_key_configured || c.config?.payment_configured);
+          const isFake = link.includes("rockyt.io");
+          return {
+            ...c,
+            enabled: isFake ? false : Boolean(c.enabled && isConfigured),
+            config: {
+              ...c.config,
+              payment_link: isFake ? "" : link,
+              payment_provider: c.config?.payment_provider || "dodo_payments",
+              payment_currency: c.config?.payment_currency || "USD",
+              payment_configured: isConfigured && !isFake
+            }
+          };
+        }
+        return c;
+      });
+    } else {
+      state.connectors = DEFAULT_CONNECTORS;
+    }
+    if (Array.isArray(state.websites)) {
+      state.websites = state.websites.filter((w) => !w.url?.includes("rockyt.io"));
+    }
+    if (Array.isArray(state.allowlist)) {
+      state.allowlist = state.allowlist.filter((a) => a.consumer_phone_number !== "+13105551234");
+    }
+    if (state.budget) {
+      if (state.budget.current_tokens_used === 12450) state.budget.current_tokens_used = 0;
+      if (state.budget.current_turns_used === 280) state.budget.current_turns_used = 0;
+    }
+    if (state.business_info) {
+      if (state.business_info.phone === "+13105551234") state.business_info.phone = "";
+      if (state.business_info.email === "support@rockyt.io") state.business_info.email = "";
+      if (state.business_info.website === "https://rockyt.io") state.business_info.website = "";
+      if (state.business_info.address?.includes("San Francisco")) state.business_info.address = "";
+      if (state.business_info.name === "Rockyt Store") state.business_info.name = "";
+    }
+    if (state.skills && state.skills.escalation_contact === "+13105551234") {
+      state.skills.escalation_contact = "";
+    }
+    return state;
+  }
+  /**
    * Get or initialize full state for an account
    */
   static async getFullAgentState(accountId, profileId) {
     const cacheKey = `meta_business_agent_${accountId}`;
     const cached = await cacheService.get(cacheKey);
-    if (cached) return cached;
+    if (cached) return this.sanitizeState(cached);
     const apiKey = this.getApiKey();
-    if (apiKey && accountId && accountId !== "acc_primary") {
+    if (apiKey && accountId && accountId !== "acc_primary" && !accountId.startsWith("acc_")) {
       try {
         const url = `https://zernio.com/api/v1/accounts/${accountId}/business-agent`;
         const res = await fetch(url, {
@@ -2218,21 +2294,18 @@ var ZernioBusinessAgentService = class {
             manual_steps: Array.isArray(zernioData.manualSteps) ? zernioData.manualSteps : [],
             unverified_steps: Array.isArray(zernioData.unverifiedSteps) ? zernioData.unverifiedSteps : ["attach_payment_method"],
             business_info: zernioData.business_information || DEFAULT_BUSINESS_INFO,
-            faqs: zernioData.faqs || this.getDefaultFaqs(),
-            websites: zernioData.websites || [
-              { id: "web_1", url: "https://rockyt.io", status: "crawled", last_crawled_at: (/* @__PURE__ */ new Date()).toISOString(), page_count: 14 }
-            ],
+            faqs: zernioData.faqs || [],
+            websites: zernioData.websites || [],
             files: zernioData.files || [],
             skills: zernioData.skills || DEFAULT_SKILLS,
             connectors: zernioData.connectors || DEFAULT_CONNECTORS,
             settings: zernioData.settings || DEFAULT_SETTINGS,
-            allowlist: zernioData.allowlist || [
-              { id: "al_1", consumer_phone_number: "+13105551234", name: "Internal QA Tester", added_at: (/* @__PURE__ */ new Date()).toISOString() }
-            ],
+            allowlist: zernioData.allowlist || [],
             budget: zernioData.budget || DEFAULT_BUDGET
           };
-          await cacheService.set(cacheKey, state, 30);
-          return state;
+          const sanitized = this.sanitizeState(state);
+          await cacheService.set(cacheKey, sanitized, 30);
+          return sanitized;
         }
       } catch (err) {
         console.warn("[ZernioBusinessAgentService.getFullAgentState warning]:", err.message);
@@ -2243,14 +2316,15 @@ var ZernioBusinessAgentService = class {
       if (supabase) {
         const { data } = await supabase.from("business_agent_configs").select("*").eq("account_id", accountId).maybeSingle();
         if (data && data.state) {
-          await cacheService.set(cacheKey, data.state, 30);
-          return data.state;
+          const sanitized = this.sanitizeState(data.state);
+          await cacheService.set(cacheKey, sanitized, 30);
+          return sanitized;
         }
       }
     } catch {
     }
     if (inMemoryAgentState.has(accountId)) {
-      return inMemoryAgentState.get(accountId);
+      return this.sanitizeState(inMemoryAgentState.get(accountId));
     }
     const eligibility = await this.checkEligibility(accountId, profileId);
     const defaultState = {
@@ -2261,17 +2335,13 @@ var ZernioBusinessAgentService = class {
       manual_steps: ["business_agent_terms_not_accepted"],
       unverified_steps: ["attach_payment_method"],
       business_info: DEFAULT_BUSINESS_INFO,
-      faqs: this.getDefaultFaqs(),
-      websites: [
-        { id: "web_1", url: "https://rockyt.io", status: "crawled", last_crawled_at: (/* @__PURE__ */ new Date()).toISOString(), page_count: 14 }
-      ],
+      faqs: [],
+      websites: [],
       files: [],
       skills: DEFAULT_SKILLS,
       connectors: DEFAULT_CONNECTORS,
       settings: DEFAULT_SETTINGS,
-      allowlist: [
-        { id: "al_1", consumer_phone_number: "+13105551234", name: "Developer Test Phone", added_at: (/* @__PURE__ */ new Date()).toISOString() }
-      ],
+      allowlist: [],
       budget: DEFAULT_BUDGET
     };
     inMemoryAgentState.set(accountId, defaultState);
@@ -2282,8 +2352,8 @@ var ZernioBusinessAgentService = class {
    */
   static async checkEligibility(accountId, profileId) {
     const accounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId);
-    const targetAccount = accounts.find((a) => a.id === accountId) || accounts[0];
-    const phone = targetAccount?.phone_number || "+13105551234";
+    const targetAccount = accounts.find((a) => a.id === accountId) || (accounts.length > 0 && accounts[0].id !== "acc_sandbox" ? accounts[0] : null);
+    const phone = targetAccount?.phone_number || "";
     const requirements = [
       {
         id: "vertical",
@@ -2326,7 +2396,7 @@ var ZernioBusinessAgentService = class {
     return {
       eligible: allPassed,
       phone_number: phone,
-      waba_id: targetAccount?.waba_id || "waba_meta_business",
+      waba_id: targetAccount?.waba_id || "",
       vertical: "Retail & E-commerce",
       country: "United States",
       requirements,
@@ -2529,22 +2599,46 @@ var ZernioBusinessAgentService = class {
     }
     if (lower.includes("book") || lower.includes("schedule") || lower.includes("appointment") || lower.includes("slot") || lower.includes("time")) {
       const bookingConn = current.connectors.find((c) => c.type === "booking" && c.enabled);
-      const link = bookingConn?.config?.booking_link || "https://cal.com/rockyt/consultation";
+      const link = bookingConn?.config?.booking_link;
+      if (bookingConn && bookingConn.enabled && link) {
+        return {
+          reply: `I would love to help you book an appointment! You can view our available slots and confirm your time directly here: ${link}`,
+          confidence: 0.95,
+          actions_taken: [{ tool: "appointment_booking_service", result: { link, status: "available" } }],
+          citations: [{ title: "Booking Connector", source_type: "faq", snippet: `Appointment booking link: ${link}` }]
+        };
+      }
       return {
-        reply: `I would love to help you book an appointment! You can view our available slots and confirm your time directly here: ${link}`,
-        confidence: 0.95,
-        actions_taken: [{ tool: "appointment_booking_service", result: { link, status: "available" } }],
-        citations: [{ title: "Booking Connector", source_type: "faq", snippet: `Appointment booking link: ${link}` }]
+        reply: "We would be delighted to assist with scheduling an appointment. Please let us know your preferred day and time, and our team will coordinate with you!",
+        confidence: 0.88
       };
     }
-    if (lower.includes("pay") || lower.includes("buy") || lower.includes("price") || lower.includes("order") || lower.includes("checkout")) {
+    if (lower.includes("pay") || lower.includes("buy") || lower.includes("price") || lower.includes("checkout")) {
       const paymentConn = current.connectors.find((c) => c.type === "payment" && c.enabled);
+      if (paymentConn && paymentConn.enabled) {
+        const currency = paymentConn.config?.payment_currency || "USD";
+        const link = paymentConn.config?.payment_link;
+        return {
+          reply: link ? `You can securely complete your purchase here: ${link}` : `You can securely complete your purchase in ${currency}. Would you like me to prepare a checkout link for you?`,
+          confidence: 0.92,
+          actions_taken: [{ tool: "dodo_payments_connector", result: { currency, instant_checkout: true } }],
+          citations: [{ title: "Payment Integration", source_type: "faq", snippet: "Secure card and wallet checkout links generated in WhatsApp." }]
+        };
+      }
       return {
-        reply: `You can securely complete your purchase using our integrated WhatsApp checkout. Our pricing starts at $49/month with a 14-day risk-free trial. Would you like me to generate a direct checkout link for you?`,
-        confidence: 0.92,
-        actions_taken: [{ tool: "dodo_payments_connector", result: { currency: "USD", instant_checkout: true } }],
-        citations: [{ title: "Dodo Payments Integration", source_type: "faq", snippet: "Secure card, Apple Pay, and Google Pay checkout links generated in WhatsApp." }]
+        reply: "We accept several secure payment methods. Please let us know which product or service you are interested in and we will assist you with checkout!",
+        confidence: 0.85
       };
+    }
+    if (lower.includes("order") || lower.includes("tracking") || lower.includes("shipment") || lower.includes("package")) {
+      const orderConn = current.connectors.find((c) => c.type === "order_lookup" && c.enabled);
+      if (orderConn && orderConn.enabled && orderConn.config?.webhook_url) {
+        return {
+          reply: "I can look up your order status right away! Please reply with your order number (e.g. #1042) to view real-time tracking.",
+          confidence: 0.94,
+          actions_taken: [{ tool: "order_lookup_service", result: { status: "awaiting_order_id" } }]
+        };
+      }
     }
     const matchedFaq = current.faqs.find((f) => {
       const qLower = f.question.toLowerCase();
@@ -2558,11 +2652,13 @@ var ZernioBusinessAgentService = class {
       };
     }
     const info = current.business_info;
-    const hours = info.business_hours?.monday ? `Our business hours are Mon-Fri ${info.business_hours.monday.open} to ${info.business_hours.monday.close}.` : "";
+    const hours = info.business_hours?.monday?.open ? `Our business hours are Mon-Fri ${info.business_hours.monday.open} to ${info.business_hours.monday.close}.` : "";
+    const namePart = info.name ? `Thanks for contacting ${info.name}.` : "Thanks for contacting us.";
+    const descPart = info.description ? ` ${info.description}` : "";
     return {
-      reply: `Hello! Thanks for contacting ${info.name}. ${info.description} ${hours} How can I assist you today?`,
-      confidence: 0.88,
-      citations: [{ title: `${info.name} Business Profile`, source_type: "website", snippet: info.description }]
+      reply: `Hello! ${namePart}${descPart} ${hours} How can I assist you today?`,
+      confidence: 0.85,
+      citations: info.name ? [{ title: `${info.name} Business Profile`, source_type: "website", snippet: info.description || "" }] : []
     };
   }
   /**
@@ -2657,7 +2753,7 @@ var ZernioBusinessAgentService = class {
   }
   static async saveLocalAgentState(accountId, state) {
     const existing = inMemoryAgentState.get(accountId) || await this.getFullAgentState(accountId);
-    const merged = { ...existing, ...state };
+    const merged = this.sanitizeState({ ...existing, ...state });
     inMemoryAgentState.set(accountId, merged);
     await cacheService.set(`meta_business_agent_${accountId}`, merged, 60);
     try {
@@ -7053,11 +7149,43 @@ whatsappRouter.get("/api/whatsapp/account/health", async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+async function resolveAgentAccount(req) {
+  const { userId, profileId } = await resolveUserProfileId(req);
+  let account = whatsappStore.getAccount(userId);
+  if (!account && userId) {
+    try {
+      const supabase = getBackendSupabaseClient();
+      if (supabase) {
+        const { data: dbAcc } = await supabase.from("whatsapp_accounts").select("*").eq("user_id", userId).neq("status", "disconnected").order("connected_at", { ascending: false }).limit(1).maybeSingle();
+        if (dbAcc) {
+          account = whatsappStore.setAccount({
+            id: dbAcc.id,
+            platform: dbAcc.platform || "whatsapp",
+            name: dbAcc.name || "Connected WhatsApp Account",
+            phone_number: dbAcc.phone_number,
+            phone_number_id: dbAcc.phone_number_id,
+            waba_id: dbAcc.waba_id,
+            status: dbAcc.status || "connected",
+            mode: dbAcc.mode || "production",
+            quality_rating: dbAcc.quality_rating || "GREEN",
+            messaging_limit_tier: dbAcc.messaging_limit_tier,
+            verified_name: dbAcc.verified_name,
+            connected_at: dbAcc.connected_at || (/* @__PURE__ */ new Date()).toISOString()
+          }, userId);
+        }
+      }
+    } catch (e) {
+      console.warn("[resolveAgentAccount db lookup notice]:", e.message);
+    }
+  }
+  const queryAccountId = req.query.accountId;
+  const bodyAccountId = req.body?.accountId;
+  const accountId = queryAccountId || bodyAccountId || account?.id || (userId ? `acc_${userId.replace(/[^a-zA-Z0-9_-]/g, "_")}` : "acc_primary");
+  return { userId, profileId, accountId, account };
+}
 whatsappRouter.get("/api/whatsapp/business-agent/status", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.query.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
     return res.json({ success: true, data: state });
   } catch (err) {
@@ -7066,9 +7194,7 @@ whatsappRouter.get("/api/whatsapp/business-agent/status", async (req, res) => {
 });
 whatsappRouter.post("/api/whatsapp/business-agent/eligibility", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.body.accountId || req.query.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const eligibility = await ZernioBusinessAgentService.checkEligibility(accountId, profileId);
     return res.json({ success: true, data: eligibility });
   } catch (err) {
@@ -7077,9 +7203,7 @@ whatsappRouter.post("/api/whatsapp/business-agent/eligibility", async (req, res)
 });
 whatsappRouter.post("/api/whatsapp/business-agent/onboard", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.body.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const result = await ZernioBusinessAgentService.onboardAgent(accountId, profileId);
     return res.json(result);
   } catch (err) {
@@ -7088,9 +7212,7 @@ whatsappRouter.post("/api/whatsapp/business-agent/onboard", async (req, res) => 
 });
 whatsappRouter.get("/api/whatsapp/business-agent/business-info", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.query.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
     return res.json({ success: true, data: state.business_info });
   } catch (err) {
@@ -7099,9 +7221,7 @@ whatsappRouter.get("/api/whatsapp/business-agent/business-info", async (req, res
 });
 whatsappRouter.put("/api/whatsapp/business-agent/business-info", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.body.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const updated = await ZernioBusinessAgentService.updateBusinessInfo(accountId, req.body.business_info || req.body, profileId);
     return res.json({ success: true, data: updated });
   } catch (err) {
@@ -7110,9 +7230,7 @@ whatsappRouter.put("/api/whatsapp/business-agent/business-info", async (req, res
 });
 whatsappRouter.get("/api/whatsapp/business-agent/faqs", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.query.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
     return res.json({ success: true, data: state.faqs });
   } catch (err) {
@@ -7121,9 +7239,7 @@ whatsappRouter.get("/api/whatsapp/business-agent/faqs", async (req, res) => {
 });
 whatsappRouter.post("/api/whatsapp/business-agent/faqs", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.body.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const newFaq = await ZernioBusinessAgentService.addFaq(accountId, req.body.faq || req.body, profileId);
     return res.json({ success: true, data: newFaq });
   } catch (err) {
@@ -7132,9 +7248,7 @@ whatsappRouter.post("/api/whatsapp/business-agent/faqs", async (req, res) => {
 });
 whatsappRouter.delete("/api/whatsapp/business-agent/faqs/:id", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.query.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     await ZernioBusinessAgentService.deleteFaq(accountId, req.params.id, profileId);
     return res.json({ success: true });
   } catch (err) {
@@ -7143,9 +7257,7 @@ whatsappRouter.delete("/api/whatsapp/business-agent/faqs/:id", async (req, res) 
 });
 whatsappRouter.get("/api/whatsapp/business-agent/websites", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.query.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
     return res.json({ success: true, data: state.websites });
   } catch (err) {
@@ -7154,9 +7266,7 @@ whatsappRouter.get("/api/whatsapp/business-agent/websites", async (req, res) => 
 });
 whatsappRouter.post("/api/whatsapp/business-agent/websites", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.body.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const web = await ZernioBusinessAgentService.addWebsite(accountId, req.body.url, profileId);
     return res.json({ success: true, data: web });
   } catch (err) {
@@ -7165,9 +7275,7 @@ whatsappRouter.post("/api/whatsapp/business-agent/websites", async (req, res) =>
 });
 whatsappRouter.delete("/api/whatsapp/business-agent/websites/:id", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.query.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     await ZernioBusinessAgentService.deleteWebsite(accountId, req.params.id, profileId);
     return res.json({ success: true });
   } catch (err) {
@@ -7176,9 +7284,7 @@ whatsappRouter.delete("/api/whatsapp/business-agent/websites/:id", async (req, r
 });
 whatsappRouter.get("/api/whatsapp/business-agent/files", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.query.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
     return res.json({ success: true, data: state.files });
   } catch (err) {
@@ -7187,9 +7293,7 @@ whatsappRouter.get("/api/whatsapp/business-agent/files", async (req, res) => {
 });
 whatsappRouter.post("/api/whatsapp/business-agent/files", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.body.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const file = await ZernioBusinessAgentService.addFile(accountId, req.body, profileId);
     return res.json({ success: true, data: file });
   } catch (err) {
@@ -7198,9 +7302,7 @@ whatsappRouter.post("/api/whatsapp/business-agent/files", async (req, res) => {
 });
 whatsappRouter.delete("/api/whatsapp/business-agent/files/:id", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.query.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     await ZernioBusinessAgentService.deleteFile(accountId, req.params.id, profileId);
     return res.json({ success: true });
   } catch (err) {
@@ -7209,9 +7311,7 @@ whatsappRouter.delete("/api/whatsapp/business-agent/files/:id", async (req, res)
 });
 whatsappRouter.get("/api/whatsapp/business-agent/skills", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.query.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
     return res.json({ success: true, data: state.skills });
   } catch (err) {
@@ -7220,9 +7320,7 @@ whatsappRouter.get("/api/whatsapp/business-agent/skills", async (req, res) => {
 });
 whatsappRouter.post("/api/whatsapp/business-agent/skills", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.body.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const updated = await ZernioBusinessAgentService.updateSkills(accountId, req.body.skills || req.body, profileId);
     return res.json({ success: true, data: updated });
   } catch (err) {
@@ -7231,9 +7329,7 @@ whatsappRouter.post("/api/whatsapp/business-agent/skills", async (req, res) => {
 });
 whatsappRouter.get("/api/whatsapp/business-agent/connectors", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.query.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
     return res.json({ success: true, data: state.connectors });
   } catch (err) {
@@ -7242,9 +7338,7 @@ whatsappRouter.get("/api/whatsapp/business-agent/connectors", async (req, res) =
 });
 whatsappRouter.post("/api/whatsapp/business-agent/connectors/:id", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.body.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const connectors = await ZernioBusinessAgentService.updateConnector(accountId, req.params.id, req.body, profileId);
     return res.json({ success: true, data: connectors });
   } catch (err) {
@@ -7253,9 +7347,7 @@ whatsappRouter.post("/api/whatsapp/business-agent/connectors/:id", async (req, r
 });
 whatsappRouter.post("/api/whatsapp/business-agent/test-messages", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.body.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const { message, history } = req.body;
     if (!message) {
       return res.status(400).json({ error: "Missing message parameter" });
@@ -7268,9 +7360,7 @@ whatsappRouter.post("/api/whatsapp/business-agent/test-messages", async (req, re
 });
 whatsappRouter.patch("/api/whatsapp/business-agent/settings", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.body.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const settings = await ZernioBusinessAgentService.updateSettings(accountId, req.body.settings || req.body, profileId);
     return res.json({ success: true, data: settings });
   } catch (err) {
@@ -7279,9 +7369,7 @@ whatsappRouter.patch("/api/whatsapp/business-agent/settings", async (req, res) =
 });
 whatsappRouter.get("/api/whatsapp/business-agent/allowlist", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.query.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
     return res.json({ success: true, data: state.allowlist });
   } catch (err) {
@@ -7290,9 +7378,7 @@ whatsappRouter.get("/api/whatsapp/business-agent/allowlist", async (req, res) =>
 });
 whatsappRouter.post("/api/whatsapp/business-agent/allowlist", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.body.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const entry = await ZernioBusinessAgentService.addAllowlistEntry(accountId, req.body.consumer_phone_number || req.body.phone, req.body.name, profileId);
     return res.json({ success: true, data: entry });
   } catch (err) {
@@ -7301,9 +7387,7 @@ whatsappRouter.post("/api/whatsapp/business-agent/allowlist", async (req, res) =
 });
 whatsappRouter.delete("/api/whatsapp/business-agent/allowlist/:id", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.query.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     await ZernioBusinessAgentService.deleteAllowlistEntry(accountId, req.params.id, profileId);
     return res.json({ success: true });
   } catch (err) {
@@ -7312,9 +7396,7 @@ whatsappRouter.delete("/api/whatsapp/business-agent/allowlist/:id", async (req, 
 });
 whatsappRouter.get("/api/whatsapp/business-agent/budget", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.query.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
     return res.json({ success: true, data: state.budget });
   } catch (err) {
@@ -7323,9 +7405,7 @@ whatsappRouter.get("/api/whatsapp/business-agent/budget", async (req, res) => {
 });
 whatsappRouter.put("/api/whatsapp/business-agent/budget", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.body.accountId || account?.id || "acc_primary";
+    const { profileId, accountId } = await resolveAgentAccount(req);
     const budget = await ZernioBusinessAgentService.updateBudget(accountId, req.body.budget || req.body, profileId);
     return res.json({ success: true, data: budget });
   } catch (err) {
@@ -7334,9 +7414,7 @@ whatsappRouter.put("/api/whatsapp/business-agent/budget", async (req, res) => {
 });
 whatsappRouter.post("/api/whatsapp/business-agent/thread-control", async (req, res) => {
   try {
-    const { userId, profileId } = await resolveUserProfileId(req);
-    const account = whatsappStore.getAccount(userId);
-    const accountId = req.body.accountId || account?.id || "acc_primary";
+    const { accountId } = await resolveAgentAccount(req);
     const { action, to, metadata } = req.body;
     if (!action || !to) {
       return res.status(400).json({ error: "Missing action or to parameter" });

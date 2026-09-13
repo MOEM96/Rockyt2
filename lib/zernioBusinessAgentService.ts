@@ -21,8 +21,8 @@ import { cacheService } from './cacheService';
 const inMemoryAgentState = new Map<string, MetaBusinessAgentFullState>();
 
 const DEFAULT_BUSINESS_INFO: BusinessInformation = {
-  name: 'Rockyt Store',
-  description: 'Premium WhatsApp commerce and customer engagement platform.',
+  name: '',
+  description: '',
   vertical: 'Retail & E-commerce',
   business_hours: {
     monday: { open: '09:00', close: '18:00' },
@@ -33,23 +33,23 @@ const DEFAULT_BUSINESS_INFO: BusinessInformation = {
     saturday: { open: '10:00', close: '16:00' },
     sunday: { open: '00:00', close: '00:00', closed: true },
   },
-  address: '100 Market Street, San Francisco, CA',
-  email: 'support@rockyt.io',
-  phone: '+13105551234',
-  website: 'https://rockyt.io',
-  return_policy: '30-day hassle-free return and exchange policy on all items in original condition.',
-  shipping_policy: 'Free standard shipping on orders over $50. Express delivery available.',
+  address: '',
+  email: '',
+  phone: '',
+  website: '',
+  return_policy: '',
+  shipping_policy: '',
   currency: 'USD',
 };
 
 const DEFAULT_SKILLS: BusinessAgentSkill = {
   id: 'skill_default',
   name: 'Astra Customer Concierge',
-  system_instructions: 'You are Astra, the friendly and knowledgeable AI customer assistant for Rockyt. Greet customers warmly, answer inquiries using the business knowledge base, assist with order lookups and booking appointments, and gracefully hand off to a human representative when customer requests refunds or human escalation.',
+  system_instructions: 'You are Astra, the friendly and knowledgeable AI customer assistant. Greet customers warmly, answer inquiries accurately using our verified business knowledge base, and assist with bookings and purchases.',
   tone: 'friendly',
-  human_handoff_threshold: 0.75,
+  human_handoff_threshold: 0.8,
   human_handoff_message: 'I am connecting you with one of our human team members right away. Please hold on a moment!',
-  escalation_contact: '+13105551234',
+  escalation_contact: '',
   language: 'en',
 };
 
@@ -58,9 +58,9 @@ const DEFAULT_SETTINGS: BusinessAgentSettings = {
   ai_audience: 'ALLOWLISTED_ONLY',
   language: 'en',
   handoff: {
-    threshold: 0.75,
+    threshold: 0.8,
     handoff_message: 'Transferring you to a human agent...',
-    escalation_number: '+13105551234',
+    escalation_number: '',
   },
 };
 
@@ -68,8 +68,8 @@ const DEFAULT_BUDGET: BusinessAgentBudget = {
   token_cap: 500000,
   turn_cap: 10000,
   window_hours: 24,
-  current_tokens_used: 12450,
-  current_turns_used: 280,
+  current_tokens_used: 0,
+  current_turns_used: 0,
   currency: 'USD',
 };
 
@@ -79,10 +79,10 @@ const DEFAULT_CONNECTORS: BusinessAgentConnector[] = [
     name: 'Appointment & Booking Service',
     type: 'booking',
     description: 'Allows customers to schedule consultations, appointments, or service slots directly in chat.',
-    enabled: true,
+    enabled: false,
     config: {
       booking_service: 'cal_com',
-      booking_link: 'https://cal.com/rockyt/consultation',
+      booking_link: '',
     },
   },
   {
@@ -90,10 +90,11 @@ const DEFAULT_CONNECTORS: BusinessAgentConnector[] = [
     name: 'Dodo Payments & Checkout Links',
     type: 'payment',
     description: 'Generates direct payment links and confirms order payments via Dodo Payments.',
-    enabled: true,
+    enabled: false,
     config: {
       payment_provider: 'dodo_payments',
       payment_currency: 'USD',
+      payment_link: '',
     },
   },
   {
@@ -101,9 +102,9 @@ const DEFAULT_CONNECTORS: BusinessAgentConnector[] = [
     name: 'Order Lookup & Tracking',
     type: 'order_lookup',
     description: 'Retrieves live shipping status and fulfillment tracking for customer order numbers.',
-    enabled: true,
+    enabled: false,
     config: {
-      webhook_url: 'https://rockyt.io/api/orders/lookup',
+      webhook_url: '',
     },
   },
 ];
@@ -114,16 +115,105 @@ export class ZernioBusinessAgentService {
   }
 
   /**
+   * Sanitizes state to ensure no legacy mock or hardcoded fake links are returned to real users.
+   */
+  public static sanitizeState(state: MetaBusinessAgentFullState): MetaBusinessAgentFullState {
+    if (!state) return state;
+
+    // Sanitize connectors: remove hardcoded fake test URLs and ensure disabled if no real user link
+    if (Array.isArray(state.connectors)) {
+      state.connectors = state.connectors.map(c => {
+        if (c.id === 'conn_booking') {
+          const link = c.config?.booking_link || '';
+          const isFake = link.includes('cal.com/rockyt') || (link.length > 0 && !link.startsWith('http'));
+          return {
+            ...c,
+            enabled: isFake ? false : Boolean(c.enabled && link),
+            config: {
+              ...c.config,
+              booking_link: isFake ? '' : link,
+              booking_service: c.config?.booking_service || 'cal_com',
+            }
+          };
+        }
+        if (c.id === 'conn_orders') {
+          const url = c.config?.webhook_url || '';
+          const isFake = url.includes('rockyt.io') || (url.length > 0 && !url.startsWith('http'));
+          return {
+            ...c,
+            enabled: isFake ? false : Boolean(c.enabled && url),
+            config: {
+              ...c.config,
+              webhook_url: isFake ? '' : url,
+            }
+          };
+        }
+        if (c.id === 'conn_payment') {
+          const link = c.config?.payment_link || '';
+          const isConfigured = Boolean(link || c.config?.api_key_configured || c.config?.payment_configured);
+          const isFake = link.includes('rockyt.io');
+          return {
+            ...c,
+            enabled: isFake ? false : Boolean(c.enabled && isConfigured),
+            config: {
+              ...c.config,
+              payment_link: isFake ? '' : link,
+              payment_provider: c.config?.payment_provider || 'dodo_payments',
+              payment_currency: c.config?.payment_currency || 'USD',
+              payment_configured: isConfigured && !isFake,
+            }
+          };
+        }
+        return c;
+      });
+    } else {
+      state.connectors = DEFAULT_CONNECTORS;
+    }
+
+    // Sanitize websites: remove fake https://rockyt.io
+    if (Array.isArray(state.websites)) {
+      state.websites = state.websites.filter(w => !w.url?.includes('rockyt.io'));
+    }
+
+    // Sanitize allowlist: remove fake developer test number
+    if (Array.isArray(state.allowlist)) {
+      state.allowlist = state.allowlist.filter(a => a.consumer_phone_number !== '+13105551234');
+    }
+
+    // Sanitize budget: reset fake usage
+    if (state.budget) {
+      if (state.budget.current_tokens_used === 12450) state.budget.current_tokens_used = 0;
+      if (state.budget.current_turns_used === 280) state.budget.current_turns_used = 0;
+    }
+
+    // Sanitize business info phone/email if it has fake developer data
+    if (state.business_info) {
+      if (state.business_info.phone === '+13105551234') state.business_info.phone = '';
+      if (state.business_info.email === 'support@rockyt.io') state.business_info.email = '';
+      if (state.business_info.website === 'https://rockyt.io') state.business_info.website = '';
+      if (state.business_info.address?.includes('San Francisco')) state.business_info.address = '';
+      if (state.business_info.name === 'Rockyt Store') state.business_info.name = '';
+    }
+
+    // Sanitize skills escalation contact
+    if (state.skills && state.skills.escalation_contact === '+13105551234') {
+      state.skills.escalation_contact = '';
+    }
+
+    return state;
+  }
+
+  /**
    * Get or initialize full state for an account
    */
   public static async getFullAgentState(accountId: string, profileId?: string): Promise<MetaBusinessAgentFullState> {
     const cacheKey = `meta_business_agent_${accountId}`;
     const cached = await cacheService.get<MetaBusinessAgentFullState>(cacheKey);
-    if (cached) return cached;
+    if (cached) return this.sanitizeState(cached);
 
     // 1. Try querying live Zernio Business Agent API
     const apiKey = this.getApiKey();
-    if (apiKey && accountId && accountId !== 'acc_primary') {
+    if (apiKey && accountId && accountId !== 'acc_primary' && !accountId.startsWith('acc_')) {
       try {
         const url = `https://zernio.com/api/v1/accounts/${accountId}/business-agent`;
         const res = await fetch(url, {
@@ -144,21 +234,18 @@ export class ZernioBusinessAgentService {
             manual_steps: Array.isArray(zernioData.manualSteps) ? zernioData.manualSteps : [],
             unverified_steps: Array.isArray(zernioData.unverifiedSteps) ? zernioData.unverifiedSteps : ['attach_payment_method'],
             business_info: zernioData.business_information || DEFAULT_BUSINESS_INFO,
-            faqs: zernioData.faqs || this.getDefaultFaqs(),
-            websites: zernioData.websites || [
-              { id: 'web_1', url: 'https://rockyt.io', status: 'crawled', last_crawled_at: new Date().toISOString(), page_count: 14 },
-            ],
+            faqs: zernioData.faqs || [],
+            websites: zernioData.websites || [],
             files: zernioData.files || [],
             skills: zernioData.skills || DEFAULT_SKILLS,
             connectors: zernioData.connectors || DEFAULT_CONNECTORS,
             settings: zernioData.settings || DEFAULT_SETTINGS,
-            allowlist: zernioData.allowlist || [
-              { id: 'al_1', consumer_phone_number: '+13105551234', name: 'Internal QA Tester', added_at: new Date().toISOString() },
-            ],
+            allowlist: zernioData.allowlist || [],
             budget: zernioData.budget || DEFAULT_BUDGET,
           };
-          await cacheService.set(cacheKey, state, 30);
-          return state;
+          const sanitized = this.sanitizeState(state);
+          await cacheService.set(cacheKey, sanitized, 30);
+          return sanitized;
         }
       } catch (err: any) {
         console.warn('[ZernioBusinessAgentService.getFullAgentState warning]:', err.message);
@@ -176,18 +263,19 @@ export class ZernioBusinessAgentService {
           .maybeSingle();
 
         if (data && data.state) {
-          await cacheService.set(cacheKey, data.state, 30);
-          return data.state;
+          const sanitized = this.sanitizeState(data.state);
+          await cacheService.set(cacheKey, sanitized, 30);
+          return sanitized;
         }
       }
     } catch {}
 
     // 3. Fallback in-memory state
     if (inMemoryAgentState.has(accountId)) {
-      return inMemoryAgentState.get(accountId)!;
+      return this.sanitizeState(inMemoryAgentState.get(accountId)!);
     }
 
-    // Default initialized state
+    // Default initialized state (100% clean and unpopulated until configured by user)
     const eligibility = await this.checkEligibility(accountId, profileId);
     const defaultState: MetaBusinessAgentFullState = {
       account_id: accountId,
@@ -197,17 +285,13 @@ export class ZernioBusinessAgentService {
       manual_steps: ['business_agent_terms_not_accepted'],
       unverified_steps: ['attach_payment_method'],
       business_info: DEFAULT_BUSINESS_INFO,
-      faqs: this.getDefaultFaqs(),
-      websites: [
-        { id: 'web_1', url: 'https://rockyt.io', status: 'crawled', last_crawled_at: new Date().toISOString(), page_count: 14 },
-      ],
+      faqs: [],
+      websites: [],
       files: [],
       skills: DEFAULT_SKILLS,
       connectors: DEFAULT_CONNECTORS,
       settings: DEFAULT_SETTINGS,
-      allowlist: [
-        { id: 'al_1', consumer_phone_number: '+13105551234', name: 'Developer Test Phone', added_at: new Date().toISOString() },
-      ],
+      allowlist: [],
       budget: DEFAULT_BUDGET,
     };
 
@@ -220,8 +304,8 @@ export class ZernioBusinessAgentService {
    */
   public static async checkEligibility(accountId: string, profileId?: string): Promise<BusinessAgentEligibility> {
     const accounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId);
-    const targetAccount = accounts.find(a => a.id === accountId) || accounts[0];
-    const phone = targetAccount?.phone_number || '+13105551234';
+    const targetAccount = accounts.find(a => a.id === accountId) || (accounts.length > 0 && accounts[0].id !== 'acc_sandbox' ? accounts[0] : null);
+    const phone = targetAccount?.phone_number || '';
 
     // Meta Requirements Matrix
     const requirements = [
@@ -268,7 +352,7 @@ export class ZernioBusinessAgentService {
     return {
       eligible: allPassed,
       phone_number: phone,
-      waba_id: targetAccount?.waba_id || 'waba_meta_business',
+      waba_id: targetAccount?.waba_id || '',
       vertical: 'Retail & E-commerce',
       country: 'United States',
       requirements,
@@ -492,24 +576,52 @@ export class ZernioBusinessAgentService {
     // Check connectors: Booking
     if (lower.includes('book') || lower.includes('schedule') || lower.includes('appointment') || lower.includes('slot') || lower.includes('time')) {
       const bookingConn = current.connectors.find(c => c.type === 'booking' && c.enabled);
-      const link = bookingConn?.config?.booking_link || 'https://cal.com/rockyt/consultation';
+      const link = bookingConn?.config?.booking_link;
+      if (bookingConn && bookingConn.enabled && link) {
+        return {
+          reply: `I would love to help you book an appointment! You can view our available slots and confirm your time directly here: ${link}`,
+          confidence: 0.95,
+          actions_taken: [{ tool: 'appointment_booking_service', result: { link, status: 'available' } }],
+          citations: [{ title: 'Booking Connector', source_type: 'faq', snippet: `Appointment booking link: ${link}` }]
+        };
+      }
       return {
-        reply: `I would love to help you book an appointment! You can view our available slots and confirm your time directly here: ${link}`,
-        confidence: 0.95,
-        actions_taken: [{ tool: 'appointment_booking_service', result: { link, status: 'available' } }],
-        citations: [{ title: 'Booking Connector', source_type: 'faq', snippet: `Appointment booking link: ${link}` }]
+        reply: "We would be delighted to assist with scheduling an appointment. Please let us know your preferred day and time, and our team will coordinate with you!",
+        confidence: 0.88,
       };
     }
 
     // Check connectors: Payment
-    if (lower.includes('pay') || lower.includes('buy') || lower.includes('price') || lower.includes('order') || lower.includes('checkout')) {
+    if (lower.includes('pay') || lower.includes('buy') || lower.includes('price') || lower.includes('checkout')) {
       const paymentConn = current.connectors.find(c => c.type === 'payment' && c.enabled);
+      if (paymentConn && paymentConn.enabled) {
+        const currency = paymentConn.config?.payment_currency || 'USD';
+        const link = paymentConn.config?.payment_link;
+        return {
+          reply: link
+            ? `You can securely complete your purchase here: ${link}`
+            : `You can securely complete your purchase in ${currency}. Would you like me to prepare a checkout link for you?`,
+          confidence: 0.92,
+          actions_taken: [{ tool: 'dodo_payments_connector', result: { currency, instant_checkout: true } }],
+          citations: [{ title: 'Payment Integration', source_type: 'faq', snippet: 'Secure card and wallet checkout links generated in WhatsApp.' }]
+        };
+      }
       return {
-        reply: `You can securely complete your purchase using our integrated WhatsApp checkout. Our pricing starts at $49/month with a 14-day risk-free trial. Would you like me to generate a direct checkout link for you?`,
-        confidence: 0.92,
-        actions_taken: [{ tool: 'dodo_payments_connector', result: { currency: 'USD', instant_checkout: true } }],
-        citations: [{ title: 'Dodo Payments Integration', source_type: 'faq', snippet: 'Secure card, Apple Pay, and Google Pay checkout links generated in WhatsApp.' }]
+        reply: "We accept several secure payment methods. Please let us know which product or service you are interested in and we will assist you with checkout!",
+        confidence: 0.85,
       };
+    }
+
+    // Check connectors: Order Lookup
+    if (lower.includes('order') || lower.includes('tracking') || lower.includes('shipment') || lower.includes('package')) {
+      const orderConn = current.connectors.find(c => c.type === 'order_lookup' && c.enabled);
+      if (orderConn && orderConn.enabled && orderConn.config?.webhook_url) {
+        return {
+          reply: "I can look up your order status right away! Please reply with your order number (e.g. #1042) to view real-time tracking.",
+          confidence: 0.94,
+          actions_taken: [{ tool: 'order_lookup_service', result: { status: 'awaiting_order_id' } }],
+        };
+      }
     }
 
     // Match FAQs
@@ -528,11 +640,13 @@ export class ZernioBusinessAgentService {
 
     // Fallback general response grounded in business info
     const info = current.business_info;
-    const hours = info.business_hours?.monday ? `Our business hours are Mon-Fri ${info.business_hours.monday.open} to ${info.business_hours.monday.close}.` : '';
+    const hours = info.business_hours?.monday?.open ? `Our business hours are Mon-Fri ${info.business_hours.monday.open} to ${info.business_hours.monday.close}.` : '';
+    const namePart = info.name ? `Thanks for contacting ${info.name}.` : 'Thanks for contacting us.';
+    const descPart = info.description ? ` ${info.description}` : '';
     return {
-      reply: `Hello! Thanks for contacting ${info.name}. ${info.description} ${hours} How can I assist you today?`,
-      confidence: 0.88,
-      citations: [{ title: `${info.name} Business Profile`, source_type: 'website', snippet: info.description }]
+      reply: `Hello! ${namePart}${descPart} ${hours} How can I assist you today?`,
+      confidence: 0.85,
+      citations: info.name ? [{ title: `${info.name} Business Profile`, source_type: 'website', snippet: info.description || '' }] : []
     };
   }
 
@@ -636,8 +750,8 @@ export class ZernioBusinessAgentService {
 
   private static async saveLocalAgentState(accountId: string, state: Partial<MetaBusinessAgentFullState>): Promise<void> {
     const existing = inMemoryAgentState.get(accountId) || (await this.getFullAgentState(accountId));
-    const merged = { ...existing, ...state };
-    inMemoryAgentState.set(accountId, merged as MetaBusinessAgentFullState);
+    const merged = this.sanitizeState({ ...existing, ...state } as MetaBusinessAgentFullState);
+    inMemoryAgentState.set(accountId, merged);
     await cacheService.set(`meta_business_agent_${accountId}`, merged, 60);
 
     try {

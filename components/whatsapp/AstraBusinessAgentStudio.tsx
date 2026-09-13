@@ -79,6 +79,27 @@ export const AstraBusinessAgentStudio: React.FC<AstraBusinessAgentStudioProps> =
   // ── Terms Acceptance Checkbox (Step 1) ──
   const [termsAcceptedLocally, setTermsAcceptedLocally] = useState<boolean>(false);
 
+  // ── Connector Modal & Configuration State ──
+  const [activeConnectorModal, setActiveConnectorModal] = useState<BusinessAgentConnector | null>(null);
+  const [connectorConfigDraft, setConnectorConfigDraft] = useState<{
+    booking_service: 'cal_com' | 'calendly' | 'custom';
+    booking_link: string;
+    payment_provider: 'dodo_payments' | 'stripe' | 'whatsapp_pay';
+    payment_currency: string;
+    payment_link: string;
+    webhook_url: string;
+    auth_header: string;
+  }>({
+    booking_service: 'cal_com',
+    booking_link: '',
+    payment_provider: 'dodo_payments',
+    payment_currency: 'USD',
+    payment_link: '',
+    webhook_url: '',
+    auth_header: '',
+  });
+  const [isSavingConnector, setIsSavingConnector] = useState<boolean>(false);
+
   // ── Load State ──
   const loadAgentState = async (silently = false) => {
     try {
@@ -354,9 +375,97 @@ export const AstraBusinessAgentStudio: React.FC<AstraBusinessAgentStudioProps> =
     }
   };
 
-  // ── Connectors (Tools) ──
-  const handleToggleConnector = async (connector: BusinessAgentConnector) => {
-    const updatedEnabled = !connector.enabled;
+  // ── Connectors (Tools & Integrations) ──
+  const handleOpenConnectorModal = (connector: BusinessAgentConnector) => {
+    setActiveConnectorModal(connector);
+    setConnectorConfigDraft({
+      booking_service: (connector.config?.booking_service as any) || 'cal_com',
+      booking_link: connector.config?.booking_link || '',
+      payment_provider: (connector.config?.payment_provider as any) || 'dodo_payments',
+      payment_currency: connector.config?.payment_currency || 'USD',
+      payment_link: connector.config?.payment_link || '',
+      webhook_url: connector.config?.webhook_url || '',
+      auth_header: connector.config?.auth_header || '',
+    });
+  };
+
+  const handleSaveConnectorConfig = async () => {
+    if (!activeConnectorModal) return;
+    setIsSavingConnector(true);
+    setErrorBanner(null);
+
+    try {
+      let updatedConfig: Record<string, any> = {};
+      if (activeConnectorModal.type === 'booking') {
+        const link = connectorConfigDraft.booking_link.trim();
+        if (!link) {
+          throw new Error('Please enter a valid calendar/booking link (e.g. https://cal.com/your-team/meet)');
+        }
+        if (!/^https?:\/\//i.test(link)) {
+          throw new Error('Booking link must start with https:// or http://');
+        }
+        updatedConfig = {
+          booking_service: connectorConfigDraft.booking_service,
+          booking_link: link,
+        };
+      } else if (activeConnectorModal.type === 'payment') {
+        const link = connectorConfigDraft.payment_link.trim();
+        if (link && !/^https?:\/\//i.test(link)) {
+          throw new Error('Payment or checkout link must start with https:// or http://');
+        }
+        updatedConfig = {
+          payment_provider: connectorConfigDraft.payment_provider,
+          payment_currency: connectorConfigDraft.payment_currency || 'USD',
+          payment_link: link,
+          payment_configured: true,
+        };
+      } else if (activeConnectorModal.type === 'order_lookup') {
+        const url = connectorConfigDraft.webhook_url.trim();
+        if (!url) {
+          throw new Error('Please enter a valid webhook or API URL to look up order tracking information');
+        }
+        if (!/^https?:\/\//i.test(url)) {
+          throw new Error('Webhook URL must start with https:// or http://');
+        }
+        updatedConfig = {
+          webhook_url: url,
+          auth_header: connectorConfigDraft.auth_header.trim(),
+        };
+      }
+
+      const res = await fetch(`/api/whatsapp/business-agent/connectors/${activeConnectorModal.id}`, {
+        method: 'POST',
+        headers: {
+          ...getAuthHeaders(userSession),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ...activeConnectorModal,
+          enabled: true,
+          config: updatedConfig,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to save connector configuration');
+      }
+
+      if (data.data) {
+        setState(prev => prev ? { ...prev, connectors: data.data } : null);
+      }
+      setSuccessBanner(`Successfully connected ${activeConnectorModal.name}!`);
+      setTimeout(() => setSuccessBanner(null), 3000);
+      setActiveConnectorModal(null);
+    } catch (err: any) {
+      setErrorBanner(err.message || 'Failed to connect integration');
+    } finally {
+      setIsSavingConnector(false);
+    }
+  };
+
+  const handleDisconnectConnector = async (connector: BusinessAgentConnector) => {
+    setIsUpdating(true);
     try {
       const res = await fetch(`/api/whatsapp/business-agent/connectors/${connector.id}`, {
         method: 'POST',
@@ -366,16 +475,21 @@ export const AstraBusinessAgentStudio: React.FC<AstraBusinessAgentStudioProps> =
         },
         body: JSON.stringify({
           ...connector,
-          enabled: updatedEnabled,
+          enabled: false,
         }),
       });
       const data = await res.json();
       if (res.ok && data.data) {
         setState(prev => prev ? { ...prev, connectors: data.data } : null);
-        setSuccessBanner(`${connector.name} tool ${updatedEnabled ? 'Enabled' : 'Disabled'}.`);
+        setSuccessBanner(`${connector.name} disconnected.`);
         setTimeout(() => setSuccessBanner(null), 2500);
       }
-    } catch {}
+    } catch (err: any) {
+      setErrorBanner(err.message || 'Failed to disconnect connector');
+    } finally {
+      setIsUpdating(false);
+      setActiveConnectorModal(null);
+    }
   };
 
   // ── Step 5: Test Sandbox Chat ──
@@ -1558,11 +1672,15 @@ export const AstraBusinessAgentStudio: React.FC<AstraBusinessAgentStudioProps> =
             </div>
 
             <div className="p-4 bg-white rounded-2xl border border-gray-200/80 shadow-2xs">
-              <span className="text-[11px] font-semibold text-gray-400 block">Superpowers</span>
+              <span className="text-[11px] font-semibold text-gray-400 block">Action Connectors</span>
               <span className="text-lg font-bold text-gray-900 mt-1 block">
-                {state?.connectors?.filter(c => c.enabled).length || 0} Active
+                {state?.connectors?.filter(c => c.enabled).length || 0} Connected
               </span>
-              <span className="text-[10px] text-emerald-600 font-medium">Bookings &amp; Payments</span>
+              <span className="text-[10px] text-gray-500 font-medium">
+                {(state?.connectors?.filter(c => c.enabled).length || 0) > 0
+                  ? `${state?.connectors?.filter(c => c.enabled).length} Active Tool${(state?.connectors?.filter(c => c.enabled).length || 0) > 1 ? 's' : ''}`
+                  : 'No integrations linked'}
+              </span>
             </div>
 
             <div className="p-4 bg-white rounded-2xl border border-gray-200/80 shadow-2xs">
@@ -1722,38 +1840,104 @@ export const AstraBusinessAgentStudio: React.FC<AstraBusinessAgentStudioProps> =
 
             {/* 3. ACTION CONNECTORS (SUPERPOWERS) */}
             <div className="bg-white p-5 sm:p-6 rounded-3xl border border-gray-200/80 shadow-xs space-y-4">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center">
-                  <Calendar size={16} />
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center">
+                    <Zap size={16} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-gray-900">Action Connectors</h3>
+                    <p className="text-[11px] text-gray-500">Autonomous tool actions Astra triggers in WhatsApp</p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="font-bold text-sm text-gray-900">Action Connectors</h3>
-                  <p className="text-[11px] text-gray-500">Autonomous tool actions Astra can trigger</p>
-                </div>
+                <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-gray-100 text-gray-600">
+                  {state?.connectors?.filter(c => c.enabled).length || 0} / {state?.connectors?.length || 3} Active
+                </span>
               </div>
 
-              <div className="space-y-2.5">
-                {state?.connectors.map(c => (
-                  <div
-                    key={c.id}
-                    className="p-3.5 rounded-2xl border border-gray-200 bg-gray-50/50 flex items-center justify-between gap-3 text-xs"
-                  >
-                    <div className="space-y-0.5">
-                      <span className="font-bold text-gray-900 block">{c.name}</span>
-                      <span className="text-gray-500 text-[11px]">{c.description}</span>
-                    </div>
-                    <button
-                      onClick={() => handleToggleConnector(c)}
-                      className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer ${
-                        c.enabled
-                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                          : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+              <div className="space-y-3">
+                {state?.connectors.map(c => {
+                  const isConnected = !!c.enabled;
+                  const targetDetail =
+                    c.type === 'booking'
+                      ? c.config?.booking_link
+                      : c.type === 'payment'
+                      ? `${(c.config?.payment_provider || 'dodo').replace(/_/g, ' ').toUpperCase()} (${c.config?.payment_currency || 'USD'})${c.config?.payment_link ? ` • ${c.config.payment_link}` : ''}`
+                      : c.config?.webhook_url;
+
+                  return (
+                    <div
+                      key={c.id}
+                      className={`p-4 rounded-2xl border transition-all ${
+                        isConnected
+                          ? 'border-emerald-200 bg-emerald-50/30'
+                          : 'border-gray-200 bg-gray-50/40 hover:bg-gray-50'
                       }`}
                     >
-                      {c.enabled ? 'Enabled' : 'Disabled'}
-                    </button>
-                  </div>
-                ))}
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="space-y-1 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-gray-900 text-xs">{c.name}</span>
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${
+                                isConnected
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-gray-200 text-gray-600'
+                              }`}
+                            >
+                              <span
+                                className={`w-1.5 h-1.5 rounded-full ${
+                                  isConnected ? 'bg-emerald-500' : 'bg-gray-400'
+                                }`}
+                              />
+                              {isConnected ? 'Connected' : 'Not Connected'}
+                            </span>
+                          </div>
+                          <p className="text-gray-500 text-[11px] leading-relaxed">{c.description}</p>
+                          {isConnected && targetDetail ? (
+                            <div className="pt-1 flex items-center gap-1.5 text-[11px] text-emerald-700 font-medium truncate">
+                              <CheckCircle2 size={12} className="text-emerald-500 shrink-0" />
+                              <span className="truncate">Linked: {targetDetail}</span>
+                            </div>
+                          ) : (
+                            <p className="text-[11px] text-gray-400 italic">
+                              No integration linked yet. Connect your real provider to allow Astra to perform this action.
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="shrink-0 flex items-center gap-1.5">
+                          {isConnected ? (
+                            <>
+                              <button
+                                onClick={() => handleOpenConnectorModal(c)}
+                                className="px-3 py-1.5 bg-white border border-gray-200 hover:border-gray-300 text-gray-700 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs"
+                                title="Edit integration details"
+                              >
+                                Configure
+                              </button>
+                              <button
+                                onClick={() => handleDisconnectConnector(c)}
+                                className="px-2.5 py-1.5 bg-white border border-red-200 hover:bg-red-50 text-red-600 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs"
+                                title="Disconnect integration"
+                              >
+                                Disconnect
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => handleOpenConnectorModal(c)}
+                              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-gray-900 hover:bg-gray-800 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
+                            >
+                              <Plus size={13} />
+                              <span>Connect Integration</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -1924,6 +2108,232 @@ export const AstraBusinessAgentStudio: React.FC<AstraBusinessAgentStudioProps> =
               >
                 <Send size={15} />
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          CONNECT INTEGRATION MODAL
+      ========================================================================= */}
+      {activeConnectorModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl max-w-lg w-full border border-gray-200 shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between bg-gray-50/60">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-teal-50 text-teal-600 flex items-center justify-center">
+                  {activeConnectorModal.type === 'booking' && <Calendar size={20} />}
+                  {activeConnectorModal.type === 'payment' && <CreditCard size={20} />}
+                  {activeConnectorModal.type === 'order_lookup' && <PackageCheck size={20} />}
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-gray-900">{activeConnectorModal.name}</h3>
+                  <p className="text-[11px] text-gray-500">
+                    {activeConnectorModal.type === 'booking' && 'Connect your real calendar booking link'}
+                    {activeConnectorModal.type === 'payment' && 'Configure real checkout & payment links'}
+                    {activeConnectorModal.type === 'order_lookup' && 'Connect your real store order tracking webhook'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setActiveConnectorModal(null)}
+                className="text-gray-400 hover:text-gray-600 p-1.5 rounded-xl hover:bg-gray-100 cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4 overflow-y-auto text-xs">
+              {/* Type 1: BOOKING */}
+              {activeConnectorModal.type === 'booking' && (
+                <div className="space-y-3.5">
+                  <div>
+                    <label className="font-bold text-gray-700 block mb-1.5">Booking Provider</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { id: 'cal_com', label: 'Cal.com' },
+                        { id: 'calendly', label: 'Calendly' },
+                        { id: 'custom', label: 'Custom URL' },
+                      ].map(prov => (
+                        <button
+                          key={prov.id}
+                          type="button"
+                          onClick={() => setConnectorConfigDraft(prev => ({ ...prev, booking_service: prov.id as any }))}
+                          className={`py-2 px-2 text-center rounded-xl font-bold border transition-all cursor-pointer ${
+                            connectorConfigDraft.booking_service === prov.id
+                              ? 'bg-teal-50 text-teal-900 border-teal-500 shadow-2xs'
+                              : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
+                          }`}
+                        >
+                          {prov.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-gray-700 block mb-1">
+                      Your Calendar / Booking Link <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="url"
+                      placeholder={
+                        connectorConfigDraft.booking_service === 'cal_com'
+                          ? 'https://cal.com/your-name/30min'
+                          : connectorConfigDraft.booking_service === 'calendly'
+                          ? 'https://calendly.com/your-team/consultation'
+                          : 'https://yourwebsite.com/book'
+                      }
+                      value={connectorConfigDraft.booking_link}
+                      onChange={e => setConnectorConfigDraft(prev => ({ ...prev, booking_link: e.target.value }))}
+                      className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl bg-white focus:outline-none focus:border-teal-500 text-xs"
+                    />
+                    <p className="text-[11px] text-gray-400 mt-1">
+                      When a customer in WhatsApp asks to book a consultation or appointment, Astra will provide this exact link.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Type 2: PAYMENT */}
+              {activeConnectorModal.type === 'payment' && (
+                <div className="space-y-3.5">
+                  <div>
+                    <label className="font-bold text-gray-700 block mb-1.5">Payment Provider</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { id: 'dodo_payments', label: 'Dodo Payments' },
+                        { id: 'stripe', label: 'Stripe' },
+                        { id: 'whatsapp_pay', label: 'WhatsApp Pay' },
+                      ].map(prov => (
+                        <button
+                          key={prov.id}
+                          type="button"
+                          onClick={() => setConnectorConfigDraft(prev => ({ ...prev, payment_provider: prov.id as any }))}
+                          className={`py-2 px-2 text-center rounded-xl font-bold border transition-all cursor-pointer ${
+                            connectorConfigDraft.payment_provider === prov.id
+                              ? 'bg-teal-50 text-teal-900 border-teal-500 shadow-2xs'
+                              : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
+                          }`}
+                        >
+                          {prov.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-gray-700 block mb-1">Currency</label>
+                    <select
+                      value={connectorConfigDraft.payment_currency}
+                      onChange={e => setConnectorConfigDraft(prev => ({ ...prev, payment_currency: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-xl bg-white focus:outline-none focus:border-teal-500 text-xs"
+                    >
+                      <option value="USD">USD ($ - US Dollar)</option>
+                      <option value="EUR">EUR (€ - Euro)</option>
+                      <option value="GBP">GBP (£ - British Pound)</option>
+                      <option value="SAR">SAR (ر.س - Saudi Riyal)</option>
+                      <option value="AED">AED (د.إ - UAE Dirham)</option>
+                      <option value="EGP">EGP (E£ - Egyptian Pound)</option>
+                      <option value="INR">INR (₹ - Indian Rupee)</option>
+                      <option value="CAD">CAD ($ - Canadian Dollar)</option>
+                      <option value="AUD">AUD ($ - Australian Dollar)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-gray-700 block mb-1">
+                      Payment or Product Checkout URL (Optional)
+                    </label>
+                    <input
+                      type="url"
+                      placeholder="https://checkout.dodopayments.com/buy/p_... or store checkout"
+                      value={connectorConfigDraft.payment_link}
+                      onChange={e => setConnectorConfigDraft(prev => ({ ...prev, payment_link: e.target.value }))}
+                      className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl bg-white focus:outline-none focus:border-teal-500 text-xs"
+                    />
+                    <p className="text-[11px] text-gray-400 mt-1">
+                      When a customer indicates intent to purchase, Astra provides payment link instructions for this gateway.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Type 3: ORDER LOOKUP */}
+              {activeConnectorModal.type === 'order_lookup' && (
+                <div className="space-y-3.5">
+                  <div>
+                    <label className="font-bold text-gray-700 block mb-1">
+                      Order Tracking Webhook URL <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="url"
+                      placeholder="https://api.yourstore.com/v1/orders/lookup"
+                      value={connectorConfigDraft.webhook_url}
+                      onChange={e => setConnectorConfigDraft(prev => ({ ...prev, webhook_url: e.target.value }))}
+                      className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl bg-white focus:outline-none focus:border-teal-500 text-xs"
+                    />
+                    <p className="text-[11px] text-gray-400 mt-1">
+                      Endpoint called when a customer sends an order number in chat. Must accept POST or GET with order ID.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-gray-700 block mb-1">Authorization Header / Secret (Optional)</label>
+                    <input
+                      type="text"
+                      placeholder="Bearer secret_token_xyz"
+                      value={connectorConfigDraft.auth_header}
+                      onChange={e => setConnectorConfigDraft(prev => ({ ...prev, auth_header: e.target.value }))}
+                      className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl bg-white focus:outline-none focus:border-teal-500 text-xs font-mono text-[11px]"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-gray-50 border-t border-gray-100 flex items-center justify-between gap-3">
+              <div>
+                {activeConnectorModal.enabled && (
+                  <button
+                    type="button"
+                    onClick={() => handleDisconnectConnector(activeConnectorModal)}
+                    disabled={isUpdating || isSavingConnector}
+                    className="px-3 py-2 text-red-600 hover:text-red-700 font-bold text-xs cursor-pointer hover:bg-red-50 rounded-xl transition-all"
+                  >
+                    Disconnect Integration
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveConnectorModal(null)}
+                  disabled={isSavingConnector}
+                  className="px-4 py-2 border border-gray-300 bg-white hover:bg-gray-100 text-gray-700 font-bold text-xs rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveConnectorConfig}
+                  disabled={isSavingConnector}
+                  className="px-5 py-2 bg-gray-900 hover:bg-gray-800 text-white font-bold text-xs rounded-xl cursor-pointer shadow-xs inline-flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {isSavingConnector ? (
+                    <>
+                      <Loader2 size={13} className="animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <span>Save &amp; Connect Integration</span>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
