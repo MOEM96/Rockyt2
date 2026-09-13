@@ -425,3 +425,157 @@ export interface WhatsAppFlowVersion {
   missing?: boolean;
 }
 
+// =========================================================================
+// META BUSINESS AGENT (ASTRA) TYPES
+// =========================================================================
+
+export type BusinessAgentStatus = 'unprovisioned' | 'provisioning' | 'ready' | 'active' | 'inactive';
+
+export interface BusinessAgentEligibilityRequirement {
+  id: string;
+  name: string;
+  passed: boolean;
+  description: string;
+  actionRequired?: string;
+}
+
+export interface BusinessAgentEligibility {
+  eligible: boolean;
+  phone_number: string;
+  waba_id?: string;
+  vertical?: string;
+  country?: string;
+  requirements: BusinessAgentEligibilityRequirement[];
+  reasons?: string[];
+  checked_at: string;
+}
+
+export interface BusinessInformation {
+  name: string;
+  description: string;
+  vertical?: string;
+  business_hours: {
+    [key: string]: { open: string; close: string; closed?: boolean };
+  };
+  address?: string;
+  email?: string;
+  phone?: string;
+  website?: string;
+  return_policy?: string;
+  shipping_policy?: string;
+  currency?: string;
+}
+
+export interface BusinessAgentFAQ {
+  id: string;
+  question: string;
+  answer: string;
+  category?: string;
+  created_at: string;
+}
+
+export interface BusinessAgentWebsite {
+  id: string;
+  url: string;
+  status: 'pending' | 'crawled' | 'failed';
+  last_crawled_at?: string;
+  page_count?: number;
+}
+
+export interface BusinessAgentFile {
+  id: string;
+  name: string;
+  url?: string;
+  mime_type: string;
+  size_bytes: number;
+  status: 'processing' | 'indexed' | 'failed';
+  created_at: string;
+}
+
+export interface BusinessAgentSkill {
+  id: string;
+  name: string;
+  system_instructions: string;
+  tone: 'friendly' | 'professional' | 'direct' | 'playful' | 'empathetic';
+  human_handoff_threshold: number; // 0 to 1
+  human_handoff_message: string;
+  escalation_contact?: string;
+  language: string;
+}
+
+export interface BusinessAgentConnector {
+  id: string;
+  name: string;
+  type: 'booking' | 'payment' | 'order_lookup' | 'custom_webhook';
+  description: string;
+  enabled: boolean;
+  config: {
+    webhook_url?: string;
+    booking_service?: 'cal_com' | 'calendly' | 'custom';
+    booking_link?: string;
+    payment_provider?: 'dodo_payments' | 'stripe' | 'whatsapp_pay';
+    payment_currency?: string;
+    headers?: Record<string, string>;
+    [key: string]: any;
+  };
+}
+
+export interface BusinessAgentSettings {
+  rollout: { enabled: boolean };
+  ai_audience: 'EVERYONE' | 'ALLOWLISTED_ONLY';
+  language: string;
+  handoff: {
+    threshold: number;
+    handoff_message: string;
+    escalation_number?: string;
+  };
+}
+
+export interface BusinessAgentAllowlistEntry {
+  id: string;
+  consumer_phone_number: string;
+  name?: string;
+  added_at: string;
+}
+
+export interface BusinessAgentBudget {
+  token_cap: number;
+  turn_cap: number;
+  window_hours: number;
+  current_tokens_used: number;
+  current_turns_used: number;
+  currency: string;
+}
+
+export interface BusinessAgentTestMessage {
+  message: string;
+  history?: Array<{ sender: 'user' | 'agent'; text: string }>;
+}
+
+export interface BusinessAgentTestResponse {
+  reply: string;
+  confidence: number;
+  citations?: Array<{ title: string; source_type: 'faq' | 'website' | 'file'; snippet: string }>;
+  actions_taken?: Array<{ tool: string; result: any }>;
+  handed_off?: boolean;
+}
+
+export interface MetaBusinessAgentFullState {
+  account_id: string;
+  status: BusinessAgentStatus;
+  eligible: boolean;
+  eligibility: BusinessAgentEligibility;
+  manual_steps: string[];
+  unverified_steps: string[];
+  business_info: BusinessInformation;
+  faqs: BusinessAgentFAQ[];
+  websites: BusinessAgentWebsite[];
+  files: BusinessAgentFile[];
+  skills: BusinessAgentSkill;
+  connectors: BusinessAgentConnector[];
+  settings: BusinessAgentSettings;
+  allowlist: BusinessAgentAllowlistEntry[];
+  budget: BusinessAgentBudget;
+}
+
+

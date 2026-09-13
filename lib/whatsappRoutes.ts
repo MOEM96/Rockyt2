@@ -1,6 +1,7 @@
 import express, { Router, Request, Response } from 'express';
 import { whatsappStore } from './whatsappStore';
 import { ZernioWhatsAppService } from './zernioWhatsAppService';
+import { ZernioBusinessAgentService } from './zernioBusinessAgentService';
 import { MetaCAPIService } from './metaCapiService';
 import { MCPServerHandler, MCP_TOOLS_MANIFEST } from './mcpServer';
 import { AutomationEngine } from './automationEngine';
@@ -4451,6 +4452,344 @@ whatsappRouter.get('/api/whatsapp/account/health', async (req: Request, res: Res
       profileId,
       ...health,
     });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// =========================================================================
+// 10. META BUSINESS AGENT (ASTRA) ENDPOINTS
+// =========================================================================
+
+// GET /api/whatsapp/business-agent/status
+whatsappRouter.get('/api/whatsapp/business-agent/status', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
+    return res.json({ success: true, data: state });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/whatsapp/business-agent/eligibility
+whatsappRouter.post('/api/whatsapp/business-agent/eligibility', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.body.accountId as string) || (req.query.accountId as string) || account?.id || 'acc_primary';
+    const eligibility = await ZernioBusinessAgentService.checkEligibility(accountId, profileId);
+    return res.json({ success: true, data: eligibility });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/whatsapp/business-agent/onboard
+whatsappRouter.post('/api/whatsapp/business-agent/onboard', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const result = await ZernioBusinessAgentService.onboardAgent(accountId, profileId);
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET & PUT /api/whatsapp/business-agent/business-info
+whatsappRouter.get('/api/whatsapp/business-agent/business-info', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
+    return res.json({ success: true, data: state.business_info });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+whatsappRouter.put('/api/whatsapp/business-agent/business-info', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const updated = await ZernioBusinessAgentService.updateBusinessInfo(accountId, req.body.business_info || req.body, profileId);
+    return res.json({ success: true, data: updated });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// FAQs
+whatsappRouter.get('/api/whatsapp/business-agent/faqs', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
+    return res.json({ success: true, data: state.faqs });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+whatsappRouter.post('/api/whatsapp/business-agent/faqs', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const newFaq = await ZernioBusinessAgentService.addFaq(accountId, req.body.faq || req.body, profileId);
+    return res.json({ success: true, data: newFaq });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+whatsappRouter.delete('/api/whatsapp/business-agent/faqs/:id', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    await ZernioBusinessAgentService.deleteFaq(accountId, req.params.id, profileId);
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Websites
+whatsappRouter.get('/api/whatsapp/business-agent/websites', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
+    return res.json({ success: true, data: state.websites });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+whatsappRouter.post('/api/whatsapp/business-agent/websites', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const web = await ZernioBusinessAgentService.addWebsite(accountId, req.body.url, profileId);
+    return res.json({ success: true, data: web });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+whatsappRouter.delete('/api/whatsapp/business-agent/websites/:id', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    await ZernioBusinessAgentService.deleteWebsite(accountId, req.params.id, profileId);
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Files
+whatsappRouter.get('/api/whatsapp/business-agent/files', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
+    return res.json({ success: true, data: state.files });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+whatsappRouter.post('/api/whatsapp/business-agent/files', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const file = await ZernioBusinessAgentService.addFile(accountId, req.body, profileId);
+    return res.json({ success: true, data: file });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+whatsappRouter.delete('/api/whatsapp/business-agent/files/:id', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    await ZernioBusinessAgentService.deleteFile(accountId, req.params.id, profileId);
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Skills & Voice
+whatsappRouter.get('/api/whatsapp/business-agent/skills', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
+    return res.json({ success: true, data: state.skills });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+whatsappRouter.post('/api/whatsapp/business-agent/skills', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const updated = await ZernioBusinessAgentService.updateSkills(accountId, req.body.skills || req.body, profileId);
+    return res.json({ success: true, data: updated });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Connectors (Bookings, Payments, Custom Tools)
+whatsappRouter.get('/api/whatsapp/business-agent/connectors', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
+    return res.json({ success: true, data: state.connectors });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+whatsappRouter.post('/api/whatsapp/business-agent/connectors/:id', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const connectors = await ZernioBusinessAgentService.updateConnector(accountId, req.params.id, req.body, profileId);
+    return res.json({ success: true, data: connectors });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Interactive Sandbox Tester (Zero Token Cost)
+whatsappRouter.post('/api/whatsapp/business-agent/test-messages', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const { message, history } = req.body;
+    if (!message) {
+      return res.status(400).json({ error: 'Missing message parameter' });
+    }
+    const response = await ZernioBusinessAgentService.sendTestMessage(accountId, message, history, profileId);
+    return res.json({ success: true, data: response });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Rollout & Settings
+whatsappRouter.patch('/api/whatsapp/business-agent/settings', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const settings = await ZernioBusinessAgentService.updateSettings(accountId, req.body.settings || req.body, profileId);
+    return res.json({ success: true, data: settings });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Allowlist
+whatsappRouter.get('/api/whatsapp/business-agent/allowlist', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
+    return res.json({ success: true, data: state.allowlist });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+whatsappRouter.post('/api/whatsapp/business-agent/allowlist', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const entry = await ZernioBusinessAgentService.addAllowlistEntry(accountId, req.body.consumer_phone_number || req.body.phone, req.body.name, profileId);
+    return res.json({ success: true, data: entry });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+whatsappRouter.delete('/api/whatsapp/business-agent/allowlist/:id', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    await ZernioBusinessAgentService.deleteAllowlistEntry(accountId, req.params.id, profileId);
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Budget
+whatsappRouter.get('/api/whatsapp/business-agent/budget', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.query.accountId as string) || account?.id || 'acc_primary';
+    const state = await ZernioBusinessAgentService.getFullAgentState(accountId, profileId);
+    return res.json({ success: true, data: state.budget });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+whatsappRouter.put('/api/whatsapp/business-agent/budget', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const budget = await ZernioBusinessAgentService.updateBudget(accountId, req.body.budget || req.body, profileId);
+    return res.json({ success: true, data: budget });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Thread Control (Inbox Handover)
+whatsappRouter.post('/api/whatsapp/business-agent/thread-control', async (req: Request, res: Response) => {
+  try {
+    const { userId, profileId } = await resolveUserProfileId(req);
+    const account = whatsappStore.getAccount(userId);
+    const accountId = (req.body.accountId as string) || account?.id || 'acc_primary';
+    const { action, to, metadata } = req.body;
+    if (!action || !to) {
+      return res.status(400).json({ error: 'Missing action or to parameter' });
+    }
+    const result = await ZernioBusinessAgentService.threadControl(accountId, action, to, metadata);
+    return res.json(result);
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

@@ -15,6 +15,7 @@ import { WhatsAppInbox } from './WhatsAppInbox';
 import { CTWAHub } from './CTWAHub';
 import { TemplateStudio } from './TemplateStudio';
 import { FlowsStudio } from './FlowsStudio';
+import { AstraBusinessAgentStudio } from './AstraBusinessAgentStudio';
 import { BroadcastManager } from './BroadcastManager';
 import { MCPGateway } from './MCPGateway';
 import { ContactsCRM } from './ContactsCRM';
@@ -1929,50 +1930,11 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
           )}
 
           {/* =========================================================================
-              VIEW 5: ASTRA AI AGENT
+              VIEW 5: ASTRA META BUSINESS AGENT STUDIO
           ========================================================================= */}
           {currentView === 'astra' && (
-            <div className="p-6 sm:p-8 max-w-4xl mx-auto space-y-6">
-              <div className="flex items-center justify-between pb-4 border-b border-gray-200">
-                <div>
-                  <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                    <Sparkles size={20} className="text-emerald-600" />
-                    <span>Astra AI Customer Agent</span>
-                  </h2>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Zero-code autonomous conversational AI trained on your website and support documents
-                  </p>
-                </div>
-                <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold">
-                  Status: Active
-                </span>
-              </div>
-
-              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-xs space-y-4">
-                <h3 className="font-bold text-sm text-gray-900">Agent Persona &amp; Knowledge Base</h3>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">Agent Name</label>
-                  <input
-                    type="text"
-                    defaultValue="Astra"
-                    className="w-full text-xs px-3 py-2 rounded-xl border border-gray-300 focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">System Instructions</label>
-                  <textarea
-                    rows={4}
-                    defaultValue="You are the friendly, helpful customer engagement assistant for Rockyt. Answer user queries concisely, provide product catalog links when requested, and escalate to human agent if the user asks for refund or human support."
-                    className="w-full text-xs p-3 rounded-xl border border-gray-300 focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-                <button
-                  onClick={() => alert('Astra AI agent settings updated successfully!')}
-                  className="px-5 py-2.5 rounded-xl bg-[#00D084] text-[#07301f] font-bold text-xs shadow-sm hover:bg-[#00be77]"
-                >
-                  Save AI Persona
-                </button>
-              </div>
+            <div className="p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto">
+              <AstraBusinessAgentStudio userSession={userSession} />
             </div>
           )}
 
