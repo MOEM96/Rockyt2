@@ -15,7 +15,7 @@ import {
 } from './whatsappTypes';
 import { ZernioWhatsAppService } from './zernioWhatsAppService';
 import { getBackendSupabaseClient } from './backendSupabase';
-import { cacheService } from './cacheService';
+import { cacheService, CACHE_TTL } from './cacheService';
 
 // In-memory tenant store as fallback
 const inMemoryAgentState = new Map<string, MetaBusinessAgentFullState>();
@@ -109,6 +109,12 @@ const DEFAULT_CONNECTORS: BusinessAgentConnector[] = [
   },
 ];
 
+export const getDefaultConnectors = (): BusinessAgentConnector[] => JSON.parse(JSON.stringify(DEFAULT_CONNECTORS));
+export const getDefaultBusinessInfo = (): BusinessInformation => JSON.parse(JSON.stringify(DEFAULT_BUSINESS_INFO));
+export const getDefaultSkills = (): BusinessAgentSkill => JSON.parse(JSON.stringify(DEFAULT_SKILLS));
+export const getDefaultSettings = (): BusinessAgentSettings => JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+export const getDefaultBudget = (): BusinessAgentBudget => JSON.parse(JSON.stringify(DEFAULT_BUDGET));
+
 export class ZernioBusinessAgentService {
   private static getApiKey(): string {
     return process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY || '';
@@ -167,7 +173,7 @@ export class ZernioBusinessAgentService {
         return c;
       });
     } else {
-      state.connectors = DEFAULT_CONNECTORS;
+      state.connectors = getDefaultConnectors();
     }
 
     // Sanitize websites: remove fake https://rockyt.io
@@ -208,95 +214,102 @@ export class ZernioBusinessAgentService {
    */
   public static async getFullAgentState(accountId: string, profileId?: string): Promise<MetaBusinessAgentFullState> {
     const cacheKey = `meta_business_agent_${accountId}`;
-    const cached = await cacheService.get<MetaBusinessAgentFullState>(cacheKey);
-    if (cached) return this.sanitizeState(cached);
 
-    // 1. Try querying live Zernio Business Agent API
-    const apiKey = this.getApiKey();
-    if (apiKey && accountId && accountId !== 'acc_primary' && !accountId.startsWith('acc_')) {
-      try {
-        const url = `https://zernio.com/api/v1/accounts/${accountId}/business-agent`;
-        const res = await fetch(url, {
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'X-API-Version': '2.0.0',
-            'Content-Type': 'application/json',
-          },
-        });
-
-        if (res.ok) {
-          const zernioData = await res.json();
-          const state: MetaBusinessAgentFullState = {
-            account_id: accountId,
-            status: zernioData.status || (zernioData.agent_id ? 'ready' : 'unprovisioned'),
-            eligible: zernioData.eligible !== false,
-            eligibility: await this.checkEligibility(accountId, profileId),
-            manual_steps: Array.isArray(zernioData.manualSteps) ? zernioData.manualSteps : [],
-            unverified_steps: Array.isArray(zernioData.unverifiedSteps) ? zernioData.unverifiedSteps : ['attach_payment_method'],
-            business_info: zernioData.business_information || DEFAULT_BUSINESS_INFO,
-            faqs: zernioData.faqs || [],
-            websites: zernioData.websites || [],
-            files: zernioData.files || [],
-            skills: zernioData.skills || DEFAULT_SKILLS,
-            connectors: zernioData.connectors || DEFAULT_CONNECTORS,
-            settings: zernioData.settings || DEFAULT_SETTINGS,
-            allowlist: zernioData.allowlist || [],
-            budget: zernioData.budget || DEFAULT_BUDGET,
-          };
-          const sanitized = this.sanitizeState(state);
-          await cacheService.set(cacheKey, sanitized, 30);
-          return sanitized;
-        }
-      } catch (err: any) {
-        console.warn('[ZernioBusinessAgentService.getFullAgentState warning]:', err.message);
-      }
+    // Circuit breaker check
+    if (cacheService.isCircuitOpen('zernio')) {
+      const stale = await cacheService.get<MetaBusinessAgentFullState>(cacheKey);
+      if (stale) return this.sanitizeState(stale);
     }
 
-    // 2. Check Supabase
-    try {
-      const supabase = getBackendSupabaseClient();
-      if (supabase) {
-        const { data } = await supabase
-          .from('business_agent_configs')
-          .select('*')
-          .eq('account_id', accountId)
-          .maybeSingle();
+    return await cacheService.fetchWithCoalescing<MetaBusinessAgentFullState>(
+      cacheKey,
+      async () => {
+        // 1. Try querying live Zernio Business Agent API
+        const apiKey = this.getApiKey();
+        if (apiKey && accountId && accountId !== 'acc_primary' && !accountId.startsWith('acc_')) {
+          try {
+            const url = `https://zernio.com/api/v1/accounts/${accountId}/business-agent`;
+            const res = await fetch(url, {
+              headers: {
+                Authorization: `Bearer ${apiKey}`,
+                'X-API-Version': '2.0.0',
+                'Content-Type': 'application/json',
+              },
+            });
+            cacheService.recordUpstreamStatus('zernio', res.status);
 
-        if (data && data.state) {
-          const sanitized = this.sanitizeState(data.state);
-          await cacheService.set(cacheKey, sanitized, 30);
-          return sanitized;
+            if (res.ok) {
+              const zernioData = await res.json();
+              const state: MetaBusinessAgentFullState = {
+                account_id: accountId,
+                status: zernioData.status || (zernioData.agent_id ? 'ready' : 'unprovisioned'),
+                eligible: zernioData.eligible !== false,
+                eligibility: await this.checkEligibility(accountId, profileId),
+                manual_steps: Array.isArray(zernioData.manualSteps) ? zernioData.manualSteps : [],
+                unverified_steps: Array.isArray(zernioData.unverifiedSteps) ? zernioData.unverifiedSteps : ['attach_payment_method'],
+                business_info: zernioData.business_information || getDefaultBusinessInfo(),
+                faqs: zernioData.faqs || [],
+                websites: zernioData.websites || [],
+                files: zernioData.files || [],
+                skills: zernioData.skills || getDefaultSkills(),
+                connectors: zernioData.connectors || getDefaultConnectors(),
+                settings: zernioData.settings || getDefaultSettings(),
+                allowlist: zernioData.allowlist || [],
+                budget: zernioData.budget || getDefaultBudget(),
+              };
+              return this.sanitizeState(state);
+            }
+          } catch (err: any) {
+            console.warn('[ZernioBusinessAgentService.getFullAgentState warning]:', err.message);
+          }
         }
-      }
-    } catch {}
 
-    // 3. Fallback in-memory state
-    if (inMemoryAgentState.has(accountId)) {
-      return this.sanitizeState(inMemoryAgentState.get(accountId)!);
-    }
+        // 2. Check Supabase
+        try {
+          const supabase = getBackendSupabaseClient();
+          if (supabase) {
+            const { data } = await supabase
+              .from('business_agent_configs')
+              .select('*')
+              .eq('account_id', accountId)
+              .maybeSingle();
 
-    // Default initialized state (100% clean and unpopulated until configured by user)
-    const eligibility = await this.checkEligibility(accountId, profileId);
-    const defaultState: MetaBusinessAgentFullState = {
-      account_id: accountId,
-      status: 'unprovisioned',
-      eligible: eligibility.eligible,
-      eligibility,
-      manual_steps: ['business_agent_terms_not_accepted'],
-      unverified_steps: ['attach_payment_method'],
-      business_info: DEFAULT_BUSINESS_INFO,
-      faqs: [],
-      websites: [],
-      files: [],
-      skills: DEFAULT_SKILLS,
-      connectors: DEFAULT_CONNECTORS,
-      settings: DEFAULT_SETTINGS,
-      allowlist: [],
-      budget: DEFAULT_BUDGET,
-    };
+            if (data && data.state) {
+              return this.sanitizeState(data.state);
+            }
+          }
+        } catch {}
 
-    inMemoryAgentState.set(accountId, defaultState);
-    return defaultState;
+        // 3. Fallback in-memory state
+        if (inMemoryAgentState.has(accountId)) {
+          return this.sanitizeState(inMemoryAgentState.get(accountId)!);
+        }
+
+        // Default initialized state (100% clean and unpopulated until configured by user)
+        const eligibility = await this.checkEligibility(accountId, profileId);
+        const defaultState: MetaBusinessAgentFullState = {
+          account_id: accountId,
+          status: 'unprovisioned',
+          eligible: eligibility.eligible,
+          eligibility,
+          manual_steps: ['business_agent_terms_not_accepted'],
+          unverified_steps: ['attach_payment_method'],
+          business_info: getDefaultBusinessInfo(),
+          faqs: [],
+          websites: [],
+          files: [],
+          skills: getDefaultSkills(),
+          connectors: getDefaultConnectors(),
+          settings: getDefaultSettings(),
+          allowlist: [],
+          budget: getDefaultBudget(),
+        };
+
+        inMemoryAgentState.set(accountId, defaultState);
+        return defaultState;
+      },
+      CACHE_TTL.BUSINESS_AGENT
+    );
   }
 
   /**
@@ -752,7 +765,7 @@ export class ZernioBusinessAgentService {
     const existing = inMemoryAgentState.get(accountId) || (await this.getFullAgentState(accountId));
     const merged = this.sanitizeState({ ...existing, ...state } as MetaBusinessAgentFullState);
     inMemoryAgentState.set(accountId, merged);
-    await cacheService.set(`meta_business_agent_${accountId}`, merged, 60);
+    await cacheService.set(`meta_business_agent_${accountId}`, merged, CACHE_TTL.BUSINESS_AGENT);
 
     try {
       const supabase = getBackendSupabaseClient();

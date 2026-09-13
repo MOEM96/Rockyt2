@@ -533,13 +533,36 @@ function getBackendSupabaseClient() {
 
 // lib/cacheService.ts
 import Redis from "ioredis";
+var CACHE_TTL = {
+  ACCOUNT: 600,
+  // 10 minutes for WABA account metadata
+  HEALTH: 600,
+  // 10 minutes for Meta health & verification status
+  TEMPLATES: 300,
+  // 5 minutes for WhatsApp message templates
+  FLOWS: 300,
+  // 5 minutes for WhatsApp Flows
+  CAMPAIGNS: 180,
+  // 3 minutes for campaigns overview & schedule
+  BUSINESS_AGENT: 600,
+  // 10 minutes for Astra Business Agent full state
+  CONVERSATIONS: 60,
+  // 60 seconds for inbox conversation threads
+  DEFAULT: 120
+  // 2 minutes default
+};
 var CacheService = class {
   constructor() {
     this.memoryCache = /* @__PURE__ */ new Map();
+    this.inFlightPromises = /* @__PURE__ */ new Map();
+    this.rateBuckets = /* @__PURE__ */ new Map();
+    this.circuits = /* @__PURE__ */ new Map();
     this.redisClient = null;
     this.isRedisConnected = false;
     this.hits = 0;
     this.misses = 0;
+    this.coalescedRequests = 0;
+    this.throttledRequests = 0;
     const redisUrl = process.env.REDIS_URL || process.env.KV_URL;
     const redisHost = process.env.REDIS_HOST;
     if (redisUrl || redisHost) {
@@ -567,8 +590,13 @@ var CacheService = class {
   cleanupExpired() {
     const now = Date.now();
     for (const [key, entry] of this.memoryCache.entries()) {
-      if (entry.expiresAt <= now) {
+      if (entry.expiresAt <= now && (!entry.swrGraceUntil || entry.swrGraceUntil <= now)) {
         this.memoryCache.delete(key);
+      }
+    }
+    for (const [bucketKey, bucket] of this.rateBuckets.entries()) {
+      if (now - bucket.lastRefill > 36e5) {
+        this.rateBuckets.delete(bucketKey);
       }
     }
   }
@@ -588,6 +616,10 @@ var CacheService = class {
         this.hits++;
         return memEntry.value;
       }
+      if (memEntry.swrGraceUntil && memEntry.swrGraceUntil > Date.now()) {
+        this.hits++;
+        return memEntry.value;
+      }
       this.memoryCache.delete(key);
     }
     if (this.isRedisConnected && this.redisClient) {
@@ -596,7 +628,7 @@ var CacheService = class {
         if (raw) {
           this.hits++;
           const parsed = JSON.parse(raw);
-          this.memoryCache.set(key, { value: parsed, expiresAt: Date.now() + 3e4 });
+          this.memoryCache.set(key, { value: parsed, expiresAt: Date.now() + 6e4 });
           return parsed;
         }
       } catch (e) {
@@ -606,14 +638,17 @@ var CacheService = class {
     return null;
   }
   /**
-   * Stores a value in cache with a TTL (default: 60 seconds).
+   * Stores a value in cache with a TTL and optional SWR grace period.
    */
-  async set(key, value, ttlSeconds = 60) {
-    const expiresAt = Date.now() + ttlSeconds * 1e3;
-    this.memoryCache.set(key, { value, expiresAt });
+  async set(key, value, ttlSeconds = CACHE_TTL.DEFAULT, swrGraceSeconds = 0) {
+    const now = Date.now();
+    const expiresAt = now + ttlSeconds * 1e3;
+    const swrGraceUntil = swrGraceSeconds > 0 ? expiresAt + swrGraceSeconds * 1e3 : void 0;
+    this.memoryCache.set(key, { value, expiresAt, swrGraceUntil });
     if (this.isRedisConnected && this.redisClient) {
       try {
-        await this.redisClient.set(key, JSON.stringify(value), "EX", ttlSeconds);
+        const redisTtl = ttlSeconds + swrGraceSeconds;
+        await this.redisClient.set(key, JSON.stringify(value), "EX", redisTtl);
       } catch (e) {
       }
     }
@@ -623,6 +658,7 @@ var CacheService = class {
    */
   async del(key) {
     this.memoryCache.delete(key);
+    this.inFlightPromises.delete(key);
     if (this.isRedisConnected && this.redisClient) {
       try {
         await this.redisClient.del(key);
@@ -639,6 +675,7 @@ var CacheService = class {
     for (const key of this.memoryCache.keys()) {
       if (key.startsWith(prefix)) {
         this.memoryCache.delete(key);
+        this.inFlightPromises.delete(key);
       }
     }
     if (this.isRedisConnected && this.redisClient) {
@@ -652,10 +689,111 @@ var CacheService = class {
     }
   }
   /**
+   * In-Flight Request Coalescing (Singleflight).
+   * If multiple concurrent requests arrive for the same key while cache is cold,
+   * only 1 execution runs; all callers await and share the same Promise.
+   */
+  async fetchWithCoalescing(key, fetchFn, ttlSeconds = CACHE_TTL.DEFAULT) {
+    const cached = await this.get(key);
+    if (cached !== null && cached !== void 0) {
+      return cached;
+    }
+    if (this.inFlightPromises.has(key)) {
+      this.coalescedRequests++;
+      return this.inFlightPromises.get(key);
+    }
+    const promise = (async () => {
+      try {
+        const result = await fetchFn();
+        if (result !== void 0 && result !== null) {
+          await this.set(key, result, ttlSeconds);
+        }
+        return result;
+      } finally {
+        this.inFlightPromises.delete(key);
+      }
+    })();
+    this.inFlightPromises.set(key, promise);
+    return promise;
+  }
+  /**
+   * Token Bucket Rate Limiter per user.
+   * Restricts outbound API bursts to avoid hitting upstream Meta/Zernio quotas.
+   * Default: 30 token capacity, refilling at 0.5 tokens/sec (30 tokens/minute).
+   */
+  consumeRateLimit(userId, action = "api", cost = 1, maxTokens = 30, refillRatePerSec = 0.5) {
+    const bucketKey = `${userId.trim().toLowerCase()}:${action}`;
+    const now = Date.now();
+    let bucket = this.rateBuckets.get(bucketKey);
+    if (!bucket) {
+      bucket = {
+        tokens: maxTokens,
+        lastRefill: now,
+        maxTokens,
+        refillRatePerSec
+      };
+      this.rateBuckets.set(bucketKey, bucket);
+    }
+    const elapsedSeconds = (now - bucket.lastRefill) / 1e3;
+    bucket.tokens = Math.min(bucket.maxTokens, bucket.tokens + elapsedSeconds * bucket.refillRatePerSec);
+    bucket.lastRefill = now;
+    if (bucket.tokens >= cost) {
+      bucket.tokens -= cost;
+      return { allowed: true, remaining: Math.floor(bucket.tokens) };
+    } else {
+      this.throttledRequests++;
+      const needed = cost - bucket.tokens;
+      const retryAfterSec = Math.ceil(needed / bucket.refillRatePerSec);
+      return { allowed: false, remaining: Math.floor(bucket.tokens), retryAfterSec };
+    }
+  }
+  /**
+   * Upstream Circuit Breaker state inspection
+   */
+  isCircuitOpen(serviceKey = "zernio") {
+    const circuit = this.circuits.get(serviceKey);
+    if (!circuit || !circuit.isOpen) return false;
+    if (Date.now() >= circuit.openUntil) {
+      circuit.isOpen = false;
+      return false;
+    }
+    return true;
+  }
+  /**
+   * Record upstream API response status code to trip circuit breaker on 429 or repeated 5xx
+   */
+  recordUpstreamStatus(serviceKey, statusCode, errorText) {
+    let circuit = this.circuits.get(serviceKey);
+    if (!circuit) {
+      circuit = { isOpen: false, openUntil: 0, failureCount: 0, lastFailure: "" };
+      this.circuits.set(serviceKey, circuit);
+    }
+    if (statusCode === 429) {
+      circuit.isOpen = true;
+      circuit.openUntil = Date.now() + 6e4;
+      circuit.lastFailure = `HTTP 429 Too Many Requests (${(/* @__PURE__ */ new Date()).toLocaleTimeString()}): ${errorText || "Rate limit reached"}`;
+      console.warn(`[CircuitBreaker] ${serviceKey} tripped OPEN for 60s due to 429 rate limit.`);
+    } else if (statusCode >= 500) {
+      circuit.failureCount++;
+      if (circuit.failureCount >= 3) {
+        circuit.isOpen = true;
+        circuit.openUntil = Date.now() + 3e4;
+        circuit.lastFailure = `HTTP ${statusCode} Server Error: ${errorText || "Upstream outage"}`;
+        console.warn(`[CircuitBreaker] ${serviceKey} tripped OPEN for 30s due to consecutive 5xx errors.`);
+      }
+    } else if (statusCode >= 200 && statusCode < 300) {
+      circuit.failureCount = 0;
+      circuit.isOpen = false;
+    }
+  }
+  /**
    * Flushes the entire cache.
    */
   async flush() {
     this.memoryCache.clear();
+    this.inFlightPromises.clear();
+    this.rateBuckets.clear();
+    this.circuits.clear();
     if (this.isRedisConnected && this.redisClient) {
       try {
         await this.redisClient.flushdb();
@@ -669,13 +807,25 @@ var CacheService = class {
   getStats() {
     const total = this.hits + this.misses;
     const hitRate = total > 0 ? `${(this.hits / total * 100).toFixed(1)}%` : "0.0%";
+    const circuitStates = {};
+    for (const [k, c] of this.circuits.entries()) {
+      circuitStates[k] = {
+        isOpen: this.isCircuitOpen(k),
+        openUntil: c.isOpen ? new Date(c.openUntil).toISOString() : void 0,
+        lastFailure: c.lastFailure || void 0
+      };
+    }
     return {
-      engine: this.isRedisConnected ? "Redis (L2) + Memory (L1)" : "High-Speed In-Memory TTL Cache (L1)",
+      engine: this.isRedisConnected ? "Redis (L2) + Memory (L1) with Coalescing" : "High-Speed In-Memory TTL Cache (L1) with Coalescing",
       isRedisConnected: this.isRedisConnected,
       activeMemoryKeys: this.memoryCache.size,
+      inFlightCount: this.inFlightPromises.size,
+      coalescedRequests: this.coalescedRequests,
+      throttledRequests: this.throttledRequests,
       hits: this.hits,
       misses: this.misses,
-      hitRate
+      hitRate,
+      circuitStates
     };
   }
 };
@@ -684,27 +834,35 @@ var cacheService = new CacheService();
 // lib/zernioWhatsAppService.ts
 import crypto2 from "crypto";
 var ZernioWhatsAppService = class _ZernioWhatsAppService {
-  static setCachedAccountId(accountId) {
+  static setCachedAccountId(accountId, userId, profileId) {
     if (accountId && accountId !== "acc_primary") {
-      this.cachedAccountId = accountId;
+      const scopeKey = userId ? `default_acc_user_${userId}` : profileId ? `default_acc_prof_${profileId}` : "default_acc_global";
+      cacheService.set(scopeKey, accountId, CACHE_TTL.ACCOUNT).catch(() => {
+      });
     }
   }
-  static async getDefaultAccountId(profileId) {
-    if (this.cachedAccountId && this.cachedAccountId !== "acc_primary") {
-      return this.cachedAccountId;
+  static async getDefaultAccountId(profileId, userId) {
+    const scopeKey = userId ? `default_acc_user_${userId}` : profileId ? `default_acc_prof_${profileId}` : "default_acc_global";
+    const cached = await cacheService.get(scopeKey);
+    if (cached && cached !== "acc_primary") {
+      return cached;
     }
     try {
       const supabase = getBackendSupabaseClient();
       if (supabase) {
-        const { data: flowAcc } = await supabase.from("whatsapp_flows").select("account_id").not("account_id", "is", null).neq("account_id", "acc_primary").order("created_at", { ascending: false }).limit(1).maybeSingle();
-        if (flowAcc?.account_id) {
-          this.cachedAccountId = flowAcc.account_id;
-          return flowAcc.account_id;
+        if (userId) {
+          const { data: waAcc } = await supabase.from("whatsapp_accounts").select("id").eq("user_id", userId).not("id", "is", null).neq("id", "acc_primary").order("connected_at", { ascending: false }).limit(1).maybeSingle();
+          if (waAcc?.id) {
+            await cacheService.set(scopeKey, waAcc.id, CACHE_TTL.ACCOUNT);
+            return waAcc.id;
+          }
         }
-        const { data: waAcc } = await supabase.from("whatsapp_accounts").select("id").not("id", "is", null).neq("id", "acc_primary").limit(1).maybeSingle();
-        if (waAcc?.id) {
-          this.cachedAccountId = waAcc.id;
-          return waAcc.id;
+        if (profileId) {
+          const { data: flowAcc } = await supabase.from("whatsapp_flows").select("account_id").eq("profile_id", profileId).not("account_id", "is", null).neq("account_id", "acc_primary").order("created_at", { ascending: false }).limit(1).maybeSingle();
+          if (flowAcc?.account_id) {
+            await cacheService.set(scopeKey, flowAcc.account_id, CACHE_TTL.ACCOUNT);
+            return flowAcc.account_id;
+          }
         }
       }
     } catch {
@@ -714,7 +872,7 @@ var ZernioWhatsAppService = class _ZernioWhatsAppService {
       if (Array.isArray(accounts) && accounts.length > 0) {
         const valid = accounts.find((a) => a.id && a.id !== "acc_primary");
         if (valid && valid.id) {
-          this.cachedAccountId = valid.id;
+          await cacheService.set(scopeKey, valid.id, CACHE_TTL.ACCOUNT);
           return valid.id;
         }
       }
@@ -956,89 +1114,94 @@ var ZernioWhatsAppService = class _ZernioWhatsAppService {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if (!apiKey) return [];
     const cacheKey = `zernio_wa_accounts_${profileId || "all"}`;
-    if (!forceRefresh) {
-      const cached = await cacheService.get(cacheKey);
-      if (cached && Array.isArray(cached)) {
-        return cached;
-      }
+    if (forceRefresh) {
+      await cacheService.del(cacheKey);
     }
-    try {
-      const url = new URL("https://zernio.com/api/v1/accounts");
-      url.searchParams.set("platform", "whatsapp");
-      url.searchParams.set("status", "connected");
-      if (profileId) url.searchParams.set("profileId", profileId);
-      let res = await fetch(url.toString(), {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json"
-        }
-      });
-      if (!res.ok) {
-        console.warn(`[Zernio listWhatsAppAccounts] Profile ${profileId} returned status ${res.status}. Scoped return empty.`);
-        return [];
-      }
-      if (res.ok) {
-        const json = await res.json();
-        const accounts = json.accounts || json.data || [];
-        const validAccounts = [];
-        for (const acc of accounts) {
-          const accId = acc._id || acc.id;
-          const phoneNum = acc.display_phone_number || acc.phoneNumber || acc.phone || acc.username || acc.selectedPhoneNumber || "";
-          const cleanPhone = phoneNum.replace(/[^0-9]/g, "");
-          const isTombstonedAcc = accId ? await cacheService.get(`disconnected_wa_acc_${accId}`) : false;
-          const isTombstonedPhone = cleanPhone ? await cacheService.get(`disconnected_wa_phone_${cleanPhone}`) : false;
-          if (isTombstonedAcc || isTombstonedPhone) {
-            console.log(`[Zernio listWhatsAppAccounts] Skipping disconnected/tombstoned account ${accId} (${phoneNum})`);
-            continue;
-          }
-          if (acc.isActive === false || acc.enabled === false || acc.needsReconnection === true) {
-            continue;
-          }
-          const rawStatus = String(acc.status || "").toLowerCase();
-          if (rawStatus === "disconnected" || rawStatus === "inactive" || rawStatus === "disabled" || rawStatus === "revoked" || rawStatus === "deleted" || rawStatus === "unlinked") {
-            continue;
-          }
-          const metadata = acc.metadata || {};
-          const rawNameStatus = String(metadata.nameStatus || metadata.name_status || acc.name_status || "").toUpperCase();
-          let nameReviewStatus = "not_reviewed";
-          if (rawNameStatus.includes("APPROV")) nameReviewStatus = "approved";
-          else if (rawNameStatus.includes("PENDING") || rawNameStatus.includes("REVIEW")) nameReviewStatus = "in_review";
-          else if (rawNameStatus.includes("DECLIN") || rawNameStatus.includes("REJECT")) nameReviewStatus = "declined";
-          const rawBizStatus = String(metadata.businessVerificationStatus || metadata.business_verification_status || metadata.codeVerificationStatus || acc.business_verification_status || "").toUpperCase();
-          let bizVerificationStatus = "not_verified";
-          if (rawBizStatus.includes("VERIF") && !rawBizStatus.includes("NOT")) bizVerificationStatus = "verified";
-          else if (rawBizStatus.includes("PENDING") || rawBizStatus.includes("REVIEW")) bizVerificationStatus = "in_review";
-          const calling = metadata.calling === "On" || metadata.calling === true || acc.calling === "On" ? "On" : "Off";
-          const type = metadata.type || metadata.connectionType || acc.type || "Coexistence";
-          const hexMatch = (acc._id || acc.id || "").match(/([a-f0-9]{6})/i);
-          const shortId = hexMatch ? hexMatch[1].toLowerCase() : (acc._id || acc.id || "eca6e8").substring(0, 6);
-          validAccounts.push({
-            id: acc._id || acc.id,
-            platform: "whatsapp",
-            name: acc.name || acc.username || "WhatsApp Business Account",
-            phone_number: phoneNum,
-            phone_number_id: acc.phoneNumberId || acc.id,
-            waba_id: acc.wabaId,
-            status: "connected",
-            mode: "production",
-            quality_rating: acc.qualityRating || metadata.qualityRating || "GREEN",
-            messaging_limit_tier: acc.messagingLimitTier || metadata.messagingLimitTier || "TIER_10K",
-            verified_name: acc.verifiedName || metadata.verifiedName || acc.name,
-            connected_at: acc.createdAt || (/* @__PURE__ */ new Date()).toISOString(),
-            short_account_id: shortId,
-            type,
-            name_review_status: nameReviewStatus,
-            business_verification_status: bizVerificationStatus,
-            calling
+    if (cacheService.isCircuitOpen("zernio")) {
+      const stale = await cacheService.get(cacheKey);
+      if (stale) return stale;
+    }
+    return await cacheService.fetchWithCoalescing(
+      cacheKey,
+      async () => {
+        try {
+          const url = new URL("https://zernio.com/api/v1/accounts");
+          url.searchParams.set("platform", "whatsapp");
+          url.searchParams.set("status", "connected");
+          if (profileId) url.searchParams.set("profileId", profileId);
+          const res = await fetch(url.toString(), {
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              "Content-Type": "application/json"
+            }
           });
+          cacheService.recordUpstreamStatus("zernio", res.status);
+          if (!res.ok) {
+            console.warn(`[Zernio listWhatsAppAccounts] Profile ${profileId} returned status ${res.status}. Scoped return empty.`);
+            return [];
+          }
+          const json = await res.json();
+          const accounts = json.accounts || json.data || [];
+          const validAccounts = [];
+          for (const acc of accounts) {
+            const accId = acc._id || acc.id;
+            const phoneNum = acc.display_phone_number || acc.phoneNumber || acc.phone || acc.username || acc.selectedPhoneNumber || "";
+            const cleanPhone = phoneNum.replace(/[^0-9]/g, "");
+            const isTombstonedAcc = accId ? await cacheService.get(`disconnected_wa_acc_${accId}`) : false;
+            const isTombstonedPhone = cleanPhone ? await cacheService.get(`disconnected_wa_phone_${cleanPhone}`) : false;
+            if (isTombstonedAcc || isTombstonedPhone) {
+              console.log(`[Zernio listWhatsAppAccounts] Skipping disconnected/tombstoned account ${accId} (${phoneNum})`);
+              continue;
+            }
+            if (acc.isActive === false || acc.enabled === false || acc.needsReconnection === true) {
+              continue;
+            }
+            const rawStatus = String(acc.status || "").toLowerCase();
+            if (rawStatus === "disconnected" || rawStatus === "inactive" || rawStatus === "disabled" || rawStatus === "revoked" || rawStatus === "deleted" || rawStatus === "unlinked") {
+              continue;
+            }
+            const metadata = acc.metadata || {};
+            const rawNameStatus = String(metadata.nameStatus || metadata.name_status || acc.name_status || "").toUpperCase();
+            let nameReviewStatus = "not_reviewed";
+            if (rawNameStatus.includes("APPROV")) nameReviewStatus = "approved";
+            else if (rawNameStatus.includes("PENDING") || rawNameStatus.includes("REVIEW")) nameReviewStatus = "in_review";
+            else if (rawNameStatus.includes("DECLIN") || rawNameStatus.includes("REJECT")) nameReviewStatus = "declined";
+            const rawBizStatus = String(metadata.businessVerificationStatus || metadata.business_verification_status || metadata.codeVerificationStatus || acc.business_verification_status || "").toUpperCase();
+            let bizVerificationStatus = "not_verified";
+            if (rawBizStatus.includes("VERIF") && !rawBizStatus.includes("NOT")) bizVerificationStatus = "verified";
+            else if (rawBizStatus.includes("PENDING") || rawBizStatus.includes("REVIEW")) bizVerificationStatus = "in_review";
+            const calling = metadata.calling === "On" || metadata.calling === true || acc.calling === "On" ? "On" : "Off";
+            const type = metadata.type || metadata.connectionType || acc.type || "Coexistence";
+            const hexMatch = (acc._id || acc.id || "").match(/([a-f0-9]{6})/i);
+            const shortId = hexMatch ? hexMatch[1].toLowerCase() : (acc._id || acc.id || "eca6e8").substring(0, 6);
+            validAccounts.push({
+              id: acc._id || acc.id,
+              platform: "whatsapp",
+              name: acc.name || acc.username || "WhatsApp Business Account",
+              phone_number: phoneNum,
+              phone_number_id: acc.phoneNumberId || acc.id,
+              waba_id: acc.wabaId,
+              status: "connected",
+              mode: "production",
+              quality_rating: acc.qualityRating || metadata.qualityRating || "GREEN",
+              messaging_limit_tier: acc.messagingLimitTier || metadata.messagingLimitTier || "TIER_10K",
+              verified_name: acc.verifiedName || metadata.verifiedName || acc.name,
+              connected_at: acc.createdAt || (/* @__PURE__ */ new Date()).toISOString(),
+              short_account_id: shortId,
+              type,
+              name_review_status: nameReviewStatus,
+              business_verification_status: bizVerificationStatus,
+              calling
+            });
+          }
+          return validAccounts;
+        } catch (err) {
+          console.warn("[Zernio SDK listWhatsAppAccounts Notice]:", err.message);
+          return [];
         }
-        await cacheService.set(cacheKey, validAccounts, 45);
-        return validAccounts;
-      }
-    } catch (err) {
-      console.warn("[Zernio SDK listWhatsAppAccounts Notice]:", err.message);
-    }
-    return [];
+      },
+      CACHE_TTL.ACCOUNT
+    );
   }
   /**
    * Disconnect and remove a connected WhatsApp account from Zernio API
@@ -1130,38 +1293,54 @@ var ZernioWhatsAppService = class _ZernioWhatsAppService {
       };
     }
     const healthCacheKey = `zernio_health_${cleanAccId}`;
-    if (!force) {
-      const cached = await cacheService.get(healthCacheKey);
-      if (cached) return cached;
+    if (force) {
+      await cacheService.del(healthCacheKey);
     }
-    try {
-      const res = await fetch(`https://zernio.com/api/v1/accounts/${encodeURIComponent(cleanAccId)}/health`, {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json"
+    if (cacheService.isCircuitOpen("zernio")) {
+      const stale = await cacheService.get(healthCacheKey);
+      if (stale) return stale;
+    }
+    return await cacheService.fetchWithCoalescing(
+      healthCacheKey,
+      async () => {
+        try {
+          const res = await fetch(`https://zernio.com/api/v1/accounts/${encodeURIComponent(cleanAccId)}/health`, {
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              "Content-Type": "application/json"
+            }
+          });
+          cacheService.recordUpstreamStatus("zernio", res.status);
+          if (res.ok) {
+            const data = await res.json();
+            const issues = Array.isArray(data.issues) ? data.issues : [];
+            const hasPayment = issues.some((i) => i.toLowerCase().includes("payment"));
+            const paymentMsg = hasPayment ? issues.find((i) => i.toLowerCase().includes("payment")) || "There is an error with the payment method. This will prevent sending template messages until updated in Meta Business Suite." : void 0;
+            const canPost = Boolean(data.permissions?.canPost !== false && data.status !== "error" && !hasPayment);
+            return {
+              status: data.status || (hasPayment ? "error" : "healthy"),
+              canStartConversations: canPost,
+              issues,
+              recommendations: Array.isArray(data.recommendations) ? data.recommendations : [],
+              tokenValid: Boolean(data.tokenStatus?.valid !== false),
+              paymentIssue: hasPayment,
+              paymentErrorMessage: paymentMsg
+            };
+          }
+        } catch (err) {
+          console.warn("[getAccountHealth warning]:", err.message);
         }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const issues = Array.isArray(data.issues) ? data.issues : [];
-        const hasPayment = issues.some((i) => i.toLowerCase().includes("payment"));
-        const paymentMsg = hasPayment ? issues.find((i) => i.toLowerCase().includes("payment")) || "There is an error with the payment method. This will prevent sending template messages until updated in Meta Business Suite." : void 0;
-        const canPost = Boolean(data.permissions?.canPost !== false && data.status !== "error" && !hasPayment);
-        const result = {
-          status: data.status || (hasPayment ? "error" : "healthy"),
-          canStartConversations: canPost,
-          issues,
-          recommendations: Array.isArray(data.recommendations) ? data.recommendations : [],
-          tokenValid: Boolean(data.tokenStatus?.valid !== false),
-          paymentIssue: hasPayment,
-          paymentErrorMessage: paymentMsg
+        return {
+          status: "healthy",
+          canStartConversations: true,
+          issues: [],
+          recommendations: [],
+          tokenValid: true,
+          paymentIssue: false
         };
-        await cacheService.set(healthCacheKey, result, 60);
-        return result;
-      }
-    } catch (err) {
-      console.warn("[getAccountHealth warning]:", err.message);
-    }
+      },
+      CACHE_TTL.HEALTH
+    );
     return {
       status: "healthy",
       canStartConversations: true,
@@ -1643,19 +1822,32 @@ var ZernioWhatsAppService = class _ZernioWhatsAppService {
     if (filters?.status) params.append("status", filters.status);
     if (filters?.name) params.append("name", filters.name);
     if (filters?.language) params.append("language", filters.language);
-    const res = await fetch(`https://zernio.com/api/v1/whatsapp/templates?${params.toString()}`, {
-      headers: {
-        Authorization: `Bearer ${apiKey}`
-      }
-    });
-    if (!res.ok) {
-      const err = await res.text().catch(() => "");
-      console.warn(`[getWhatsAppTemplates error ${res.status}]:`, err);
-      return { success: false, templates: [] };
-    }
-    const data = await res.json().catch(() => ({}));
-    const templates = Array.isArray(data.templates) ? data.templates : Array.isArray(data) ? data : [];
-    return { success: true, templates };
+    const cacheKey = `zernio_templates_${accountId}_${filters?.status || "all"}_${filters?.language || "all"}`;
+    return await cacheService.fetchWithCoalescing(
+      cacheKey,
+      async () => {
+        try {
+          const res = await fetch(`https://zernio.com/api/v1/whatsapp/templates?${params.toString()}`, {
+            headers: {
+              Authorization: `Bearer ${apiKey}`
+            }
+          });
+          cacheService.recordUpstreamStatus("zernio", res.status);
+          if (!res.ok) {
+            const err = await res.text().catch(() => "");
+            console.warn(`[getWhatsAppTemplates error ${res.status}]:`, err);
+            return { success: false, templates: [] };
+          }
+          const data = await res.json().catch(() => ({}));
+          const templates = Array.isArray(data.templates) ? data.templates : Array.isArray(data) ? data : [];
+          return { success: true, templates };
+        } catch (err) {
+          console.warn("[getWhatsAppTemplates exception]:", err.message);
+          return { success: false, templates: [] };
+        }
+      },
+      CACHE_TTL.TEMPLATES
+    );
   }
   /**
    * Fetch a single template by name or ID
@@ -1755,41 +1947,71 @@ var ZernioWhatsAppService = class _ZernioWhatsAppService {
   /**
    * List WhatsApp Flows under an account
    */
-  static async listWhatsAppFlows(accountId) {
+  static async listWhatsAppFlows(accountId, forceRefresh = false) {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if (!apiKey) return [];
-    try {
-      const res = await fetch(`https://zernio.com/api/v1/whatsapp/flows?accountId=${encodeURIComponent(accountId)}`, {
-        headers: { Authorization: `Bearer ${apiKey}` }
-      });
-      if (!res.ok) {
-        const err = await res.text().catch(() => "");
-        console.warn(`[listWhatsAppFlows error ${res.status}]:`, err);
-        return [];
-      }
-      const data = await res.json().catch(() => ({}));
-      return Array.isArray(data.data) ? data.data : Array.isArray(data.flows) ? data.flows : [];
-    } catch (e) {
-      console.warn("[listWhatsAppFlows exception]:", e.message);
-      return [];
+    const cacheKey = `zernio_flows_${accountId}`;
+    if (forceRefresh) {
+      await cacheService.del(cacheKey);
     }
+    if (cacheService.isCircuitOpen("zernio")) {
+      const stale = await cacheService.get(cacheKey);
+      if (stale) return stale;
+    }
+    return await cacheService.fetchWithCoalescing(
+      cacheKey,
+      async () => {
+        try {
+          const res = await fetch(`https://zernio.com/api/v1/whatsapp/flows?accountId=${encodeURIComponent(accountId)}`, {
+            headers: { Authorization: `Bearer ${apiKey}` }
+          });
+          cacheService.recordUpstreamStatus("zernio", res.status);
+          if (!res.ok) {
+            const err = await res.text().catch(() => "");
+            console.warn(`[listWhatsAppFlows error ${res.status}]:`, err);
+            return [];
+          }
+          const data = await res.json().catch(() => ({}));
+          return Array.isArray(data.data) ? data.data : Array.isArray(data.flows) ? data.flows : [];
+        } catch (e) {
+          console.warn("[listWhatsAppFlows exception]:", e.message);
+          return [];
+        }
+      },
+      CACHE_TTL.FLOWS
+    );
   }
   /**
    * Get single flow details and definition
    */
-  static async getWhatsAppFlow(flowId, accountId) {
+  static async getWhatsAppFlow(flowId, accountId, forceRefresh = false) {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if (!apiKey) return null;
-    try {
-      const res = await fetch(`https://zernio.com/api/v1/whatsapp/flows/${encodeURIComponent(flowId)}?accountId=${encodeURIComponent(accountId)}`, {
-        headers: { Authorization: `Bearer ${apiKey}` }
-      });
-      if (!res.ok) return null;
-      const data = await res.json().catch(() => null);
-      return data?.flow || data;
-    } catch {
-      return null;
+    const cacheKey = `zernio_flow_${accountId}_${flowId}`;
+    if (forceRefresh) {
+      await cacheService.del(cacheKey);
     }
+    if (cacheService.isCircuitOpen("zernio")) {
+      const stale = await cacheService.get(cacheKey);
+      if (stale) return stale;
+    }
+    return await cacheService.fetchWithCoalescing(
+      cacheKey,
+      async () => {
+        try {
+          const res = await fetch(`https://zernio.com/api/v1/whatsapp/flows/${encodeURIComponent(flowId)}?accountId=${encodeURIComponent(accountId)}`, {
+            headers: { Authorization: `Bearer ${apiKey}` }
+          });
+          cacheService.recordUpstreamStatus("zernio", res.status);
+          if (!res.ok) return null;
+          const data = await res.json().catch(() => null);
+          return data?.flow || data;
+        } catch {
+          return null;
+        }
+      },
+      CACHE_TTL.FLOWS
+    );
   }
   /**
    * Create a new WhatsApp Flow (Step 1)
@@ -1827,6 +2049,7 @@ var ZernioWhatsAppService = class _ZernioWhatsAppService {
           error: data.message || data.error || `HTTP ${res.status} error creating flow`
         };
       }
+      await cacheService.del(`zernio_flows_${params.accountId}`);
       return { success: true, flow: data.flow || data };
     } catch (e) {
       return { success: false, error: e.message || "Error creating WhatsApp flow" };
@@ -1861,6 +2084,8 @@ var ZernioWhatsAppService = class _ZernioWhatsAppService {
           error: data.message || data.error || `HTTP ${res.status} uploading Flow JSON`
         };
       }
+      await cacheService.del(`zernio_flow_${accountId}_${flowId}`);
+      await cacheService.del(`zernio_flows_${accountId}`);
       return {
         success: data.success ?? true,
         validation_errors: data.validation_errors || []
@@ -1893,6 +2118,8 @@ var ZernioWhatsAppService = class _ZernioWhatsAppService {
           error: data.message || data.error || `HTTP ${res.status} publishing flow`
         };
       }
+      await cacheService.del(`zernio_flow_${accountId}_${flowId}`);
+      await cacheService.del(`zernio_flows_${accountId}`);
       return { success: data.success ?? true };
     } catch (e) {
       return { success: false, error: e.message || "Error publishing flow" };
@@ -2037,6 +2264,10 @@ var ZernioWhatsAppService = class _ZernioWhatsAppService {
         },
         body: JSON.stringify({ accountId })
       });
+      if (res.ok) {
+        await cacheService.del(`zernio_flow_${accountId}_${flowId}`);
+        await cacheService.del(`zernio_flows_${accountId}`);
+      }
       return res.ok;
     } catch {
       return false;
@@ -2054,6 +2285,10 @@ var ZernioWhatsAppService = class _ZernioWhatsAppService {
         method: "DELETE",
         headers: { Authorization: `Bearer ${apiKey}` }
       });
+      if (res.ok && accountId) {
+        await cacheService.del(`zernio_flow_${accountId}_${flowId}`);
+        await cacheService.del(`zernio_flows_${accountId}`);
+      }
       return res.ok;
     } catch {
       return false;
@@ -2187,6 +2422,11 @@ var DEFAULT_CONNECTORS = [
     }
   }
 ];
+var getDefaultConnectors = () => JSON.parse(JSON.stringify(DEFAULT_CONNECTORS));
+var getDefaultBusinessInfo = () => JSON.parse(JSON.stringify(DEFAULT_BUSINESS_INFO));
+var getDefaultSkills = () => JSON.parse(JSON.stringify(DEFAULT_SKILLS));
+var getDefaultSettings = () => JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+var getDefaultBudget = () => JSON.parse(JSON.stringify(DEFAULT_BUDGET));
 var ZernioBusinessAgentService = class {
   static getApiKey() {
     return process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY || "";
@@ -2242,7 +2482,7 @@ var ZernioBusinessAgentService = class {
         return c;
       });
     } else {
-      state.connectors = DEFAULT_CONNECTORS;
+      state.connectors = getDefaultConnectors();
     }
     if (Array.isArray(state.websites)) {
       state.websites = state.websites.filter((w) => !w.url?.includes("rockyt.io"));
@@ -2271,81 +2511,86 @@ var ZernioBusinessAgentService = class {
    */
   static async getFullAgentState(accountId, profileId) {
     const cacheKey = `meta_business_agent_${accountId}`;
-    const cached = await cacheService.get(cacheKey);
-    if (cached) return this.sanitizeState(cached);
-    const apiKey = this.getApiKey();
-    if (apiKey && accountId && accountId !== "acc_primary" && !accountId.startsWith("acc_")) {
-      try {
-        const url = `https://zernio.com/api/v1/accounts/${accountId}/business-agent`;
-        const res = await fetch(url, {
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "X-API-Version": "2.0.0",
-            "Content-Type": "application/json"
+    if (cacheService.isCircuitOpen("zernio")) {
+      const stale = await cacheService.get(cacheKey);
+      if (stale) return this.sanitizeState(stale);
+    }
+    return await cacheService.fetchWithCoalescing(
+      cacheKey,
+      async () => {
+        const apiKey = this.getApiKey();
+        if (apiKey && accountId && accountId !== "acc_primary" && !accountId.startsWith("acc_")) {
+          try {
+            const url = `https://zernio.com/api/v1/accounts/${accountId}/business-agent`;
+            const res = await fetch(url, {
+              headers: {
+                Authorization: `Bearer ${apiKey}`,
+                "X-API-Version": "2.0.0",
+                "Content-Type": "application/json"
+              }
+            });
+            cacheService.recordUpstreamStatus("zernio", res.status);
+            if (res.ok) {
+              const zernioData = await res.json();
+              const state = {
+                account_id: accountId,
+                status: zernioData.status || (zernioData.agent_id ? "ready" : "unprovisioned"),
+                eligible: zernioData.eligible !== false,
+                eligibility: await this.checkEligibility(accountId, profileId),
+                manual_steps: Array.isArray(zernioData.manualSteps) ? zernioData.manualSteps : [],
+                unverified_steps: Array.isArray(zernioData.unverifiedSteps) ? zernioData.unverifiedSteps : ["attach_payment_method"],
+                business_info: zernioData.business_information || getDefaultBusinessInfo(),
+                faqs: zernioData.faqs || [],
+                websites: zernioData.websites || [],
+                files: zernioData.files || [],
+                skills: zernioData.skills || getDefaultSkills(),
+                connectors: zernioData.connectors || getDefaultConnectors(),
+                settings: zernioData.settings || getDefaultSettings(),
+                allowlist: zernioData.allowlist || [],
+                budget: zernioData.budget || getDefaultBudget()
+              };
+              return this.sanitizeState(state);
+            }
+          } catch (err) {
+            console.warn("[ZernioBusinessAgentService.getFullAgentState warning]:", err.message);
           }
-        });
-        if (res.ok) {
-          const zernioData = await res.json();
-          const state = {
-            account_id: accountId,
-            status: zernioData.status || (zernioData.agent_id ? "ready" : "unprovisioned"),
-            eligible: zernioData.eligible !== false,
-            eligibility: await this.checkEligibility(accountId, profileId),
-            manual_steps: Array.isArray(zernioData.manualSteps) ? zernioData.manualSteps : [],
-            unverified_steps: Array.isArray(zernioData.unverifiedSteps) ? zernioData.unverifiedSteps : ["attach_payment_method"],
-            business_info: zernioData.business_information || DEFAULT_BUSINESS_INFO,
-            faqs: zernioData.faqs || [],
-            websites: zernioData.websites || [],
-            files: zernioData.files || [],
-            skills: zernioData.skills || DEFAULT_SKILLS,
-            connectors: zernioData.connectors || DEFAULT_CONNECTORS,
-            settings: zernioData.settings || DEFAULT_SETTINGS,
-            allowlist: zernioData.allowlist || [],
-            budget: zernioData.budget || DEFAULT_BUDGET
-          };
-          const sanitized = this.sanitizeState(state);
-          await cacheService.set(cacheKey, sanitized, 30);
-          return sanitized;
         }
-      } catch (err) {
-        console.warn("[ZernioBusinessAgentService.getFullAgentState warning]:", err.message);
-      }
-    }
-    try {
-      const supabase = getBackendSupabaseClient();
-      if (supabase) {
-        const { data } = await supabase.from("business_agent_configs").select("*").eq("account_id", accountId).maybeSingle();
-        if (data && data.state) {
-          const sanitized = this.sanitizeState(data.state);
-          await cacheService.set(cacheKey, sanitized, 30);
-          return sanitized;
+        try {
+          const supabase = getBackendSupabaseClient();
+          if (supabase) {
+            const { data } = await supabase.from("business_agent_configs").select("*").eq("account_id", accountId).maybeSingle();
+            if (data && data.state) {
+              return this.sanitizeState(data.state);
+            }
+          }
+        } catch {
         }
-      }
-    } catch {
-    }
-    if (inMemoryAgentState.has(accountId)) {
-      return this.sanitizeState(inMemoryAgentState.get(accountId));
-    }
-    const eligibility = await this.checkEligibility(accountId, profileId);
-    const defaultState = {
-      account_id: accountId,
-      status: "unprovisioned",
-      eligible: eligibility.eligible,
-      eligibility,
-      manual_steps: ["business_agent_terms_not_accepted"],
-      unverified_steps: ["attach_payment_method"],
-      business_info: DEFAULT_BUSINESS_INFO,
-      faqs: [],
-      websites: [],
-      files: [],
-      skills: DEFAULT_SKILLS,
-      connectors: DEFAULT_CONNECTORS,
-      settings: DEFAULT_SETTINGS,
-      allowlist: [],
-      budget: DEFAULT_BUDGET
-    };
-    inMemoryAgentState.set(accountId, defaultState);
-    return defaultState;
+        if (inMemoryAgentState.has(accountId)) {
+          return this.sanitizeState(inMemoryAgentState.get(accountId));
+        }
+        const eligibility = await this.checkEligibility(accountId, profileId);
+        const defaultState = {
+          account_id: accountId,
+          status: "unprovisioned",
+          eligible: eligibility.eligible,
+          eligibility,
+          manual_steps: ["business_agent_terms_not_accepted"],
+          unverified_steps: ["attach_payment_method"],
+          business_info: getDefaultBusinessInfo(),
+          faqs: [],
+          websites: [],
+          files: [],
+          skills: getDefaultSkills(),
+          connectors: getDefaultConnectors(),
+          settings: getDefaultSettings(),
+          allowlist: [],
+          budget: getDefaultBudget()
+        };
+        inMemoryAgentState.set(accountId, defaultState);
+        return defaultState;
+      },
+      CACHE_TTL.BUSINESS_AGENT
+    );
   }
   /**
    * Check phone number eligibility per Meta's requirements
@@ -2755,7 +3000,7 @@ var ZernioBusinessAgentService = class {
     const existing = inMemoryAgentState.get(accountId) || await this.getFullAgentState(accountId);
     const merged = this.sanitizeState({ ...existing, ...state });
     inMemoryAgentState.set(accountId, merged);
-    await cacheService.set(`meta_business_agent_${accountId}`, merged, 60);
+    await cacheService.set(`meta_business_agent_${accountId}`, merged, CACHE_TTL.BUSINESS_AGENT);
     try {
       const supabase = getBackendSupabaseClient();
       if (supabase) {
@@ -3562,6 +3807,10 @@ whatsappRouter.post("/api/webhooks/zernio", async (req, res) => {
               reason
             }
           });
+          await cacheService.del(`zernio_templates_${tmpl.accountId || "all"}`);
+          if (localTmpl?.user_id) {
+            await cacheService.del(cacheService.getUserKey(localTmpl.user_id, "templates"));
+          }
         } catch (e) {
           console.warn("[webhook template.status_updated error]:", e.message);
         }
@@ -3586,11 +3835,44 @@ whatsappRouter.post("/api/webhooks/zernio", async (req, res) => {
             flowId,
             status
           });
+          await cacheService.del(`zernio_flow_${flowPayload.accountId || ""}_${flowId}`);
+          if (flowPayload.accountId) {
+            await cacheService.del(`zernio_flows_${flowPayload.accountId}`);
+          }
         } catch (e) {
           console.warn("[webhook flow.status_updated error]:", e.message);
         }
       }
       return res.status(200).json({ ok: true, flow_updated: true });
+    }
+    if (eventType === "whatsapp.account.status_updated" || eventType === "whatsapp.phone_number_quality_update" || eventType === "account.connected") {
+      const accPayload = event.account || event.data?.account || {};
+      const accountId = accPayload.id || event.accountId || event.account_id;
+      const qualityRating = accPayload.qualityRating || accPayload.quality_rating;
+      const status = accPayload.status || "connected";
+      if (accountId) {
+        try {
+          const supabase = getBackendSupabaseClient();
+          if (supabase) {
+            const updateData = { updated_at: (/* @__PURE__ */ new Date()).toISOString() };
+            if (qualityRating) updateData.quality_rating = qualityRating;
+            if (status) updateData.status = status;
+            await supabase.from("whatsapp_accounts").update(updateData).eq("id", accountId);
+          }
+          const cleanAccId = String(accountId).replace(/^acc_/, "").trim();
+          await cacheService.del(`zernio_health_${cleanAccId}`);
+          await cacheService.del(`zernio_wa_accounts_all`);
+          broadcastWhatsAppEvent({
+            event: "whatsapp.account.status_updated",
+            accountId,
+            status,
+            qualityRating
+          });
+        } catch (e) {
+          console.warn("[webhook account.status_updated error]:", e.message);
+        }
+      }
+      return res.status(200).json({ ok: true, account_updated: true });
     }
     const msg = event.message || event.data?.message || {};
     const metadata = event.metadata || {};
@@ -4273,101 +4555,104 @@ whatsappRouter.get("/api/whatsapp/templates", async (req, res) => {
     const { userId, profileId } = await resolveUserProfileId(req);
     const forceRefresh = req.query.refresh === "true" || req.query.sync === "true";
     const cacheKey = cacheService.getUserKey(userId, "templates");
-    if (!forceRefresh) {
-      const cached = await cacheService.get(cacheKey);
-      if (cached && Array.isArray(cached) && cached.length > 0) {
-        return res.json({ data: cached });
-      }
+    if (forceRefresh) {
+      await cacheService.del(cacheKey);
     }
-    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
-    const supabase = getBackendSupabaseClient();
-    let dbUser = null;
-    if (supabase) {
-      try {
-        if (userId.includes("@")) {
-          const { data: prof } = await supabase.from("profiles").select("id, email, zernio_profile_id").eq("email", userId.toLowerCase()).maybeSingle();
-          if (prof) dbUser = prof;
-        } else {
-          const { data: prof } = await supabase.from("profiles").select("id, email, zernio_profile_id").eq("id", userId).maybeSingle();
-          if (prof) dbUser = prof;
-        }
-      } catch {
-      }
-    }
-    const targetUserId = dbUser?.id || userId;
-    const targetProfileId = dbUser?.zernio_profile_id || profileId;
-    let isWhatsAppConnected = false;
-    if (supabase && targetUserId) {
-      try {
-        const { data: conn } = await supabase.from("connected_accounts").select("id, status").eq("user_id", targetUserId).ilike("platform", "%whatsapp%").eq("status", "connected").maybeSingle();
-        if (conn && conn.status === "connected") {
-          isWhatsAppConnected = true;
-        }
-      } catch {
-      }
-    }
-    if (defaultAccountId) {
-      isWhatsAppConnected = true;
-    }
-    let dbTemplates = [];
-    if (supabase && targetUserId) {
-      const { data, error } = await supabase.from("whatsapp_templates").select("*").eq("user_id", targetUserId).order("created_at", { ascending: false });
-      if (!error && Array.isArray(data)) {
-        dbTemplates = data.map((t) => ({
-          id: t.id,
-          name: t.name,
-          category: t.category,
-          language: t.language,
-          status: t.status,
-          components: t.components || [],
-          account_id: t.account_id,
-          header_type: t.header_type,
-          media_url: t.media_url,
-          rejected_reason: t.rejected_reason,
-          message_send_ttl_seconds: t.message_send_ttl_seconds,
-          created_at: t.created_at,
-          last_updated: t.updated_at || t.created_at
-        }));
-      }
-    }
-    if (dbTemplates.length === 0) {
-      const mem = whatsappStore.getTemplates(targetUserId) || whatsappStore.getTemplates(userId);
-      if (Array.isArray(mem) && mem.length > 0) {
-        dbTemplates = mem;
-      }
-    }
-    if (dbTemplates.length > 0 && defaultAccountId) {
-      try {
-        const liveResult = await ZernioWhatsAppService.getWhatsAppTemplates(defaultAccountId);
-        if (liveResult.success && Array.isArray(liveResult.templates)) {
-          for (const userTmpl of dbTemplates) {
-            const match = liveResult.templates.find(
-              (lt) => lt.id && String(lt.id) === String(userTmpl.id) || lt.name && lt.name.toLowerCase() === userTmpl.name.toLowerCase() && (!userTmpl.language || lt.language === userTmpl.language)
-            );
-            if (match && match.status) {
-              userTmpl.status = match.status;
-              userTmpl.rejected_reason = match.rejected_reason || userTmpl.rejected_reason || null;
-              if (supabase) {
-                await supabase.from("whatsapp_templates").update({
-                  status: match.status,
-                  rejected_reason: match.rejected_reason || null,
-                  updated_at: (/* @__PURE__ */ new Date()).toISOString()
-                }).eq("user_id", targetUserId).eq("name", userTmpl.name);
-              }
+    const responseData = await cacheService.fetchWithCoalescing(
+      cacheKey,
+      async () => {
+        const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId, userId);
+        const supabase = getBackendSupabaseClient();
+        let dbUser = null;
+        if (supabase) {
+          try {
+            if (userId.includes("@")) {
+              const { data: prof } = await supabase.from("profiles").select("id, email, zernio_profile_id").eq("email", userId.toLowerCase()).maybeSingle();
+              if (prof) dbUser = prof;
+            } else {
+              const { data: prof } = await supabase.from("profiles").select("id, email, zernio_profile_id").eq("id", userId).maybeSingle();
+              if (prof) dbUser = prof;
             }
+          } catch {
           }
         }
-      } catch (syncErr) {
-        console.warn("[Zernio user templates status sync warning]:", syncErr.message);
-      }
-    }
-    await cacheService.set(cacheKey, dbTemplates, 60);
-    return res.json({
-      data: dbTemplates,
-      accountId: defaultAccountId || null,
-      accountConnected: isWhatsAppConnected,
-      profileId: targetProfileId
-    });
+        const targetUserId = dbUser?.id || userId;
+        const targetProfileId = dbUser?.zernio_profile_id || profileId;
+        let isWhatsAppConnected = false;
+        if (supabase && targetUserId) {
+          try {
+            const { data: conn } = await supabase.from("connected_accounts").select("id, status").eq("user_id", targetUserId).ilike("platform", "%whatsapp%").eq("status", "connected").maybeSingle();
+            if (conn && conn.status === "connected") {
+              isWhatsAppConnected = true;
+            }
+          } catch {
+          }
+        }
+        if (defaultAccountId) {
+          isWhatsAppConnected = true;
+        }
+        let dbTemplates = [];
+        if (supabase && targetUserId) {
+          const { data, error } = await supabase.from("whatsapp_templates").select("*").eq("user_id", targetUserId).order("created_at", { ascending: false });
+          if (!error && Array.isArray(data)) {
+            dbTemplates = data.map((t) => ({
+              id: t.id,
+              name: t.name,
+              category: t.category,
+              language: t.language,
+              status: t.status,
+              components: t.components || [],
+              account_id: t.account_id,
+              header_type: t.header_type,
+              media_url: t.media_url,
+              rejected_reason: t.rejected_reason,
+              message_send_ttl_seconds: t.message_send_ttl_seconds,
+              created_at: t.created_at,
+              last_updated: t.updated_at || t.created_at
+            }));
+          }
+        }
+        if (dbTemplates.length === 0) {
+          const mem = whatsappStore.getTemplates(targetUserId) || whatsappStore.getTemplates(userId);
+          if (Array.isArray(mem) && mem.length > 0) {
+            dbTemplates = mem;
+          }
+        }
+        if (dbTemplates.length > 0 && defaultAccountId) {
+          try {
+            const liveResult = await ZernioWhatsAppService.getWhatsAppTemplates(defaultAccountId);
+            if (liveResult.success && Array.isArray(liveResult.templates)) {
+              for (const userTmpl of dbTemplates) {
+                const match = liveResult.templates.find(
+                  (lt) => lt.id && String(lt.id) === String(userTmpl.id) || lt.name && lt.name.toLowerCase() === userTmpl.name.toLowerCase() && (!userTmpl.language || lt.language === userTmpl.language)
+                );
+                if (match && match.status) {
+                  userTmpl.status = match.status;
+                  userTmpl.rejected_reason = match.rejected_reason || userTmpl.rejected_reason || null;
+                  if (supabase) {
+                    await supabase.from("whatsapp_templates").update({
+                      status: match.status,
+                      rejected_reason: match.rejected_reason || null,
+                      updated_at: (/* @__PURE__ */ new Date()).toISOString()
+                    }).eq("user_id", targetUserId).eq("name", userTmpl.name);
+                  }
+                }
+              }
+            }
+          } catch (syncErr) {
+            console.warn("[Zernio user templates status sync warning]:", syncErr.message);
+          }
+        }
+        return {
+          data: dbTemplates,
+          accountId: defaultAccountId || null,
+          accountConnected: isWhatsAppConnected,
+          profileId: targetProfileId
+        };
+      },
+      CACHE_TTL.TEMPLATES
+    );
+    return res.json(responseData);
   } catch (err) {
     console.error("[GET /api/whatsapp/templates error]:", err);
     return res.status(500).json({ error: err.message || "Failed to fetch templates" });
@@ -5379,91 +5664,103 @@ function generateStarterFlowJson(name, category) {
 whatsappRouter.get("/api/whatsapp/flows", async (req, res) => {
   try {
     const { userId, profileId } = await resolveUserProfileId(req);
-    const supabase = getBackendSupabaseClient();
-    let targetUserId = userId;
-    if (supabase) {
-      try {
-        if (userId && userId.includes("@")) {
-          const { data: prof } = await supabase.from("profiles").select("id, email, zernio_profile_id").eq("email", userId.toLowerCase()).maybeSingle();
-          if (prof?.id) targetUserId = prof.id;
-        } else if (userId) {
-          const { data: prof } = await supabase.from("profiles").select("id, email, zernio_profile_id").eq("id", userId).maybeSingle();
-          if (prof?.id) targetUserId = prof.id;
+    const force = req.query.refresh === "true" || req.query.sync === "true";
+    const cacheKey = cacheService.getUserKey(userId, "flows");
+    if (force) {
+      await cacheService.del(cacheKey);
+    }
+    const result = await cacheService.fetchWithCoalescing(
+      cacheKey,
+      async () => {
+        const supabase = getBackendSupabaseClient();
+        let targetUserId = userId;
+        if (supabase) {
+          try {
+            if (userId && userId.includes("@")) {
+              const { data: prof } = await supabase.from("profiles").select("id, email, zernio_profile_id").eq("email", userId.toLowerCase()).maybeSingle();
+              if (prof?.id) targetUserId = prof.id;
+            } else if (userId) {
+              const { data: prof } = await supabase.from("profiles").select("id, email, zernio_profile_id").eq("id", userId).maybeSingle();
+              if (prof?.id) targetUserId = prof.id;
+            }
+          } catch {
+          }
         }
-      } catch {
-      }
-    }
-    let resolvedAccountId = req.query.accountId || void 0;
-    if (!resolvedAccountId && supabase) {
-      try {
-        const { data: flowAcc } = await supabase.from("whatsapp_flows").select("account_id").not("account_id", "is", null).neq("account_id", "acc_primary").order("created_at", { ascending: false }).limit(1).maybeSingle();
-        if (flowAcc?.account_id) {
-          resolvedAccountId = flowAcc.account_id;
+        let resolvedAccountId = req.query.accountId || void 0;
+        if (!resolvedAccountId && supabase) {
+          try {
+            const { data: flowAcc } = await supabase.from("whatsapp_flows").select("account_id").not("account_id", "is", null).neq("account_id", "acc_primary").order("created_at", { ascending: false }).limit(1).maybeSingle();
+            if (flowAcc?.account_id) {
+              resolvedAccountId = flowAcc.account_id;
+            }
+          } catch {
+          }
         }
-      } catch {
-      }
-    }
-    if (!resolvedAccountId) {
-      resolvedAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
-    }
-    if (resolvedAccountId) {
-      ZernioWhatsAppService.setCachedAccountId(resolvedAccountId);
-    }
-    if (resolvedAccountId && resolvedAccountId !== "acc_primary") {
-      try {
-        const liveFlows = await ZernioWhatsAppService.listWhatsAppFlows(resolvedAccountId);
-        if (Array.isArray(liveFlows) && liveFlows.length > 0 && supabase) {
-          for (const lf of liveFlows) {
-            const flowId = String(lf.id || lf._id);
-            const { data: existingFlow } = await supabase.from("whatsapp_flows").select("flow_json, lineage_id, version").eq("id", flowId).maybeSingle();
-            let finalJson = existingFlow?.flow_json;
-            if (!finalJson) {
-              const detailed = await ZernioWhatsAppService.getWhatsAppFlow(flowId, resolvedAccountId);
-              if (detailed?.flow_json) {
-                finalJson = detailed.flow_json;
-              } else {
-                finalJson = generateStarterFlowJson(lf.name || "flow", lf.categories && lf.categories[0] || "LEAD_GENERATION");
+        if (!resolvedAccountId) {
+          resolvedAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId, userId);
+        }
+        if (resolvedAccountId) {
+          ZernioWhatsAppService.setCachedAccountId(resolvedAccountId, userId, profileId);
+        }
+        if (resolvedAccountId && resolvedAccountId !== "acc_primary") {
+          try {
+            const liveFlows = await ZernioWhatsAppService.listWhatsAppFlows(resolvedAccountId);
+            if (Array.isArray(liveFlows) && liveFlows.length > 0 && supabase) {
+              for (const lf of liveFlows) {
+                const flowId = String(lf.id || lf._id);
+                const { data: existingFlow } = await supabase.from("whatsapp_flows").select("flow_json, lineage_id, version").eq("id", flowId).maybeSingle();
+                let finalJson = existingFlow?.flow_json;
+                if (!finalJson) {
+                  const detailed = await ZernioWhatsAppService.getWhatsAppFlow(flowId, resolvedAccountId);
+                  if (detailed?.flow_json) {
+                    finalJson = detailed.flow_json;
+                  } else {
+                    finalJson = generateStarterFlowJson(lf.name || "flow", lf.categories && lf.categories[0] || "LEAD_GENERATION");
+                  }
+                }
+                await supabase.from("whatsapp_flows").upsert({
+                  id: flowId,
+                  user_id: targetUserId,
+                  account_id: resolvedAccountId,
+                  name: lf.name || "whatsapp_flow",
+                  status: lf.status || "DRAFT",
+                  categories: lf.categories || ["LEAD_GENERATION"],
+                  version: lf.version || existingFlow?.version || 1,
+                  lineage_id: lf.lineageId || existingFlow?.lineage_id || flowId,
+                  validation_errors: lf.validation_errors || [],
+                  flow_json: cleanAndNormalizeMetaFlowJson(finalJson),
+                  updated_at: (/* @__PURE__ */ new Date()).toISOString()
+                }, { onConflict: "id" });
               }
             }
-            await supabase.from("whatsapp_flows").upsert({
-              id: flowId,
-              user_id: targetUserId,
-              account_id: resolvedAccountId,
-              name: lf.name || "whatsapp_flow",
-              status: lf.status || "DRAFT",
-              categories: lf.categories || ["LEAD_GENERATION"],
-              version: lf.version || existingFlow?.version || 1,
-              lineage_id: lf.lineageId || existingFlow?.lineage_id || flowId,
-              validation_errors: lf.validation_errors || [],
-              flow_json: cleanAndNormalizeMetaFlowJson(finalJson),
-              updated_at: (/* @__PURE__ */ new Date()).toISOString()
-            }, { onConflict: "id" });
+          } catch (syncErr) {
+            console.warn("[Sync WhatsApp Flows warning]:", syncErr.message);
           }
         }
-      } catch (syncErr) {
-        console.warn("[Sync WhatsApp Flows warning]:", syncErr.message);
-      }
-    }
-    let flows = [];
-    if (supabase) {
-      try {
-        let query = supabase.from("whatsapp_flows").select("*").order("created_at", { ascending: false });
-        if (targetUserId && !targetUserId.includes("@")) {
-          if (resolvedAccountId) {
-            query = query.or(`user_id.eq.${targetUserId},account_id.eq.${resolvedAccountId}`);
-          } else {
-            query = query.eq("user_id", targetUserId);
+        let flows = [];
+        if (supabase) {
+          try {
+            let query = supabase.from("whatsapp_flows").select("*").order("created_at", { ascending: false });
+            if (targetUserId && !targetUserId.includes("@")) {
+              if (resolvedAccountId) {
+                query = query.or(`user_id.eq.${targetUserId},account_id.eq.${resolvedAccountId}`);
+              } else {
+                query = query.eq("user_id", targetUserId);
+              }
+            }
+            const { data, error } = await query;
+            if (!error && Array.isArray(data)) {
+              flows = data;
+            }
+          } catch (dbErr) {
+            console.warn("[Supabase whatsapp_flows fetch warning]:", dbErr.message);
           }
         }
-        const { data, error } = await query;
-        if (!error && Array.isArray(data)) {
-          flows = data;
-        }
-      } catch (dbErr) {
-        console.warn("[Supabase whatsapp_flows fetch warning]:", dbErr.message);
-      }
-    }
-    return res.json({ success: true, data: flows, count: flows.length, accountId: resolvedAccountId });
+        return { success: true, data: flows, count: flows.length, accountId: resolvedAccountId };
+      },
+      CACHE_TTL.FLOWS
+    );
+    return res.json(result);
   } catch (err) {
     console.error("[GET /api/whatsapp/flows error]:", err);
     return res.status(500).json({ error: err.message || "Failed to list WhatsApp flows" });
@@ -5574,6 +5871,7 @@ whatsappRouter.post("/api/whatsapp/flows", async (req, res) => {
         }
       }
     }
+    await cacheService.del(cacheService.getUserKey(userId, "flows"));
     return res.status(201).json({ success: true, flow: newRecord });
   } catch (err) {
     console.error("[POST /api/whatsapp/flows error]:", err);
@@ -5601,7 +5899,7 @@ whatsappRouter.put("/api/whatsapp/flows/:id/json", async (req, res) => {
   try {
     const { id } = req.params;
     const { flow_json, endpoint_uri, accountId: customAccountId } = req.body;
-    const { profileId } = await resolveUserProfileId(req);
+    const { profileId, userId } = await resolveUserProfileId(req);
     const defaultAccountId = customAccountId || await ZernioWhatsAppService.getDefaultAccountId(profileId) || "acc_primary";
     const supabase = getBackendSupabaseClient();
     if (!flow_json || typeof flow_json !== "object") {
@@ -5657,6 +5955,7 @@ whatsappRouter.put("/api/whatsapp/flows/:id/json", async (req, res) => {
       }
       await supabase.from("whatsapp_flows").update(updatePayload).eq("id", id);
     }
+    await cacheService.del(cacheService.getUserKey(userId, "flows"));
     if (allErrors.length > 0) {
       const firstMsg = allErrors[0].message || allErrors[0].error || "Flow JSON validation error";
       return res.status(400).json({
@@ -5680,8 +5979,8 @@ whatsappRouter.put("/api/whatsapp/flows/:id/json", async (req, res) => {
 whatsappRouter.post("/api/whatsapp/flows/:id/publish", async (req, res) => {
   try {
     const { id } = req.params;
-    const { profileId } = await resolveUserProfileId(req);
-    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || "acc_primary";
+    const { profileId, userId } = await resolveUserProfileId(req);
+    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId, userId) || "acc_primary";
     const supabase = getBackendSupabaseClient();
     if (supabase) {
       const { data: flow } = await supabase.from("whatsapp_flows").select("*").eq("id", id).maybeSingle();
@@ -5710,8 +6009,10 @@ whatsappRouter.post("/api/whatsapp/flows/:id/publish", async (req, res) => {
       if (updErr) {
         return res.status(500).json({ error: updErr.message });
       }
+      await cacheService.del(cacheService.getUserKey(userId, "flows"));
       return res.json({ success: true, flow: updated || { ...flow, status: "PUBLISHED" } });
     }
+    await cacheService.del(cacheService.getUserKey(userId, "flows"));
     return res.json({ success: true });
   } catch (err) {
     console.error("[POST /api/whatsapp/flows/:id/publish error]:", err);
@@ -5721,8 +6022,8 @@ whatsappRouter.post("/api/whatsapp/flows/:id/publish", async (req, res) => {
 whatsappRouter.post("/api/whatsapp/flows/:id/deprecate", async (req, res) => {
   try {
     const { id } = req.params;
-    const { profileId } = await resolveUserProfileId(req);
-    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || "acc_primary";
+    const { profileId, userId } = await resolveUserProfileId(req);
+    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId, userId) || "acc_primary";
     const supabase = getBackendSupabaseClient();
     let flowAccountId = defaultAccountId;
     if (supabase) {
@@ -5733,6 +6034,7 @@ whatsappRouter.post("/api/whatsapp/flows/:id/deprecate", async (req, res) => {
     if (supabase) {
       await supabase.from("whatsapp_flows").update({ status: "DEPRECATED", updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", id);
     }
+    await cacheService.del(cacheService.getUserKey(userId, "flows"));
     return res.json({ success: true });
   } catch (err) {
     console.error("[POST /api/whatsapp/flows/:id/deprecate error]:", err);
@@ -5742,8 +6044,8 @@ whatsappRouter.post("/api/whatsapp/flows/:id/deprecate", async (req, res) => {
 whatsappRouter.delete("/api/whatsapp/flows/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { profileId } = await resolveUserProfileId(req);
-    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || "acc_primary";
+    const { profileId, userId } = await resolveUserProfileId(req);
+    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId, userId) || "acc_primary";
     const supabase = getBackendSupabaseClient();
     let flowAccountId = defaultAccountId;
     if (supabase) {
@@ -5758,6 +6060,7 @@ whatsappRouter.delete("/api/whatsapp/flows/:id", async (req, res) => {
       await supabase.from("whatsapp_flow_responses").delete().eq("flow_id", id);
     }
     await ZernioWhatsAppService.deleteWhatsAppFlow(id, flowAccountId);
+    await cacheService.del(cacheService.getUserKey(userId, "flows"));
     return res.json({ success: true });
   } catch (err) {
     console.error("[DELETE /api/whatsapp/flows/:id error]:", err);
@@ -6099,56 +6402,61 @@ whatsappRouter.get("/api/whatsapp/flows/exchange", (_req, res) => {
 whatsappRouter.get("/api/whatsapp/campaigns/overview", async (req, res) => {
   try {
     const { userId } = await resolveUserProfileId(req);
+    const force = req.query.refresh === "true";
     const cacheKey = cacheService.getUserKey(userId, "campaigns_overview");
-    const cached = await cacheService.get(cacheKey);
-    if (cached) {
-      return res.json({ success: true, overview: cached, cached: true });
+    if (force) {
+      await cacheService.del(cacheKey);
     }
-    const supabase = getBackendSupabaseClient();
-    let dbCampaigns = [];
-    try {
-      const { data, error } = await supabase.from("whatsapp_campaigns").select("*").eq("user_id", userId);
-      if (!error && Array.isArray(data)) {
-        dbCampaigns = data;
-      }
-    } catch {
-    }
-    const storeCampaigns = whatsappStore.getBroadcasts(userId);
-    const allCampaignsMap = /* @__PURE__ */ new Map();
-    for (const c of dbCampaigns) allCampaignsMap.set(c.id, c);
-    for (const c of storeCampaigns) allCampaignsMap.set(c.id, c);
-    const campaigns = Array.from(allCampaignsMap.values());
-    const total_campaigns = campaigns.length;
-    const total_recipients = campaigns.reduce((acc, c) => acc + (Number(c.total_recipients) || 0), 0);
-    const sent = campaigns.reduce((acc, c) => acc + (Number(c.sent_count) || 0), 0);
-    const delivered = campaigns.reduce((acc, c) => acc + (Number(c.delivered_count) || 0), 0);
-    const read = campaigns.reduce((acc, c) => acc + (Number(c.read_count) || 0), 0);
-    const replied = campaigns.reduce((acc, c) => acc + (Number(c.replied_count) || 0), 0);
-    const failed = campaigns.reduce((acc, c) => acc + (Number(c.failed_count) || 0), 0);
-    const read_rate = sent > 0 ? Number((read / sent * 100).toFixed(1)) : 0;
-    const reply_rate = sent > 0 ? Number((replied / sent * 100).toFixed(1)) : 0;
-    const account = whatsappStore.getAccount(userId);
-    const isConnected = Boolean(account && account.status !== "disconnected");
-    const limitTotal = isConnected ? account?.messaging_limit_tier === "TIER_100K_DAILY" ? 1e5 : 250 : 0;
-    const overview = {
-      total_campaigns,
-      total_recipients,
-      sent,
-      delivered,
-      read,
-      replied,
-      failed,
-      read_rate,
-      reply_rate,
-      daily_limit: {
-        used: sent,
-        total: limitTotal,
-        tier: isConnected ? account?.messaging_limit_tier || "TIER_100K_DAILY" : "NOT_CONNECTED"
+    const overview = await cacheService.fetchWithCoalescing(
+      cacheKey,
+      async () => {
+        const supabase = getBackendSupabaseClient();
+        let dbCampaigns = [];
+        try {
+          const { data, error } = await supabase.from("whatsapp_campaigns").select("*").eq("user_id", userId);
+          if (!error && Array.isArray(data)) {
+            dbCampaigns = data;
+          }
+        } catch {
+        }
+        const storeCampaigns = whatsappStore.getBroadcasts(userId);
+        const allCampaignsMap = /* @__PURE__ */ new Map();
+        for (const c of dbCampaigns) allCampaignsMap.set(c.id, c);
+        for (const c of storeCampaigns) allCampaignsMap.set(c.id, c);
+        const campaigns = Array.from(allCampaignsMap.values());
+        const total_campaigns = campaigns.length;
+        const total_recipients = campaigns.reduce((acc, c) => acc + (Number(c.total_recipients) || 0), 0);
+        const sent = campaigns.reduce((acc, c) => acc + (Number(c.sent_count) || 0), 0);
+        const delivered = campaigns.reduce((acc, c) => acc + (Number(c.delivered_count) || 0), 0);
+        const read = campaigns.reduce((acc, c) => acc + (Number(c.read_count) || 0), 0);
+        const replied = campaigns.reduce((acc, c) => acc + (Number(c.replied_count) || 0), 0);
+        const failed = campaigns.reduce((acc, c) => acc + (Number(c.failed_count) || 0), 0);
+        const read_rate = sent > 0 ? Number((read / sent * 100).toFixed(1)) : 0;
+        const reply_rate = sent > 0 ? Number((replied / sent * 100).toFixed(1)) : 0;
+        const account = whatsappStore.getAccount(userId);
+        const isConnected = Boolean(account && account.status !== "disconnected");
+        const limitTotal = isConnected ? account?.messaging_limit_tier === "TIER_100K_DAILY" ? 1e5 : 250 : 0;
+        return {
+          total_campaigns,
+          total_recipients,
+          sent,
+          delivered,
+          read,
+          replied,
+          failed,
+          read_rate,
+          reply_rate,
+          daily_limit: {
+            used: sent,
+            total: limitTotal,
+            tier: isConnected ? account?.messaging_limit_tier || "TIER_100K_DAILY" : "NOT_CONNECTED"
+          },
+          consecutive_days: sent > 0 ? 1 : 0,
+          messaging_quality: isConnected ? account?.quality_rating || "GREEN" : "NOT_CONNECTED"
+        };
       },
-      consecutive_days: sent > 0 ? 1 : 0,
-      messaging_quality: isConnected ? account?.quality_rating || "GREEN" : "NOT_CONNECTED"
-    };
-    await cacheService.set(cacheKey, overview, 15);
+      CACHE_TTL.CAMPAIGNS
+    );
     return res.json({ success: true, overview });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -6157,26 +6465,31 @@ whatsappRouter.get("/api/whatsapp/campaigns/overview", async (req, res) => {
 whatsappRouter.get("/api/whatsapp/campaigns/scheduled", async (req, res) => {
   try {
     const { userId } = await resolveUserProfileId(req);
+    const force = req.query.refresh === "true";
     const cacheKey = cacheService.getUserKey(userId, "campaigns_scheduled");
-    const cached = await cacheService.get(cacheKey);
-    if (cached) {
-      return res.json({ success: true, data: cached, cached: true });
+    if (force) {
+      await cacheService.del(cacheKey);
     }
-    const supabase = getBackendSupabaseClient();
-    let scheduled = [];
-    try {
-      const { data, error } = await supabase.from("whatsapp_campaigns").select("*").eq("user_id", userId).in("status", ["scheduled", "draft"]).order("created_at", { ascending: false });
-      if (!error && Array.isArray(data)) {
-        scheduled = data;
-      }
-    } catch {
-    }
-    const storeBroadcasts = whatsappStore.getBroadcasts(userId).filter((b) => b.status === "scheduled");
-    const mergedMap = /* @__PURE__ */ new Map();
-    for (const item of scheduled) mergedMap.set(item.id, item);
-    for (const item of storeBroadcasts) mergedMap.set(item.id, item);
-    const result = Array.from(mergedMap.values());
-    await cacheService.set(cacheKey, result, 15);
+    const result = await cacheService.fetchWithCoalescing(
+      cacheKey,
+      async () => {
+        const supabase = getBackendSupabaseClient();
+        let scheduled = [];
+        try {
+          const { data, error } = await supabase.from("whatsapp_campaigns").select("*").eq("user_id", userId).in("status", ["scheduled", "draft"]).order("created_at", { ascending: false });
+          if (!error && Array.isArray(data)) {
+            scheduled = data;
+          }
+        } catch {
+        }
+        const storeBroadcasts = whatsappStore.getBroadcasts(userId).filter((b) => b.status === "scheduled");
+        const mergedMap = /* @__PURE__ */ new Map();
+        for (const item of scheduled) mergedMap.set(item.id, item);
+        for (const item of storeBroadcasts) mergedMap.set(item.id, item);
+        return Array.from(mergedMap.values());
+      },
+      CACHE_TTL.CAMPAIGNS
+    );
     return res.json({ success: true, data: result });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -6405,124 +6718,131 @@ whatsappRouter.get("/api/whatsapp/account", async (req, res) => {
     const { userId, profileId } = await resolveUserProfileId(req);
     const force = req.query.force === "true" || req.headers["x-force-refresh"] === "true";
     const cacheKey = cacheService.getUserKey(userId, "account");
-    if (!force) {
+    const rateCheck = cacheService.consumeRateLimit(userId, "account_poll", 1, 30, 0.5);
+    if (!rateCheck.allowed && !force) {
       const cached = await cacheService.get(cacheKey);
-      if (cached !== void 0 && cached !== null) {
-        if (cached.account && cached.account.status === "connected") {
-          return res.json({
-            connected: true,
-            account: cached.account,
-            sandbox: whatsappStore.getSandboxSession(userId) || null,
-            profileId,
-            cached: true
-          });
-        }
-        if (cached.account === null) {
-          return res.json({
-            connected: false,
-            account: null,
-            sandbox: whatsappStore.getSandboxSession(userId) || null,
-            profileId,
-            cached: true
-          });
-        }
+      if (cached) {
+        return res.json({
+          connected: Boolean(cached.account && cached.account.status === "connected"),
+          account: cached.account,
+          sandbox: whatsappStore.getSandboxSession(userId) || null,
+          profileId,
+          cached: true,
+          throttled: true
+        });
       }
-    } else {
+      res.setHeader("Retry-After", String(rateCheck.retryAfterSec || 2));
+      return res.status(429).json({
+        error: "Too Many Requests",
+        message: "Account polling rate limit exceeded. Please slow down requests.",
+        retryAfter: rateCheck.retryAfterSec
+      });
+    }
+    if (force) {
       await cacheService.invalidateUser(userId);
     }
-    let account = whatsappStore.getAccount(userId);
     const sandbox = whatsappStore.getSandboxSession(userId);
-    if (!account) {
-      try {
-        const supabase = getBackendSupabaseClient();
-        const { data: dbAcc } = await supabase.from("whatsapp_accounts").select("*").eq("user_id", userId).maybeSingle();
-        if (dbAcc) {
-          const cleanEmail = (req.headers["x-user-email"] || "").toLowerCase();
-          const isMoamen = cleanEmail.includes("moamen") || userId === "95248c75-a772-4b4f-9ec9-f3a5aba1f799";
-          if (dbAcc.phone_number?.includes("503102740") && !isMoamen) {
-            console.warn(`[GET /api/whatsapp/account] Purging leaked Moamen WhatsApp account from user ${userId} (${cleanEmail})`);
-            await supabase.from("whatsapp_accounts").delete().eq("id", dbAcc.id);
-          } else if (dbAcc.status === "disconnected") {
-            await supabase.from("whatsapp_accounts").delete().eq("id", dbAcc.id);
-          } else {
-            const isTombstoned = await cacheService.get(`disconnected_wa_acc_${dbAcc.id}`) || (dbAcc.phone_number ? await cacheService.get(`disconnected_wa_phone_${dbAcc.phone_number.replace(/[^0-9]/g, "")}`) : false);
-            if (isTombstoned) {
-              await supabase.from("whatsapp_accounts").delete().eq("id", dbAcc.id);
-            } else {
-              account = whatsappStore.setAccount({
-                id: dbAcc.id,
-                platform: dbAcc.platform || "whatsapp",
-                name: dbAcc.name || "Connected WhatsApp Account",
-                phone_number: dbAcc.phone_number,
-                phone_number_id: dbAcc.phone_number_id,
-                waba_id: dbAcc.waba_id,
-                status: "connected",
-                mode: dbAcc.mode || "production",
-                quality_rating: dbAcc.quality_rating || "GREEN",
-                messaging_limit_tier: dbAcc.messaging_limit_tier || "TIER_100K_DAILY",
-                verified_name: dbAcc.verified_name,
-                connected_at: dbAcc.connected_at
-              }, userId);
+    const resolved = await cacheService.fetchWithCoalescing(
+      cacheKey,
+      async () => {
+        let account = whatsappStore.getAccount(userId);
+        if (!account) {
+          try {
+            const supabase = getBackendSupabaseClient();
+            if (supabase) {
+              const { data: dbAcc } = await supabase.from("whatsapp_accounts").select("*").eq("user_id", userId).maybeSingle();
+              if (dbAcc) {
+                const cleanEmail = (req.headers["x-user-email"] || "").toLowerCase();
+                const isMoamen = cleanEmail.includes("moamen") || userId === "95248c75-a772-4b4f-9ec9-f3a5aba1f799";
+                if (dbAcc.phone_number?.includes("503102740") && !isMoamen) {
+                  console.warn(`[GET /api/whatsapp/account] Purging leaked Moamen WhatsApp account from user ${userId} (${cleanEmail})`);
+                  await supabase.from("whatsapp_accounts").delete().eq("id", dbAcc.id);
+                } else if (dbAcc.status === "disconnected") {
+                  await supabase.from("whatsapp_accounts").delete().eq("id", dbAcc.id);
+                } else {
+                  const isTombstoned = await cacheService.get(`disconnected_wa_acc_${dbAcc.id}`) || (dbAcc.phone_number ? await cacheService.get(`disconnected_wa_phone_${dbAcc.phone_number.replace(/[^0-9]/g, "")}`) : false);
+                  if (isTombstoned) {
+                    await supabase.from("whatsapp_accounts").delete().eq("id", dbAcc.id);
+                  } else {
+                    account = whatsappStore.setAccount({
+                      id: dbAcc.id,
+                      platform: dbAcc.platform || "whatsapp",
+                      name: dbAcc.name || "Connected WhatsApp Account",
+                      phone_number: dbAcc.phone_number,
+                      phone_number_id: dbAcc.phone_number_id,
+                      waba_id: dbAcc.waba_id,
+                      status: "connected",
+                      mode: dbAcc.mode || "production",
+                      quality_rating: dbAcc.quality_rating || "GREEN",
+                      messaging_limit_tier: dbAcc.messaging_limit_tier || "TIER_100K_DAILY",
+                      verified_name: dbAcc.verified_name,
+                      connected_at: dbAcc.connected_at
+                    }, userId);
+                  }
+                }
+              }
             }
+          } catch (dbErr) {
+            console.warn("[GET /api/whatsapp/account] Supabase lookup notice:", dbErr?.message);
           }
         }
-      } catch (dbErr) {
-        console.warn("[GET /api/whatsapp/account] Supabase lookup notice:", dbErr?.message);
-      }
-    }
-    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
-    if ((!account || force) && apiKey && apiKey !== "dummy_dev_key") {
-      const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId, force);
-      const activeAccounts = liveAccounts.filter((acc) => acc.status === "connected");
-      if (activeAccounts.length > 0) {
-        account = whatsappStore.setAccount(activeAccounts[0], userId);
-        await ZernioWhatsAppService.saveWhatsAppAccountToDb(userId, activeAccounts[0]);
-      } else {
-        account = null;
-        whatsappStore.disconnectAccount(userId);
-      }
-    }
-    if (account && account.id && account.status === "connected") {
-      try {
-        const health = await ZernioWhatsAppService.getAccountHealth(account.id, force);
-        account = {
-          ...account,
-          can_start_conversations: health.canStartConversations,
-          health_status: health.status,
-          payment_issue: health.paymentIssue,
-          payment_error_message: health.paymentErrorMessage,
-          issues: health.issues,
-          recommendations: health.recommendations
-        };
-        whatsappStore.setAccount(account, userId);
-      } catch (healthErr) {
-        console.warn("[GET /api/whatsapp/account health check notice]:", healthErr.message);
-      }
-    }
-    const isActuallyConnected = Boolean(account && account.status === "connected" && account.phone_number);
-    let enrichedAccount = null;
-    if (isActuallyConnected && account) {
-      const hexMatch = account.id ? account.id.match(/([a-f0-9]{6})/i) : null;
-      const shortId = hexMatch ? hexMatch[1].toLowerCase() : account.id.substring(0, 6);
-      enrichedAccount = {
-        ...account,
-        name: account.name || "WhatsApp Business",
-        phone_number: account.phone_number || "",
-        short_account_id: shortId,
-        type: account.type || "Coexistence",
-        name_review_status: account.name_review_status || "not_reviewed",
-        business_verification_status: account.business_verification_status || "not_verified",
-        calling: account.calling || "Off",
-        can_start_conversations: account.can_start_conversations ?? (account.payment_issue ? false : true),
-        health_status: account.health_status || (account.payment_issue ? "error" : "healthy"),
-        payment_issue: Boolean(account.payment_issue),
-        payment_error_message: account.payment_error_message || (account.payment_issue ? "There is an error with the payment method. This will prevent sending template messages until updated in Meta Business Suite." : void 0)
-      };
-    }
-    await cacheService.set(cacheKey, { account: enrichedAccount }, 45);
+        const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+        if ((!account || force) && apiKey && apiKey !== "dummy_dev_key") {
+          const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts(profileId, force);
+          const activeAccounts = liveAccounts.filter((acc) => acc.status === "connected");
+          if (activeAccounts.length > 0) {
+            account = whatsappStore.setAccount(activeAccounts[0], userId);
+            await ZernioWhatsAppService.saveWhatsAppAccountToDb(userId, activeAccounts[0]);
+          } else {
+            account = null;
+            whatsappStore.disconnectAccount(userId);
+          }
+        }
+        if (account && account.id && account.status === "connected") {
+          try {
+            const health = await ZernioWhatsAppService.getAccountHealth(account.id, force);
+            account = {
+              ...account,
+              can_start_conversations: health.canStartConversations,
+              health_status: health.status,
+              payment_issue: health.paymentIssue,
+              payment_error_message: health.paymentErrorMessage,
+              issues: health.issues,
+              recommendations: health.recommendations
+            };
+            whatsappStore.setAccount(account, userId);
+          } catch (healthErr) {
+            console.warn("[GET /api/whatsapp/account health check notice]:", healthErr.message);
+          }
+        }
+        const isActuallyConnected2 = Boolean(account && account.status === "connected" && account.phone_number);
+        let enrichedAccount = null;
+        if (isActuallyConnected2 && account) {
+          const hexMatch = account.id ? account.id.match(/([a-f0-9]{6})/i) : null;
+          const shortId = hexMatch ? hexMatch[1].toLowerCase() : account.id.substring(0, 6);
+          enrichedAccount = {
+            ...account,
+            name: account.name || "WhatsApp Business",
+            phone_number: account.phone_number || "",
+            short_account_id: shortId,
+            type: account.type || "Coexistence",
+            name_review_status: account.name_review_status || "not_reviewed",
+            business_verification_status: account.business_verification_status || "not_verified",
+            calling: account.calling || "Off",
+            can_start_conversations: account.can_start_conversations ?? (account.payment_issue ? false : true),
+            health_status: account.health_status || (account.payment_issue ? "error" : "healthy"),
+            payment_issue: Boolean(account.payment_issue),
+            payment_error_message: account.payment_error_message || (account.payment_issue ? "There is an error with the payment method. This will prevent sending template messages until updated in Meta Business Suite." : void 0)
+          };
+        }
+        return { account: enrichedAccount };
+      },
+      CACHE_TTL.ACCOUNT
+    );
+    const isActuallyConnected = Boolean(resolved?.account && resolved.account.status === "connected" && resolved.account.phone_number);
     return res.json({
       connected: isActuallyConnected,
-      account: enrichedAccount,
+      account: resolved?.account || null,
       sandbox: sandbox || null,
       profileId
     });

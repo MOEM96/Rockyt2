@@ -184,22 +184,44 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
     fetchAccountStatus();
     fetchCampaignMetrics();
 
-    // Visibility-aware periodic refresh (every 30 seconds, paused when tab is inactive)
+    // Gentle heartbeat refresh (every 5 minutes, paused when tab is inactive)
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
         return; // Pause background polling when tab is not active
       }
       fetchAccountStatus();
       fetchCampaignMetrics();
-    }, 30000);
+    }, 300000);
 
+    let lastVisibilityFetch = Date.now();
     const handleVisibilityChange = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        fetchAccountStatus();
-        fetchCampaignMetrics();
+        const now = Date.now();
+        // Only refresh on tab focus if at least 2 minutes have elapsed since last fetch
+        if (now - lastVisibilityFetch > 120000) {
+          lastVisibilityFetch = now;
+          fetchAccountStatus();
+          fetchCampaignMetrics();
+        }
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Real-Time EventStream (SSE) for instant webhook/status cache invalidation
+    let eventSource: EventSource | null = null;
+    try {
+      const uid = userSession?.id || localStorage.getItem('rockyt_user_id') || '';
+      eventSource = new EventSource(`/api/whatsapp/events?userId=${encodeURIComponent(uid)}`);
+      eventSource.onmessage = (e) => {
+        try {
+          const payload = JSON.parse(e.data);
+          if (payload.event?.includes('account') || payload.event?.includes('template') || payload.event?.includes('flow')) {
+            fetchAccountStatus(true);
+            fetchCampaignMetrics();
+          }
+        } catch {}
+      };
+    } catch {}
 
     // Detect return from Meta / Zernio Headless OAuth
     const searchParams = new URLSearchParams(window.location.search);
@@ -237,6 +259,9 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
     return () => {
       clearInterval(interval);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (eventSource) {
+        eventSource.close();
+      }
     };
   }, [userSession?.id]);
 
