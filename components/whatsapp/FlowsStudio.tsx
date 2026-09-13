@@ -8,7 +8,7 @@ import {
   Download, Upload, Server, ShieldCheck, ChevronDown,
   ChevronRight, Calendar, Hash, Type, AlignLeft,
   ListFilter, CheckSquare, Radio, ToggleLeft, CornerDownRight,
-  HelpCircle, MessageSquare
+  HelpCircle, MessageSquare, Activity
 } from 'lucide-react';
 import {
   WhatsAppFlow,
@@ -560,7 +560,7 @@ const PRESET_FLOW_TEMPLATES: {
   },
 ];
 
-export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
+export const FlowsStudio: React.FC<FlowsStudioProps> = ({ userSession }) => {
   // ── Flows State ──
   const [flows, setFlows] = useState<WhatsAppFlow[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -622,6 +622,37 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
 
   // ── Copy Feedback ──
   const [copiedJson, setCopiedJson] = useState<boolean>(false);
+  const [isTestingPing, setIsTestingPing] = useState<boolean>(false);
+  const [pingStatus, setPingStatus] = useState<{ ok: boolean; message: string } | null>(null);
+
+  const handleTestEndpointPing = async () => {
+    setIsTestingPing(true);
+    setPingStatus(null);
+    try {
+      const ep = endpointUri.trim() || '/api/whatsapp/flows/exchange';
+      const res = await fetch(ep, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders(userSession),
+        },
+        body: JSON.stringify({
+          version: '3.0',
+          action: 'ping',
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data?.data?.status === 'active') {
+        setPingStatus({ ok: true, message: 'Health Check Successful! Data Endpoint responded with active status.' });
+      } else {
+        setPingStatus({ ok: false, message: data.error || `Endpoint returned HTTP ${res.status}: ${JSON.stringify(data)}` });
+      }
+    } catch (err: any) {
+      setPingStatus({ ok: false, message: `Ping failed: ${err.message}` });
+    } finally {
+      setIsTestingPing(false);
+    }
+  };
 
   // ── Fetch Flows from Backend ──
   const loadFlows = async (sync = false) => {
@@ -631,7 +662,7 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
 
     try {
       const res = await fetch(`/api/whatsapp/flows${sync ? '?sync=true' : ''}`, {
-        headers: getAuthHeaders(),
+        headers: getAuthHeaders(userSession),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -652,7 +683,7 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
   };
 
   useEffect(() => {
-    loadFlows();
+    loadFlows(true);
   }, []);
 
   // ── Metrics Calculation ──
@@ -677,15 +708,27 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
   }, [flows, searchQuery, selectedCategory, selectedStatus]);
 
   // ── Open Visual Builder ──
-  const openFlowBuilder = (flow?: WhatsAppFlow) => {
+  const openFlowBuilder = async (flow?: WhatsAppFlow) => {
     if (flow) {
-      const matchedTemplate = PRESET_FLOW_TEMPLATES.find(t => t.category === (flow.categories?.[0] || 'LEAD_GENERATION')) || PRESET_FLOW_TEMPLATES[0];
-      const currentJson = flow.flow_json || matchedTemplate.flow_json;
+      setEditingFlow(flow);
+      let targetFlow = flow;
+      if (!targetFlow.flow_json) {
+        try {
+          const res = await fetch(`/api/whatsapp/flows/${flow.id}`, { headers: getAuthHeaders(userSession) });
+          const data = await res.json();
+          if (data.flow) {
+            targetFlow = data.flow;
+            setEditingFlow(data.flow);
+          }
+        } catch {}
+      }
+      const matchedTemplate = PRESET_FLOW_TEMPLATES.find(t => t.category === (targetFlow.categories?.[0] || 'LEAD_GENERATION')) || PRESET_FLOW_TEMPLATES[0];
+      const currentJson = targetFlow.flow_json || matchedTemplate.flow_json;
       const screens = currentJson.screens || [];
       setBuilderScreens(screens);
       setActiveScreenIndex(0);
       setSelectedComponentIndex(null);
-      setEndpointUri(flow.endpoint_uri || '');
+      setEndpointUri(targetFlow.endpoint_uri || '');
       setRawJsonText(JSON.stringify(currentJson, null, 2));
       initSimulator(screens, 0);
     } else {
@@ -796,38 +839,137 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
 
   // ── Sync Visual Builder to Flow JSON ──
   const currentCompiledJson: FlowJSON = useMemo(() => {
+    const screenCount = builderScreens.length;
+    // Map input fields to their declaring screen for global dynamic references
+    const inputToScreen = new Map<string, string>();
+    builderScreens.forEach(s => {
+      (s.layout?.children || []).forEach(c => {
+        if (c.name && typeof c.name === 'string') {
+          inputToScreen.set(c.name, s.id);
+        }
+      });
+    });
+
     // Format and sanitize each screen for Meta v7.3 specification
-    const formattedScreens: FlowScreen[] = builderScreens.map(s => {
-      const cleanId = (s.id || 'SCREEN')
+    const formattedScreens: FlowScreen[] = builderScreens.map((s, idx) => {
+      const isTerminal = idx === screenCount - 1;
+      let cleanId = (s.id || `SCREEN_${idx + 1}`)
         .toUpperCase()
         .replace(/[^A-Z_]/g, '_')
-        .replace(/^[0-9]+/, '') || 'SCREEN_DETAILS';
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '') || `SCREEN_${idx + 1}`;
+
+      if (cleanId === 'SUCCESS') cleanId = 'SUCCESS_SCREEN';
+
+      const nextScreen = idx < screenCount - 1 ? builderScreens[idx + 1] : null;
+      let nextScreenCleanId = nextScreen ? (nextScreen.id || '').toUpperCase().replace(/[^A-Z_]/g, '_') : '';
+      if (nextScreenCleanId === 'SUCCESS') nextScreenCleanId = 'SUCCESS_SCREEN';
+
+      const children = (s.layout?.children || []).map(comp => {
+        const cleanComp: any = { type: comp.type };
+        if (comp.text !== undefined) cleanComp.text = comp.text;
+        if (comp.name !== undefined) cleanComp.name = comp.name;
+        if (comp.label !== undefined) cleanComp.label = comp.label;
+        if (comp.required !== undefined) cleanComp.required = !!comp.required;
+        if (comp['input-type'] !== undefined) cleanComp['input-type'] = comp['input-type'];
+        if (comp['helper-text']) cleanComp['helper-text'] = comp['helper-text'];
+        if (comp['error-message']) cleanComp['error-message'] = comp['error-message'];
+        if (comp['data-source']) cleanComp['data-source'] = comp['data-source'];
+
+        if (comp.type === 'Footer') {
+          // Meta rule: non-terminal screens must navigate or data_exchange, NEVER complete
+          if (!isTerminal) {
+            const currentAction = comp['on-click-action'];
+            if (currentAction?.name === 'data_exchange') {
+              cleanComp['on-click-action'] = {
+                name: 'data_exchange',
+                payload: currentAction.payload || {},
+              };
+            } else {
+              cleanComp['on-click-action'] = {
+                name: 'navigate',
+                next: {
+                  type: 'screen',
+                  name: currentAction?.next?.name || nextScreenCleanId,
+                },
+                payload: currentAction?.payload || {},
+              };
+            }
+          } else {
+            // Meta rule: terminal screen must complete or data_exchange, NEVER navigate
+            const currentAction = comp['on-click-action'];
+            if (currentAction?.name === 'data_exchange') {
+              cleanComp['on-click-action'] = {
+                name: 'data_exchange',
+                payload: currentAction.payload || {},
+              };
+            } else {
+              const defaultPayload: Record<string, string> = {};
+              inputToScreen.forEach((declaringScreen, fieldName) => {
+                defaultPayload[fieldName] = declaringScreen === cleanId
+                  ? `\${form.${fieldName}}`
+                  : `\${screen.${declaringScreen}.form.${fieldName}}`;
+              });
+
+              cleanComp['on-click-action'] = {
+                name: 'complete',
+                payload: Object.keys(currentAction?.payload || {}).length > 0 ? currentAction.payload : defaultPayload,
+              };
+            }
+          }
+        } else if (comp['on-click-action']) {
+          cleanComp['on-click-action'] = comp['on-click-action'];
+        }
+
+        return cleanComp;
+      });
+
+      // Ensure every screen has a Footer per Meta specification
+      const hasFooter = children.some(c => c.type === 'Footer');
+      if (!hasFooter) {
+        if (!isTerminal) {
+          children.push({
+            type: 'Footer',
+            label: 'Continue',
+            'on-click-action': {
+              name: 'navigate',
+              next: { type: 'screen', name: nextScreenCleanId },
+              payload: {},
+            },
+          });
+        } else {
+          const defaultPayload: Record<string, string> = {};
+          inputToScreen.forEach((declaringScreen, fieldName) => {
+            defaultPayload[fieldName] = declaringScreen === cleanId
+              ? `\${form.${fieldName}}`
+              : `\${screen.${declaringScreen}.form.${fieldName}}`;
+          });
+          children.push({
+            type: 'Footer',
+            label: 'Submit',
+            'on-click-action': {
+              name: 'complete',
+              payload: defaultPayload,
+            },
+          });
+        }
+      }
 
       const screenObj: FlowScreen = {
-        id: cleanId === 'SUCCESS' ? 'SUCCESS_SCREEN' : cleanId,
-        title: s.title || 'Screen',
-        terminal: !!s.terminal,
+        id: cleanId,
+        title: s.title || `Screen ${idx + 1}`,
+        terminal: isTerminal,
         data: s.data || {},
         layout: {
           type: 'SingleColumnLayout',
-          children: (s.layout?.children || []).map(comp => {
-            const cleanComp: any = { type: comp.type };
-            if (comp.text !== undefined) cleanComp.text = comp.text;
-            if (comp.name !== undefined) cleanComp.name = comp.name;
-            if (comp.label !== undefined) cleanComp.label = comp.label;
-            if (comp.required !== undefined) cleanComp.required = !!comp.required;
-            if (comp['input-type'] !== undefined) cleanComp['input-type'] = comp['input-type'];
-            if (comp['helper-text']) cleanComp['helper-text'] = comp['helper-text'];
-            if (comp['error-message']) cleanComp['error-message'] = comp['error-message'];
-            if (comp['data-source']) cleanComp['data-source'] = comp['data-source'];
-            if (comp['on-click-action']) cleanComp['on-click-action'] = comp['on-click-action'];
-            return cleanComp;
-          }),
+          children,
         },
       };
-      if (s.terminal) {
-        screenObj.success = s.success !== false;
+
+      if (isTerminal) {
+        screenObj.success = true;
       }
+
       return screenObj;
     });
 
@@ -835,9 +977,23 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
       version: '7.3',
       screens: formattedScreens,
     };
+
     if (endpointUri.trim()) {
       base.data_api_version = '3.0';
+      // Build forward routing_model for Meta endpoint validation
+      const routingModel: Record<string, string[]> = {};
+      formattedScreens.forEach((sc, idx) => {
+        if (sc.terminal) {
+          routingModel[sc.id] = [];
+        } else {
+          const footer = sc.layout.children.find(c => c.type === 'Footer');
+          const target = footer?.['on-click-action']?.next?.name || (formattedScreens[idx + 1]?.id ?? '');
+          routingModel[sc.id] = target ? [target] : [];
+        }
+      });
+      base.routing_model = routingModel;
     }
+
     return base;
   }, [builderScreens, endpointUri]);
 
@@ -883,10 +1039,54 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
       candidateId = `SCREEN_${word}`;
     }
 
+    // 1. Update the previous terminal screen to be non-terminal and navigate to candidateId
+    const updatedScreens = builderScreens.map((s, idx) => {
+      if (idx === builderScreens.length - 1) {
+        const updatedChildren = s.layout.children.map(comp => {
+          if (comp.type === 'Footer') {
+            return {
+              ...comp,
+              label: comp.label === 'Submit' ? 'Continue' : comp.label,
+              'on-click-action': {
+                name: 'navigate',
+                next: { type: 'screen', name: candidateId },
+                payload: comp['on-click-action']?.payload || {},
+              },
+            };
+          }
+          return comp;
+        });
+        const hasFooter = updatedChildren.some(c => c.type === 'Footer');
+        if (!hasFooter) {
+          updatedChildren.push({
+            type: 'Footer',
+            label: 'Continue',
+            'on-click-action': {
+              name: 'navigate',
+              next: { type: 'screen', name: candidateId },
+              payload: {},
+            },
+          });
+        }
+        return {
+          ...s,
+          terminal: false,
+          success: undefined,
+          layout: {
+            ...s.layout,
+            children: updatedChildren,
+          },
+        };
+      }
+      return s;
+    });
+
+    // 2. New terminal screen with complete action
     const newScreen: FlowScreen = {
       id: candidateId,
       title: `Screen ${builderScreens.length + 1}`,
-      terminal: false,
+      terminal: true,
+      success: true,
       data: {},
       layout: {
         type: 'SingleColumnLayout',
@@ -904,9 +1104,10 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
         ],
       },
     };
-    const updated = [...builderScreens, newScreen];
-    setBuilderScreens(updated);
-    setActiveScreenIndex(updated.length - 1);
+
+    const finalScreens = [...updatedScreens, newScreen];
+    setBuilderScreens(finalScreens);
+    setActiveScreenIndex(finalScreens.length - 1);
     setSelectedComponentIndex(null);
   };
 
@@ -915,8 +1116,54 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
       alert('A Flow must have at least one screen.');
       return;
     }
-    const updated = builderScreens.filter((_, i) => i !== idx);
-    setBuilderScreens(updated);
+    const filtered = builderScreens.filter((_, i) => i !== idx);
+    const newTotal = filtered.length;
+
+    // Heal chains:
+    const repaired = filtered.map((s, i) => {
+      const isTerminal = i === newTotal - 1;
+      const nextScreenId = i < newTotal - 1 ? filtered[i + 1].id : '';
+
+      const updatedChildren = s.layout.children.map(comp => {
+        if (comp.type === 'Footer') {
+          if (!isTerminal) {
+            const currentTarget = comp['on-click-action']?.next?.name;
+            const validTarget = currentTarget && currentTarget !== builderScreens[idx]?.id ? currentTarget : nextScreenId;
+            return {
+              ...comp,
+              label: comp.label === 'Submit' ? 'Continue' : comp.label,
+              'on-click-action': {
+                name: 'navigate',
+                next: { type: 'screen', name: validTarget },
+                payload: comp['on-click-action']?.payload || {},
+              },
+            };
+          } else {
+            return {
+              ...comp,
+              label: comp.label === 'Continue' ? 'Submit' : comp.label,
+              'on-click-action': {
+                name: 'complete',
+                payload: comp['on-click-action']?.payload || {},
+              },
+            };
+          }
+        }
+        return comp;
+      });
+
+      return {
+        ...s,
+        terminal: isTerminal,
+        success: isTerminal ? true : undefined,
+        layout: {
+          ...s.layout,
+          children: updatedChildren,
+        },
+      };
+    });
+
+    setBuilderScreens(repaired);
     setActiveScreenIndex(Math.max(0, idx - 1));
     setSelectedComponentIndex(null);
   };
@@ -1393,7 +1640,17 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
     return builderScreens.find(s => s.id === simScreenId) || builderScreens[0];
   }, [builderScreens, simScreenId]);
 
-  const handleSimFooterClick = (action: any) => {
+  const resolveSimText = (text?: string): string => {
+    if (!text || typeof text !== 'string') return text || '';
+    return text.replace(/\$\{(?:screen\.([A-Za-z_]+)\.)?form\.([A-Za-z0-9_]+)\}/g, (match, screenName, field) => {
+      if (screenName) {
+        return simFormState[`${screenName}.${field}`] ?? simFormState[field] ?? match;
+      }
+      return simFormState[field] ?? match;
+    });
+  };
+
+  const handleSimFooterClick = async (action: any) => {
     if (!action) return;
 
     if (action.name === 'navigate' && action.next?.name) {
@@ -1406,13 +1663,22 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
         alert(`Target screen '${targetScreenName}' not found in Flow screens.`);
       }
     } else if (action.name === 'complete') {
-      // Resolve payload tokens like ${form.field}
+      // Resolve payload tokens like ${form.field} and ${screen.ID.form.field}
       const resolvedPayload: Record<string, any> = {};
       const payloadMap = action.payload || {};
       for (const [k, v] of Object.entries(payloadMap)) {
-        if (typeof v === 'string' && v.startsWith('${form.') && v.endsWith('}')) {
-          const fieldName = v.slice(7, -1);
-          resolvedPayload[k] = simFormState[fieldName] ?? '';
+        if (typeof v === 'string') {
+          if (v.startsWith('${form.') && v.endsWith('}')) {
+            const fieldName = v.slice(7, -1);
+            resolvedPayload[k] = simFormState[fieldName] ?? '';
+          } else if (v.startsWith('${screen.') && v.endsWith('}')) {
+            const parts = v.slice(9, -1).split('.');
+            const srcScreen = parts[0];
+            const fieldName = parts[parts.length - 1];
+            resolvedPayload[k] = simFormState[`${srcScreen}.${fieldName}`] ?? simFormState[fieldName] ?? '';
+          } else {
+            resolvedPayload[k] = v;
+          }
         } else {
           resolvedPayload[k] = v;
         }
@@ -1420,7 +1686,43 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
       setSimSubmittedPayload({ ...simFormState, ...resolvedPayload });
       setSimCompleted(true);
     } else if (action.name === 'data_exchange') {
-      alert(`[Data Exchange Simulator]: POST to ${endpointUri || 'https://example.com/flow-endpoint'} with payload: \n` + JSON.stringify(simFormState, null, 2));
+      try {
+        const ep = endpointUri.trim() || '/api/whatsapp/flows/exchange';
+        const res = await fetch(ep, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders(userSession),
+          },
+          body: JSON.stringify({
+            version: '3.0',
+            action: 'data_exchange',
+            screen: currentSimScreen?.id || 'SCREEN',
+            data: simFormState,
+            flow_token: 'sim_interactive_token',
+          }),
+        });
+
+        if (res.ok) {
+          const resData = await res.json();
+          if (resData.screen === 'SUCCESS') {
+            const extensionParams = resData.data?.extension_message_response?.params || resData.data || simFormState;
+            setSimSubmittedPayload(extensionParams);
+            setSimCompleted(true);
+            return;
+          } else if (resData.screen && builderScreens.some(s => s.id === resData.screen)) {
+            setSimScreenId(resData.screen);
+            setSimScreenHistory([...simScreenHistory, resData.screen]);
+            if (resData.data) {
+              setSimFormState(prev => ({ ...prev, ...resData.data }));
+            }
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('[sim data_exchange call error]:', err);
+      }
+      // Fallback completion
       setSimSubmittedPayload(simFormState);
       setSimCompleted(true);
     }
@@ -2423,13 +2725,19 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
                                   value={activeComponent['on-click-action']?.name || 'complete'}
                                   onChange={e => {
                                     const actionType = e.target.value as any;
+                                    const defaultNext = builderScreens[activeScreenIndex + 1]?.id || builderScreens.find(s => s.id !== activeScreen?.id)?.id || '';
                                     updateActiveComponent({
                                       'on-click-action': {
                                         name: actionType,
-                                        next: actionType === 'navigate' ? { type: 'screen', name: builderScreens[1]?.id || '' } : undefined,
+                                        next: actionType === 'navigate' ? { type: 'screen', name: defaultNext } : undefined,
                                         payload: activeComponent['on-click-action']?.payload || {},
                                       },
                                     });
+                                    if (actionType === 'navigate') {
+                                      updateScreenProperty('terminal', false);
+                                    } else if (actionType === 'complete') {
+                                      updateScreenProperty('terminal', true);
+                                    }
                                   }}
                                   className="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg bg-white text-xs cursor-pointer"
                                 >
@@ -2533,16 +2841,16 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
                           ) : currentSimScreen ? (
                             currentSimScreen.layout.children.map((comp, idx) => {
                               if (comp.type === 'TextHeading') {
-                                return <h3 key={idx} className="font-bold text-gray-900 text-sm">{comp.text}</h3>;
+                                return <h3 key={idx} className="font-bold text-gray-900 text-sm">{resolveSimText(comp.text)}</h3>;
                               }
                               if (comp.type === 'TextSubheading') {
-                                return <h4 key={idx} className="font-semibold text-gray-800 text-xs">{comp.text}</h4>;
+                                return <h4 key={idx} className="font-semibold text-gray-800 text-xs">{resolveSimText(comp.text)}</h4>;
                               }
                               if (comp.type === 'TextBody') {
-                                return <p key={idx} className="text-gray-600 text-[11px] leading-relaxed">{comp.text}</p>;
+                                return <p key={idx} className="text-gray-600 text-[11px] leading-relaxed">{resolveSimText(comp.text)}</p>;
                               }
                               if (comp.type === 'TextCaption') {
-                                return <p key={idx} className="text-gray-400 text-[10px] italic">{comp.text}</p>;
+                                return <p key={idx} className="text-gray-400 text-[10px] italic">{resolveSimText(comp.text)}</p>;
                               }
                               if (comp.type === 'TextInput') {
                                 return (
@@ -2558,6 +2866,7 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
                                         setSimFormState({
                                           ...simFormState,
                                           [comp.name || '']: e.target.value,
+                                          [`${currentSimScreen.id}.${comp.name || ''}`]: e.target.value,
                                         })
                                       }
                                       className="w-full px-2.5 py-1.5 text-xs bg-white border border-gray-300 rounded-lg focus:outline-none focus:border-[#075E54]"
@@ -2578,6 +2887,7 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
                                         setSimFormState({
                                           ...simFormState,
                                           [comp.name || '']: e.target.value,
+                                          [`${currentSimScreen.id}.${comp.name || ''}`]: e.target.value,
                                         })
                                       }
                                       className="w-full px-2.5 py-1.5 text-xs bg-white border border-gray-300 rounded-lg focus:outline-none"
@@ -2597,6 +2907,7 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
                                         setSimFormState({
                                           ...simFormState,
                                           [comp.name || '']: e.target.value,
+                                          [`${currentSimScreen.id}.${comp.name || ''}`]: e.target.value,
                                         })
                                       }
                                       className="w-full px-2.5 py-1.5 text-xs bg-white border border-gray-300 rounded-lg focus:outline-none cursor-pointer"
@@ -2627,6 +2938,7 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
                                               setSimFormState({
                                                 ...simFormState,
                                                 [comp.name || '']: e.target.value,
+                                                [`${currentSimScreen.id}.${comp.name || ''}`]: e.target.value,
                                               })
                                             }
                                             className="accent-[#075E54]"
@@ -2651,6 +2963,7 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
                                         setSimFormState({
                                           ...simFormState,
                                           [comp.name || '']: e.target.value,
+                                          [`${currentSimScreen.id}.${comp.name || ''}`]: e.target.value,
                                         })
                                       }
                                       className="w-full px-2.5 py-1.5 text-xs bg-white border border-gray-300 rounded-lg focus:outline-none"
@@ -2668,6 +2981,7 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
                                         setSimFormState({
                                           ...simFormState,
                                           [comp.name || '']: e.target.checked,
+                                          [`${currentSimScreen.id}.${comp.name || ''}`]: e.target.checked,
                                         })
                                       }
                                       className="accent-[#075E54]"
@@ -2774,44 +3088,95 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = () => {
                 <div>
                   <h3 className="font-bold text-gray-900 text-base">WhatsApp Flow Data Endpoint</h3>
                   <p className="text-xs text-gray-500 mt-1">
-                    Connect your own HTTPS endpoint for <strong>data_exchange</strong> mode to dynamically render screens based on your server's backend database.
+                    Connect an HTTPS endpoint for <strong>data_exchange</strong> mode to dynamically render screens, validate inputs, or submit responses to your server database.
                   </p>
                 </div>
 
                 <div className="bg-gray-50 p-5 rounded-2xl border border-gray-200 space-y-4 text-xs">
                   <div>
-                    <label className="font-bold text-gray-800 block mb-1">Server Endpoint URL (`endpoint_uri`)</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="font-bold text-gray-800">Server Endpoint URL (`endpoint_uri`)</label>
+                      <button
+                        type="button"
+                        onClick={() => setEndpointUri(`${window.location.origin}/api/whatsapp/flows/exchange`)}
+                        className="text-[11px] text-emerald-700 hover:text-emerald-800 font-semibold cursor-pointer underline"
+                      >
+                        Use App Data Endpoint
+                      </button>
+                    </div>
                     <input
                       type="url"
                       value={endpointUri}
                       onChange={e => setEndpointUri(e.target.value)}
-                      placeholder="https://your-api.com/api/whatsapp/flows/exchange"
+                      placeholder={`${window.location.origin}/api/whatsapp/flows/exchange`}
                       className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl focus:outline-none focus:border-emerald-500 font-mono"
                     />
                     <span className="text-[11px] text-gray-500 mt-1 block">
-                      Must be a valid HTTPS URL supporting Meta Flow JSON Data Exchange Protocol.
+                      Must be a valid HTTPS URL supporting the Meta Flow JSON Data Exchange Protocol.
                     </span>
                   </div>
 
-                  <div>
-                    <label className="font-bold text-gray-800 block mb-1">Data API Version</label>
-                    <input
-                      type="text"
-                      value="3.0"
-                      disabled
-                      className="w-full px-3 py-2 bg-gray-100 border border-gray-200 rounded-xl text-gray-500 font-mono"
-                    />
-                    <span className="text-[11px] text-gray-400 mt-1 block">Current supported Meta Flow Data API version</span>
+                  <div className="flex items-center justify-between gap-4 pt-2">
+                    <div className="flex-1">
+                      <label className="font-bold text-gray-800 block mb-1">Data API Version</label>
+                      <input
+                        type="text"
+                        value="3.0"
+                        disabled
+                        className="w-full px-3 py-2 bg-gray-100 border border-gray-200 rounded-xl text-gray-500 font-mono"
+                      />
+                      <span className="text-[11px] text-gray-400 mt-1 block">Standard Meta Flow Data API version</span>
+                    </div>
+
+                    <div className="flex flex-col justify-end">
+                      <label className="text-[11px] font-semibold text-gray-700 block mb-1">Endpoint Verification</label>
+                      <button
+                        type="button"
+                        disabled={isTestingPing}
+                        onClick={handleTestEndpointPing}
+                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        {isTestingPing ? <RefreshCw size={13} className="animate-spin" /> : <Activity size={13} />}
+                        <span>Run Health Check Ping</span>
+                      </button>
+                    </div>
                   </div>
+
+                  {pingStatus && (
+                    <div
+                      className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
+                        pingStatus.ok
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                          : 'bg-red-50 border-red-200 text-red-800'
+                      }`}
+                    >
+                      {pingStatus.ok ? (
+                        <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                      ) : (
+                        <AlertCircle size={16} className="text-red-600 shrink-0" />
+                      )}
+                      <span className="font-medium">{pingStatus.message}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-5 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-2xl text-xs space-y-2">
+                  <div className="flex items-center gap-2 font-bold">
+                    <ShieldCheck size={16} className="text-emerald-600" />
+                    <span>Built-in Flow Data Exchange Endpoint Ready</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-emerald-800">
+                    Your application includes a built-in data exchange handler at <code>/api/whatsapp/flows/exchange</code>. It automatically responds to Meta periodic health check pings (<code>ping -&gt; status: active</code>), acknowledges client errors, and processes incoming requests.
+                  </p>
                 </div>
 
                 <div className="p-5 bg-amber-50 border border-amber-200 text-amber-900 rounded-2xl text-xs space-y-2">
                   <div className="flex items-center gap-2 font-bold">
                     <ShieldAlert size={16} className="text-amber-600" />
-                    <span>RSA Encryption Requirement for Data Exchange</span>
+                    <span>RSA Encryption Requirement for Live Production Exchanges</span>
                   </div>
                   <p className="text-[11px] leading-relaxed">
-                    Meta requires an active RSA 2048-bit business public key registered for your WhatsApp number when publishing in <strong>data_exchange</strong> mode.
+                    When sending published flows in <strong>data_exchange</strong> mode, Meta encrypts payloads with your WhatsApp Business public key using RSA-OAEP SHA-256 and AES-128-GCM. Set the <code>FLOW_PRIVATE_KEY</code> environment variable on your server to decrypt live production payloads.
                   </p>
                 </div>
               </div>

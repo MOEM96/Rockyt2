@@ -18,6 +18,39 @@ export class ZernioWhatsAppService {
     if (this.cachedAccountId && this.cachedAccountId !== 'acc_primary') {
       return this.cachedAccountId;
     }
+
+    // 1. Check Supabase for known connected account in whatsapp_flows or whatsapp_accounts
+    try {
+      const supabase = getBackendSupabaseClient();
+      if (supabase) {
+        const { data: flowAcc } = await supabase
+          .from('whatsapp_flows')
+          .select('account_id')
+          .not('account_id', 'is', null)
+          .neq('account_id', 'acc_primary')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (flowAcc?.account_id) {
+          this.cachedAccountId = flowAcc.account_id;
+          return flowAcc.account_id;
+        }
+
+        const { data: waAcc } = await supabase
+          .from('whatsapp_accounts')
+          .select('id')
+          .not('id', 'is', null)
+          .neq('id', 'acc_primary')
+          .limit(1)
+          .maybeSingle();
+        if (waAcc?.id) {
+          this.cachedAccountId = waAcc.id;
+          return waAcc.id;
+        }
+      }
+    } catch {}
+
+    // 2. Query Zernio accounts API
     try {
       const accounts = await this.listWhatsAppAccounts(profileId);
       if (Array.isArray(accounts) && accounts.length > 0) {
@@ -1294,6 +1327,25 @@ export class ZernioWhatsAppService {
     } catch (e: any) {
       console.warn('[listWhatsAppFlows exception]:', e.message);
       return [];
+    }
+  }
+
+  /**
+   * Get single flow details and definition
+   */
+  public static async getWhatsAppFlow(flowId: string, accountId: string): Promise<any> {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey) return null;
+
+    try {
+      const res = await fetch(`https://zernio.com/api/v1/whatsapp/flows/${encodeURIComponent(flowId)}?accountId=${encodeURIComponent(accountId)}`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (!res.ok) return null;
+      const data = await res.json().catch(() => null);
+      return data?.flow || data;
+    } catch {
+      return null;
     }
   }
 

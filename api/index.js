@@ -694,6 +694,22 @@ var ZernioWhatsAppService = class _ZernioWhatsAppService {
       return this.cachedAccountId;
     }
     try {
+      const supabase = getBackendSupabaseClient();
+      if (supabase) {
+        const { data: flowAcc } = await supabase.from("whatsapp_flows").select("account_id").not("account_id", "is", null).neq("account_id", "acc_primary").order("created_at", { ascending: false }).limit(1).maybeSingle();
+        if (flowAcc?.account_id) {
+          this.cachedAccountId = flowAcc.account_id;
+          return flowAcc.account_id;
+        }
+        const { data: waAcc } = await supabase.from("whatsapp_accounts").select("id").not("id", "is", null).neq("id", "acc_primary").limit(1).maybeSingle();
+        if (waAcc?.id) {
+          this.cachedAccountId = waAcc.id;
+          return waAcc.id;
+        }
+      }
+    } catch {
+    }
+    try {
       const accounts = await this.listWhatsAppAccounts(profileId);
       if (Array.isArray(accounts) && accounts.length > 0) {
         const valid = accounts.find((a) => a.id && a.id !== "acc_primary");
@@ -1756,6 +1772,23 @@ var ZernioWhatsAppService = class _ZernioWhatsAppService {
     } catch (e) {
       console.warn("[listWhatsAppFlows exception]:", e.message);
       return [];
+    }
+  }
+  /**
+   * Get single flow details and definition
+   */
+  static async getWhatsAppFlow(flowId, accountId) {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (!apiKey) return null;
+    try {
+      const res = await fetch(`https://zernio.com/api/v1/whatsapp/flows/${encodeURIComponent(flowId)}?accountId=${encodeURIComponent(accountId)}`, {
+        headers: { Authorization: `Bearer ${apiKey}` }
+      });
+      if (!res.ok) return null;
+      const data = await res.json().catch(() => null);
+      return data?.flow || data;
+    } catch {
+      return null;
     }
   }
   /**
@@ -4009,13 +4042,14 @@ var META_DIGIT_WORDS = {
 function cleanAndNormalizeMetaFlowJson(rawJson) {
   if (!rawJson || typeof rawJson !== "object") return rawJson;
   const cloned = JSON.parse(JSON.stringify(rawJson));
-  if (!cloned.version || cloned.version === "6.0" || cloned.version === "5.0" || cloned.version === "4.0") {
+  if (!cloned.version || cloned.version === "6.0" || cloned.version === "5.0" || cloned.version === "4.0" || cloned.version === "3.1" || cloned.version === "2.1") {
     cloned.version = "7.3";
   }
   if (!Array.isArray(cloned.screens) || cloned.screens.length === 0) {
     return cloned;
   }
   const idMap = /* @__PURE__ */ new Map();
+  const totalScreens = cloned.screens.length;
   cloned.screens.forEach((screen, idx) => {
     const rawId = typeof screen.id === "string" ? screen.id.trim() : `SCREEN_${idx + 1}`;
     let newId = rawId;
@@ -4036,11 +4070,13 @@ function cleanAndNormalizeMetaFlowJson(rawJson) {
     if (!screen.data || typeof screen.data !== "object" || Array.isArray(screen.data)) {
       screen.data = {};
     }
-    if (screen.terminal === true) {
-      screen.terminal = true;
-      if (screen.success === void 0) {
-        screen.success = true;
-      }
+    if (!screen.layout || typeof screen.layout !== "object") {
+      screen.layout = { type: "SingleColumnLayout", children: [] };
+    } else if (screen.layout.type !== "SingleColumnLayout") {
+      screen.layout.type = "SingleColumnLayout";
+    }
+    if (!Array.isArray(screen.layout.children)) {
+      screen.layout.children = [];
     }
   });
   if (idMap.size > 0) {
@@ -4078,6 +4114,117 @@ function cleanAndNormalizeMetaFlowJson(rawJson) {
         });
       }
     });
+  }
+  const inputToScreen = /* @__PURE__ */ new Map();
+  cloned.screens.forEach((s) => {
+    if (s.layout && Array.isArray(s.layout.children)) {
+      s.layout.children.forEach((comp) => {
+        if (comp.name && typeof comp.name === "string") {
+          inputToScreen.set(comp.name, s.id);
+        }
+      });
+    }
+  });
+  cloned.screens.forEach((screen, idx) => {
+    const isLastScreen = idx === totalScreens - 1;
+    let footerComp = screen.layout.children.find((c) => c.type === "Footer");
+    if (totalScreens > 1 && !isLastScreen) {
+      screen.terminal = false;
+      delete screen.success;
+      const nextScreenId = cloned.screens[idx + 1].id;
+      if (!footerComp) {
+        footerComp = {
+          type: "Footer",
+          label: "Continue",
+          "on-click-action": {
+            name: "navigate",
+            next: { type: "screen", name: nextScreenId },
+            payload: {}
+          }
+        };
+        screen.layout.children.push(footerComp);
+      } else {
+        const currentAction = footerComp["on-click-action"];
+        if (!currentAction || currentAction.name !== "data_exchange") {
+          footerComp["on-click-action"] = {
+            name: "navigate",
+            next: { type: "screen", name: nextScreenId },
+            payload: currentAction?.payload || {}
+          };
+        } else if (currentAction.name === "navigate" && (!currentAction.next || !currentAction.next.name)) {
+          currentAction.next = { type: "screen", name: nextScreenId };
+        }
+        if (!footerComp.label) footerComp.label = "Continue";
+      }
+    } else {
+      screen.terminal = true;
+      screen.success = true;
+      if (!footerComp) {
+        const completionPayload = {};
+        inputToScreen.forEach((srcScreen, fieldName) => {
+          completionPayload[fieldName] = srcScreen === screen.id ? `\${form.${fieldName}}` : `\${screen.${srcScreen}.form.${fieldName}}`;
+        });
+        footerComp = {
+          type: "Footer",
+          label: "Submit",
+          "on-click-action": {
+            name: "complete",
+            payload: completionPayload
+          }
+        };
+        screen.layout.children.push(footerComp);
+      } else {
+        const currentAction = footerComp["on-click-action"];
+        if (!currentAction || currentAction.name === "navigate") {
+          const payloadMap = currentAction?.payload || {};
+          if (Object.keys(payloadMap).length === 0) {
+            inputToScreen.forEach((srcScreen, fieldName) => {
+              payloadMap[fieldName] = srcScreen === screen.id ? `\${form.${fieldName}}` : `\${screen.${srcScreen}.form.${fieldName}}`;
+            });
+          }
+          footerComp["on-click-action"] = {
+            name: "complete",
+            payload: payloadMap
+          };
+        }
+        if (!footerComp.label) footerComp.label = "Submit";
+      }
+    }
+    if (footerComp && footerComp["on-click-action"]?.payload && typeof footerComp["on-click-action"].payload === "object") {
+      const payloadObj = footerComp["on-click-action"].payload;
+      for (const [k, v] of Object.entries(payloadObj)) {
+        if (typeof v === "string") {
+          const formMatch = v.match(/^\$\{form\.([a-zA-Z0-9_]+)\}$/);
+          if (formMatch) {
+            const field = formMatch[1];
+            const sourceScreen = inputToScreen.get(field);
+            if (sourceScreen && sourceScreen !== screen.id) {
+              payloadObj[k] = `\${screen.${sourceScreen}.form.${field}}`;
+            }
+          }
+        }
+      }
+    }
+  });
+  const hasEndpoint = !!(cloned.data_api_version === "3.0" || cloned.data_channel_uri || cloned.endpoint_uri);
+  if (hasEndpoint) {
+    cloned.data_api_version = "3.0";
+    delete cloned.data_channel_uri;
+    if (totalScreens > 1) {
+      const routing = {};
+      cloned.screens.forEach((s, i) => {
+        if (i < totalScreens - 1) {
+          routing[s.id] = [cloned.screens[i + 1].id];
+        } else {
+          routing[s.id] = [];
+        }
+      });
+      cloned.routing_model = routing;
+    }
+  } else {
+    delete cloned.routing_model;
+    delete cloned.data_api_version;
+    delete cloned.data_channel_uri;
   }
   function stripNulls(obj) {
     if (Array.isArray(obj)) {
@@ -4364,29 +4511,62 @@ whatsappRouter.get("/api/whatsapp/flows", async (req, res) => {
   try {
     const { userId, profileId } = await resolveUserProfileId(req);
     const supabase = getBackendSupabaseClient();
-    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
     let targetUserId = userId;
     if (supabase) {
       try {
-        const { data: prof } = await supabase.from("profiles").select("id, email, zernio_profile_id").eq("email", userId.toLowerCase()).maybeSingle();
-        if (prof) targetUserId = prof.id;
+        if (userId && userId.includes("@")) {
+          const { data: prof } = await supabase.from("profiles").select("id, email, zernio_profile_id").eq("email", userId.toLowerCase()).maybeSingle();
+          if (prof?.id) targetUserId = prof.id;
+        } else if (userId) {
+          const { data: prof } = await supabase.from("profiles").select("id, email, zernio_profile_id").eq("id", userId).maybeSingle();
+          if (prof?.id) targetUserId = prof.id;
+        }
       } catch {
       }
     }
-    const syncFromMeta = req.query.sync === "true";
-    if (syncFromMeta && defaultAccountId) {
+    let resolvedAccountId = req.query.accountId || void 0;
+    if (!resolvedAccountId && supabase) {
       try {
-        const liveFlows = await ZernioWhatsAppService.listWhatsAppFlows(defaultAccountId);
+        const { data: flowAcc } = await supabase.from("whatsapp_flows").select("account_id").not("account_id", "is", null).neq("account_id", "acc_primary").order("created_at", { ascending: false }).limit(1).maybeSingle();
+        if (flowAcc?.account_id) {
+          resolvedAccountId = flowAcc.account_id;
+        }
+      } catch {
+      }
+    }
+    if (!resolvedAccountId) {
+      resolvedAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
+    }
+    if (resolvedAccountId) {
+      ZernioWhatsAppService.setCachedAccountId(resolvedAccountId);
+    }
+    if (resolvedAccountId && resolvedAccountId !== "acc_primary") {
+      try {
+        const liveFlows = await ZernioWhatsAppService.listWhatsAppFlows(resolvedAccountId);
         if (Array.isArray(liveFlows) && liveFlows.length > 0 && supabase) {
           for (const lf of liveFlows) {
+            const flowId = String(lf.id || lf._id);
+            const { data: existingFlow } = await supabase.from("whatsapp_flows").select("flow_json, lineage_id, version").eq("id", flowId).maybeSingle();
+            let finalJson = existingFlow?.flow_json;
+            if (!finalJson) {
+              const detailed = await ZernioWhatsAppService.getWhatsAppFlow(flowId, resolvedAccountId);
+              if (detailed?.flow_json) {
+                finalJson = detailed.flow_json;
+              } else {
+                finalJson = generateStarterFlowJson(lf.name || "flow", lf.categories && lf.categories[0] || "LEAD_GENERATION");
+              }
+            }
             await supabase.from("whatsapp_flows").upsert({
-              id: lf.id,
+              id: flowId,
               user_id: targetUserId,
-              account_id: defaultAccountId,
-              name: lf.name,
+              account_id: resolvedAccountId,
+              name: lf.name || "whatsapp_flow",
               status: lf.status || "DRAFT",
-              categories: lf.categories || ["OTHER"],
-              version: lf.version || 1,
+              categories: lf.categories || ["LEAD_GENERATION"],
+              version: lf.version || existingFlow?.version || 1,
+              lineage_id: lf.lineageId || existingFlow?.lineage_id || flowId,
+              validation_errors: lf.validation_errors || [],
+              flow_json: cleanAndNormalizeMetaFlowJson(finalJson),
               updated_at: (/* @__PURE__ */ new Date()).toISOString()
             }, { onConflict: "id" });
           }
@@ -4400,7 +4580,11 @@ whatsappRouter.get("/api/whatsapp/flows", async (req, res) => {
       try {
         let query = supabase.from("whatsapp_flows").select("*").order("created_at", { ascending: false });
         if (targetUserId && !targetUserId.includes("@")) {
-          query = query.or(`user_id.eq.${targetUserId},account_id.eq.${defaultAccountId || "none"}`);
+          if (resolvedAccountId) {
+            query = query.or(`user_id.eq.${targetUserId},account_id.eq.${resolvedAccountId}`);
+          } else {
+            query = query.eq("user_id", targetUserId);
+          }
         }
         const { data, error } = await query;
         if (!error && Array.isArray(data)) {
@@ -4410,7 +4594,7 @@ whatsappRouter.get("/api/whatsapp/flows", async (req, res) => {
         console.warn("[Supabase whatsapp_flows fetch warning]:", dbErr.message);
       }
     }
-    return res.json({ success: true, data: flows, count: flows.length });
+    return res.json({ success: true, data: flows, count: flows.length, accountId: resolvedAccountId });
   } catch (err) {
     console.error("[GET /api/whatsapp/flows error]:", err);
     return res.status(500).json({ error: err.message || "Failed to list WhatsApp flows" });
@@ -4419,13 +4603,13 @@ whatsappRouter.get("/api/whatsapp/flows", async (req, res) => {
 whatsappRouter.post("/api/whatsapp/flows", async (req, res) => {
   try {
     const { userId, profileId } = await resolveUserProfileId(req);
-    const { name, categories, cloneFlowId, asVersion, endpointUri, flow_json, publish } = req.body;
+    const { name, categories, cloneFlowId, asVersion, endpointUri, flow_json, publish, accountId: customAccountId } = req.body;
     if (!name || typeof name !== "string") {
       return res.status(400).json({ error: "Flow name is required" });
     }
     const cleanName = name.trim().toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 64);
     const validCats = Array.isArray(categories) && categories.length > 0 ? categories : ["LEAD_GENERATION"];
-    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || "acc_primary";
+    const defaultAccountId = customAccountId || await ZernioWhatsAppService.getDefaultAccountId(profileId) || "acc_primary";
     const supabase = getBackendSupabaseClient();
     let targetUserId = userId;
     if (supabase) {
@@ -4478,7 +4662,7 @@ whatsappRouter.post("/api/whatsapp/flows", async (req, res) => {
       parent_flow_id: cloneFlowId || null,
       flow_json: finalFlowJson,
       endpoint_uri: endpointUri || null,
-      data_api_version: "3.0",
+      data_api_version: endpointUri ? "3.0" : void 0,
       validation_errors: validation.errors,
       created_at: (/* @__PURE__ */ new Date()).toISOString(),
       updated_at: (/* @__PURE__ */ new Date()).toISOString()
@@ -4526,15 +4710,19 @@ whatsappRouter.get("/api/whatsapp/flows/:id", async (req, res) => {
 whatsappRouter.put("/api/whatsapp/flows/:id/json", async (req, res) => {
   try {
     const { id } = req.params;
-    const { flow_json, endpoint_uri } = req.body;
+    const { flow_json, endpoint_uri, accountId: customAccountId } = req.body;
     const { profileId } = await resolveUserProfileId(req);
-    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || "acc_primary";
+    const defaultAccountId = customAccountId || await ZernioWhatsAppService.getDefaultAccountId(profileId) || "acc_primary";
     const supabase = getBackendSupabaseClient();
     if (!flow_json || typeof flow_json !== "object") {
       return res.status(400).json({ error: "Valid flow_json object is required" });
     }
+    let flowAccountId = defaultAccountId;
     if (supabase) {
-      const { data: existing } = await supabase.from("whatsapp_flows").select("status").eq("id", id).maybeSingle();
+      const { data: existing } = await supabase.from("whatsapp_flows").select("status, account_id").eq("id", id).maybeSingle();
+      if (existing?.account_id) {
+        flowAccountId = existing.account_id;
+      }
       if (existing && existing.status === "PUBLISHED") {
         return res.status(400).json({
           error: 'PUBLISHED flows are immutable in Meta. To make changes, click "Create New Version" to clone into a new draft.'
@@ -4545,7 +4733,7 @@ whatsappRouter.put("/api/whatsapp/flows/:id/json", async (req, res) => {
     const validation = validateMetaFlowJson(normalizedFlowJson);
     let metaErrors = [];
     try {
-      const uploadRes = await ZernioWhatsAppService.uploadWhatsAppFlowJson(id, defaultAccountId, normalizedFlowJson);
+      const uploadRes = await ZernioWhatsAppService.uploadWhatsAppFlowJson(id, flowAccountId, normalizedFlowJson);
       if (uploadRes.validation_errors && uploadRes.validation_errors.length > 0) {
         metaErrors = uploadRes.validation_errors;
       }
@@ -4560,6 +4748,9 @@ whatsappRouter.put("/api/whatsapp/flows/:id/json", async (req, res) => {
       };
       if (endpoint_uri !== void 0) {
         updatePayload.endpoint_uri = endpoint_uri;
+        if (endpoint_uri) {
+          updatePayload.data_api_version = "3.0";
+        }
       }
       await supabase.from("whatsapp_flows").update(updatePayload).eq("id", id);
     }
@@ -4584,6 +4775,7 @@ whatsappRouter.post("/api/whatsapp/flows/:id/publish", async (req, res) => {
       if (!flow) {
         return res.status(404).json({ error: "Flow not found" });
       }
+      const flowAccountId = flow.account_id || defaultAccountId;
       if (flow.status === "PUBLISHED") {
         return res.json({ success: true, message: "Flow is already published", flow });
       }
@@ -4594,7 +4786,7 @@ whatsappRouter.post("/api/whatsapp/flows/:id/publish", async (req, res) => {
           validation_errors: validation.errors
         });
       }
-      const publishRes = await ZernioWhatsAppService.publishWhatsAppFlow(id, defaultAccountId);
+      const publishRes = await ZernioWhatsAppService.publishWhatsAppFlow(id, flowAccountId);
       if (!publishRes.success && publishRes.error && !publishRes.error.includes("dummy")) {
         return res.status(400).json({ error: publishRes.error });
       }
@@ -4619,7 +4811,12 @@ whatsappRouter.post("/api/whatsapp/flows/:id/deprecate", async (req, res) => {
     const { profileId } = await resolveUserProfileId(req);
     const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || "acc_primary";
     const supabase = getBackendSupabaseClient();
-    await ZernioWhatsAppService.deprecateWhatsAppFlow(id, defaultAccountId);
+    let flowAccountId = defaultAccountId;
+    if (supabase) {
+      const { data: flow } = await supabase.from("whatsapp_flows").select("account_id").eq("id", id).maybeSingle();
+      if (flow?.account_id) flowAccountId = flow.account_id;
+    }
+    await ZernioWhatsAppService.deprecateWhatsAppFlow(id, flowAccountId);
     if (supabase) {
       await supabase.from("whatsapp_flows").update({ status: "DEPRECATED", updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", id);
     }
@@ -4635,8 +4832,10 @@ whatsappRouter.delete("/api/whatsapp/flows/:id", async (req, res) => {
     const { profileId } = await resolveUserProfileId(req);
     const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || "acc_primary";
     const supabase = getBackendSupabaseClient();
+    let flowAccountId = defaultAccountId;
     if (supabase) {
-      const { data: flow } = await supabase.from("whatsapp_flows").select("status").eq("id", id).maybeSingle();
+      const { data: flow } = await supabase.from("whatsapp_flows").select("status, account_id").eq("id", id).maybeSingle();
+      if (flow?.account_id) flowAccountId = flow.account_id;
       if (flow && flow.status === "PUBLISHED") {
         return res.status(400).json({
           error: "Published flows cannot be deleted per Meta API rules. Please deprecate the flow instead."
@@ -4645,7 +4844,7 @@ whatsappRouter.delete("/api/whatsapp/flows/:id", async (req, res) => {
       await supabase.from("whatsapp_flows").delete().eq("id", id);
       await supabase.from("whatsapp_flow_responses").delete().eq("flow_id", id);
     }
-    await ZernioWhatsAppService.deleteWhatsAppFlow(id, defaultAccountId);
+    await ZernioWhatsAppService.deleteWhatsAppFlow(id, flowAccountId);
     return res.json({ success: true });
   } catch (err) {
     console.error("[DELETE /api/whatsapp/flows/:id error]:", err);
@@ -4658,7 +4857,13 @@ whatsappRouter.get("/api/whatsapp/flows/:id/preview", async (req, res) => {
     const { profileId } = await resolveUserProfileId(req);
     const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || "acc_primary";
     const invalidate = req.query.invalidate === "true";
-    const prev = await ZernioWhatsAppService.getWhatsAppFlowPreview(id, defaultAccountId, invalidate);
+    const supabase = getBackendSupabaseClient();
+    let flowAccountId = defaultAccountId;
+    if (supabase) {
+      const { data: flow } = await supabase.from("whatsapp_flows").select("account_id").eq("id", id).maybeSingle();
+      if (flow?.account_id) flowAccountId = flow.account_id;
+    }
+    const prev = await ZernioWhatsAppService.getWhatsAppFlowPreview(id, flowAccountId, invalidate);
     if (prev.preview_url) {
       return res.json({ success: true, preview_url: prev.preview_url, expires_at: prev.expires_at });
     }
@@ -4676,13 +4881,21 @@ whatsappRouter.get("/api/whatsapp/flows/:id/preview", async (req, res) => {
 whatsappRouter.post("/api/whatsapp/flows/send", async (req, res) => {
   try {
     const { profileId } = await resolveUserProfileId(req);
-    const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || "acc_primary";
-    const { to, flow_id, flow_cta, flow_action, flow_action_payload, body, draft } = req.body;
+    const { to, flow_id, flow_cta, flow_action, flow_action_payload, body, draft, accountId: customAccountId } = req.body;
     if (!to || !flow_id) {
       return res.status(400).json({ error: "Missing required fields 'to' and 'flow_id'" });
     }
+    const supabase = getBackendSupabaseClient();
+    let flowAccountId = customAccountId;
+    if (!flowAccountId && supabase) {
+      const { data: flow } = await supabase.from("whatsapp_flows").select("account_id").eq("id", flow_id).maybeSingle();
+      if (flow?.account_id) flowAccountId = flow.account_id;
+    }
+    if (!flowAccountId) {
+      flowAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || "acc_primary";
+    }
     const sendRes = await ZernioWhatsAppService.sendWhatsAppFlowMessage({
-      accountId: defaultAccountId,
+      accountId: flowAccountId,
       to,
       flow_id,
       flow_cta: flow_cta || "Open Form",
@@ -4720,8 +4933,13 @@ whatsappRouter.get("/api/whatsapp/flows/:id/responses", async (req, res) => {
     const { profileId } = await resolveUserProfileId(req);
     const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || "acc_primary";
     const supabase = getBackendSupabaseClient();
+    let flowAccountId = defaultAccountId;
+    if (supabase) {
+      const { data: flow } = await supabase.from("whatsapp_flows").select("account_id").eq("id", id).maybeSingle();
+      if (flow?.account_id) flowAccountId = flow.account_id;
+    }
     try {
-      const zResponses = await ZernioWhatsAppService.listWhatsAppFlowResponses(defaultAccountId, id);
+      const zResponses = await ZernioWhatsAppService.listWhatsAppFlowResponses(flowAccountId, id);
       if (zResponses.success && Array.isArray(zResponses.responses) && zResponses.responses.length > 0 && supabase) {
         for (const resp of zResponses.responses) {
           await supabase.from("whatsapp_flow_responses").upsert({
@@ -4781,9 +4999,11 @@ whatsappRouter.get("/api/whatsapp/flows/:id/versions", async (req, res) => {
     const { profileId } = await resolveUserProfileId(req);
     const defaultAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId) || "acc_primary";
     const supabase = getBackendSupabaseClient();
+    let flowAccountId = defaultAccountId;
     let versions = [];
     if (supabase) {
-      const { data: currentFlow } = await supabase.from("whatsapp_flows").select("lineage_id, parent_flow_id").eq("id", id).maybeSingle();
+      const { data: currentFlow } = await supabase.from("whatsapp_flows").select("lineage_id, parent_flow_id, account_id").eq("id", id).maybeSingle();
+      if (currentFlow?.account_id) flowAccountId = currentFlow.account_id;
       const lineageId = currentFlow?.lineage_id || id;
       const { data: dbVersions } = await supabase.from("whatsapp_flows").select("id, version, parent_flow_id, name, status").or(`lineage_id.eq.${lineageId},id.eq.${id}`).order("version", { ascending: false });
       if (Array.isArray(dbVersions)) {
@@ -4798,7 +5018,7 @@ whatsappRouter.get("/api/whatsapp/flows/:id/versions", async (req, res) => {
       }
     }
     try {
-      const zVersions = await ZernioWhatsAppService.listWhatsAppFlowVersions(id, defaultAccountId);
+      const zVersions = await ZernioWhatsAppService.listWhatsAppFlowVersions(id, flowAccountId);
       if (Array.isArray(zVersions) && zVersions.length > 0) {
         versions = zVersions;
       }
@@ -4838,6 +5058,130 @@ whatsappRouter.get("/api/whatsapp/flows/encryption-key", async (req, res) => {
     console.error("[GET /api/whatsapp/flows/encryption-key error]:", err);
     return res.status(500).json({ error: err.message || "Failed to get encryption key status" });
   }
+});
+whatsappRouter.post("/api/whatsapp/flows/exchange", async (req, res) => {
+  try {
+    const body = req.body || {};
+    if (body.action === "ping") {
+      return res.status(200).json({
+        data: {
+          status: "active"
+        }
+      });
+    }
+    if (body.action === "data_exchange" && body.data?.error) {
+      console.warn("[Meta Flow Error Notification]:", body.data);
+      return res.status(200).json({
+        data: {
+          acknowledged: true
+        }
+      });
+    }
+    if (body.encrypted_flow_data && body.encrypted_aes_key && body.initial_vector) {
+      const privatePem = process.env.FLOW_PRIVATE_KEY || process.env.PRIVATE_KEY;
+      if (privatePem) {
+        try {
+          const decryptedAesKey = crypto6.privateDecrypt(
+            {
+              key: crypto6.createPrivateKey(privatePem),
+              padding: crypto6.constants.RSA_PKCS1_OAEP_PADDING,
+              oaepHash: "sha256"
+            },
+            Buffer.from(body.encrypted_aes_key, "base64")
+          );
+          const flowDataBuffer = Buffer.from(body.encrypted_flow_data, "base64");
+          const ivBuffer = Buffer.from(body.initial_vector, "base64");
+          const TAG_LENGTH = 16;
+          const encryptedBody = flowDataBuffer.subarray(0, -TAG_LENGTH);
+          const authTag = flowDataBuffer.subarray(-TAG_LENGTH);
+          const decipher = crypto6.createDecipheriv("aes-128-gcm", decryptedAesKey, ivBuffer);
+          decipher.setAuthTag(authTag);
+          const decryptedPayloadStr = Buffer.concat([decipher.update(encryptedBody), decipher.final()]).toString("utf8");
+          const decrypted = JSON.parse(decryptedPayloadStr);
+          const action2 = decrypted.action;
+          const screen2 = decrypted.screen;
+          const flowToken2 = decrypted.flow_token;
+          const clientData2 = decrypted.data || {};
+          let responseObj;
+          if (action2 === "INIT") {
+            responseObj = {
+              screen: screen2 || "START",
+              data: { status: "ready", ...clientData2 }
+            };
+          } else if (action2 === "BACK") {
+            responseObj = {
+              screen: screen2 || "START",
+              data: { refreshed: true, ...clientData2 }
+            };
+          } else {
+            responseObj = {
+              screen: "SUCCESS",
+              data: {
+                extension_message_response: {
+                  params: {
+                    flow_token: flowToken2 || "flow_token_live",
+                    ...clientData2
+                  }
+                }
+              }
+            };
+          }
+          const flippedIv = Buffer.from(ivBuffer.map((b) => b ^ 255));
+          const cipher = crypto6.createCipheriv("aes-128-gcm", decryptedAesKey, flippedIv);
+          const cipherText = Buffer.concat([
+            cipher.update(JSON.stringify(responseObj), "utf8"),
+            cipher.final(),
+            cipher.getAuthTag()
+          ]);
+          res.setHeader("Content-Type", "text/plain");
+          return res.status(200).send(cipherText.toString("base64"));
+        } catch (decryptErr) {
+          console.error("[Flow Decryption Error]:", decryptErr.message);
+          return res.status(421).send("Decryption failed");
+        }
+      }
+    }
+    const action = body.action || "data_exchange";
+    const screen = body.screen;
+    const flowToken = body.flow_token || `token_${Date.now()}`;
+    const clientData = body.data || {};
+    if (action === "INIT") {
+      return res.status(200).json({
+        screen: screen || "START",
+        data: { status: "initialized", available_options: [], ...clientData }
+      });
+    }
+    if (action === "BACK") {
+      return res.status(200).json({
+        screen: screen || "START",
+        data: { status: "refreshed", ...clientData }
+      });
+    }
+    return res.status(200).json({
+      screen: "SUCCESS",
+      data: {
+        extension_message_response: {
+          params: {
+            flow_token: flowToken,
+            ...clientData
+          }
+        }
+      }
+    });
+  } catch (err) {
+    console.error("[POST /api/whatsapp/flows/exchange error]:", err);
+    return res.status(500).json({ error: err.message || "Flow endpoint processing error" });
+  }
+});
+whatsappRouter.get("/api/whatsapp/flows/exchange", (_req, res) => {
+  return res.json({
+    status: "active",
+    endpoint: "/api/whatsapp/flows/exchange",
+    data_api_version: "3.0",
+    meta_compatible: true,
+    capabilities: ["ping", "INIT", "BACK", "data_exchange", "encryption_ready"],
+    timestamp: (/* @__PURE__ */ new Date()).toISOString()
+  });
 });
 whatsappRouter.get("/api/whatsapp/campaigns/overview", async (req, res) => {
   try {
