@@ -1675,6 +1675,7 @@ export function cleanAndNormalizeMetaFlowJson(rawJson: any): any {
       delete screen.success;
 
       const nextScreenId = cloned.screens[idx + 1].id;
+      const targetScreen = cloned.screens[idx + 1];
 
       if (!footerComp) {
         footerComp = {
@@ -1690,10 +1691,35 @@ export function cleanAndNormalizeMetaFlowJson(rawJson: any): any {
       } else {
         const currentAction = footerComp['on-click-action'];
         if (!currentAction || currentAction.name !== 'data_exchange') {
+          // Meta rule: navigate.payload should NOT carry user form values forward since they are
+          // accessible globally via ${screen.<SRC>.form.<field>}. Passing payload keys without
+          // schema in targetScreen.data causes: "Following fields are missing in the next screen's data model: [...]"
+          const existingPayload = currentAction?.payload || {};
+          const cleanNavigatePayload: Record<string, any> = {};
+
+          // Check target screen layout to see if it specifically binds ${data.some_key}
+          const targetScreenLayoutJson = JSON.stringify(targetScreen?.layout || {});
+
+          for (const [pk, pv] of Object.entries(existingPayload)) {
+            // If target screen specifically uses ${data.pk}, retain and ensure targetScreen.data declares it
+            if (targetScreenLayoutJson.includes(`\${data.${pk}}`)) {
+              cleanNavigatePayload[pk] = pv;
+              if (!targetScreen.data[pk]) {
+                targetScreen.data[pk] = {
+                  type: 'string',
+                  __example__: typeof pv === 'string' && !pv.startsWith('${') ? pv : `sample_${pk}`
+                };
+              }
+            } else if (targetScreen?.data?.[pk]) {
+              cleanNavigatePayload[pk] = pv;
+            }
+            // Otherwise drop it so navigate.payload is empty {} per Meta v4.0-v7.3 specifications
+          }
+
           footerComp['on-click-action'] = {
             name: 'navigate',
-            next: { type: 'screen', name: nextScreenId },
-            payload: currentAction?.payload || {}
+            next: { type: 'screen', name: currentAction?.next?.name || nextScreenId },
+            payload: cleanNavigatePayload
           };
         } else if (currentAction.name === 'navigate' && (!currentAction.next || !currentAction.next.name)) {
           currentAction.next = { type: 'screen', name: nextScreenId };
@@ -1756,6 +1782,62 @@ export function cleanAndNormalizeMetaFlowJson(rawJson: any): any {
     }
   });
 
+  // 4.5 Ensure any key remaining in a navigate.payload has a matching schema in targetScreen.data with mandatory __example__
+  cloned.screens.forEach((screen: any) => {
+    (screen.layout?.children || []).forEach((comp: any) => {
+      const action = comp['on-click-action'];
+      if (action && action.name === 'navigate' && action.next?.name) {
+        const target = cloned.screens.find((s: any) => s.id === action.next.name);
+        if (target) {
+          if (!target.data || typeof target.data !== 'object' || Array.isArray(target.data)) {
+            target.data = {};
+          }
+          if (action.payload && typeof action.payload === 'object') {
+            for (const [k, v] of Object.entries(action.payload)) {
+              if (!target.data[k]) {
+                target.data[k] = {
+                  type: typeof v === 'number' ? 'number' : typeof v === 'boolean' ? 'boolean' : 'string',
+                  __example__: typeof v === 'string' && !v.startsWith('${') ? v : (k.includes('email') ? 'user@example.com' : k.includes('phone') ? '+15551234567' : `sample_${k}`)
+                };
+              } else if (!target.data[k].__example__) {
+                target.data[k].__example__ = k.includes('email') ? 'user@example.com' : k.includes('phone') ? '+15551234567' : `sample_${k}`;
+              }
+            }
+          }
+        }
+      }
+    });
+  });
+
+  // 4.6 Ensure any dynamic reference ${data.some_field} in components has a matching schema in screen.data with mandatory __example__
+  cloned.screens.forEach((screen: any) => {
+    if (!screen.data || typeof screen.data !== 'object' || Array.isArray(screen.data)) {
+      screen.data = {};
+    }
+    const screenLayoutJson = JSON.stringify(screen.layout || {});
+    const dataRefMatches = screenLayoutJson.match(/\$\{data\.([a-zA-Z0-9_]+)\}/g);
+    if (dataRefMatches) {
+      dataRefMatches.forEach((ref: string) => {
+        const fieldName = ref.slice(7, -1);
+        if (!screen.data[fieldName]) {
+          screen.data[fieldName] = {
+            type: 'string',
+            __example__: fieldName.includes('email') ? 'user@example.com' : fieldName.includes('name') ? 'John Doe' : `sample_${fieldName}`
+          };
+        } else if (!screen.data[fieldName].__example__) {
+          screen.data[fieldName].__example__ = fieldName.includes('email') ? 'user@example.com' : `sample_${fieldName}`;
+        }
+      });
+    }
+
+    // Ensure every existing property in screen.data has __example__
+    for (const [propName, propDef] of Object.entries(screen.data)) {
+      if (propDef && typeof propDef === 'object' && !(propDef as any).__example__) {
+        (propDef as any).__example__ = propName.includes('email') ? 'user@example.com' : propName.includes('name') ? 'John Doe' : `sample_${propName}`;
+      }
+    }
+  });
+
   // 5. Build or prune routing_model per Meta endpoint rules
   const hasEndpoint = !!(cloned.data_api_version === '3.0' || cloned.data_channel_uri || cloned.endpoint_uri);
   if (hasEndpoint) {
@@ -1798,9 +1880,9 @@ export function cleanAndNormalizeMetaFlowJson(rawJson: any): any {
 }
 
 /**
- * Validate Meta Flow JSON against v7.3 / v6.0 / v5.0 specification
+ * Validate Meta Flow JSON against v7.3 / v6.0 / v5.0 specification with complete Data Model quality checking
  */
-function validateMetaFlowJson(flowJson: any): { valid: boolean; errors: any[] } {
+export function validateMetaFlowJson(flowJson: any): { valid: boolean; errors: any[] } {
   const errors: any[] = [];
   if (!flowJson || typeof flowJson !== 'object') {
     return {
@@ -1829,8 +1911,10 @@ function validateMetaFlowJson(flowJson: any): { valid: boolean; errors: any[] } 
   }
 
   const screenIds = new Set<string>();
+  const screensMap = new Map<string, any>();
   let hasTerminal = false;
 
+  // First pass: index screens and screen IDs
   flowJson.screens.forEach((screen: any, screenIdx: number) => {
     const screenPath = `screens[${screenIdx}]`;
     if (!screen.id || typeof screen.id !== 'string') {
@@ -1841,7 +1925,6 @@ function validateMetaFlowJson(flowJson: any): { valid: boolean; errors: any[] } 
         pointers: [{ path: `${screenPath}.id` }]
       });
     } else {
-      // META VALIDATION: Property 'id' should only consist of alphabets and underscores.
       if (!/^[a-zA-Z_]+$/.test(screen.id)) {
         errors.push({
           error: 'INVALID_SCREEN_ID',
@@ -1860,10 +1943,29 @@ function validateMetaFlowJson(flowJson: any): { valid: boolean; errors: any[] } 
         });
       }
       screenIds.add(screen.id);
+      screensMap.set(screen.id, screen);
     }
+  });
+
+  const totalScreens = flowJson.screens.length;
+
+  // Second pass: screen state machine, layouts, component limits, and data model consistency
+  flowJson.screens.forEach((screen: any, screenIdx: number) => {
+    const screenPath = `screens[${screenIdx}]`;
+    const isLastScreen = screenIdx === totalScreens - 1;
 
     if (screen.terminal === true) {
       hasTerminal = true;
+    }
+
+    // State machine check: intermediate screens cannot be terminal
+    if (totalScreens > 1 && !isLastScreen && screen.terminal === true) {
+      errors.push({
+        error: 'INVALID_TERMINAL_STATE',
+        error_type: 'FLOW_JSON_ERROR',
+        message: `Intermediate screen '${screen.id}' has 'terminal: true'. Only the final terminal screen should have 'terminal: true'.`,
+        pointers: [{ path: `${screenPath}.terminal` }]
+      });
     }
 
     if (!screen.layout || typeof screen.layout !== 'object') {
@@ -1895,6 +1997,29 @@ function validateMetaFlowJson(flowJson: any): { valid: boolean; errors: any[] } 
       return;
     }
 
+    if (screen.layout.children.length > 50) {
+      errors.push({
+        error: 'COMPONENT_LIMIT_EXCEEDED',
+        error_type: 'FLOW_JSON_ERROR',
+        message: `Screen '${screen.id}' has ${screen.layout.children.length} components, exceeding Meta limit of 50.`,
+        pointers: [{ path: `${screenPath}.layout.children` }]
+      });
+    }
+
+    // Check every property in screen.data has mandatory __example__
+    if (screen.data && typeof screen.data === 'object' && !Array.isArray(screen.data)) {
+      for (const [propName, propDef] of Object.entries(screen.data)) {
+        if (!propDef || typeof propDef !== 'object' || !(propDef as any).__example__) {
+          errors.push({
+            error: 'MISSING_EXAMPLE_IN_DATA',
+            error_type: 'JSON_SCHEMA_ERROR',
+            message: `Field '${propName}' in screen '${screen.id}' data model is missing mandatory '__example__' property`,
+            pointers: [{ path: `${screenPath}.data.${propName}` }]
+          });
+        }
+      }
+    }
+
     // Check components
     let hasFooter = false;
     screen.layout.children.forEach((comp: any, compIdx: number) => {
@@ -1910,6 +2035,70 @@ function validateMetaFlowJson(flowJson: any): { valid: boolean; errors: any[] } 
 
       if (comp.type === 'Footer') {
         hasFooter = true;
+        const action = comp['on-click-action'];
+
+        if (!isLastScreen) {
+          // Intermediate screen: Footer must navigate or data_exchange, NOT complete
+          if (action?.name === 'complete') {
+            errors.push({
+              error: 'INVALID_ACTION_ON_NON_TERMINAL',
+              error_type: 'FLOW_JSON_ERROR',
+              message: `Screen '${screen.id}' is non-terminal but has a 'complete' action. Non-terminal screens must use 'navigate' or 'data_exchange'.`,
+              pointers: [{ path: `${compPath}.on-click-action` }]
+            });
+          }
+        } else {
+          // Terminal screen: Footer must complete or data_exchange, NOT navigate
+          if (action?.name === 'navigate') {
+            errors.push({
+              error: 'INVALID_ACTION_ON_TERMINAL',
+              error_type: 'FLOW_JSON_ERROR',
+              message: `Terminal screen '${screen.id}' cannot have a 'navigate' action. Terminal screens must terminate with 'complete'.`,
+              pointers: [{ path: `${compPath}.on-click-action` }]
+            });
+          }
+        }
+
+        // Meta rule: Check navigate action targets and data model schema
+        if (action?.name === 'navigate') {
+          const targetName = action.next?.name;
+          if (!targetName) {
+            errors.push({
+              error: 'MISSING_TARGET_SCREEN',
+              error_type: 'FLOW_JSON_ERROR',
+              message: `Footer navigate action in screen '${screen.id}' must specify 'next.name'`,
+              pointers: [{ path: `${compPath}.on-click-action.next` }]
+            });
+          } else if (!screenIds.has(targetName)) {
+            errors.push({
+              error: 'TARGET_SCREEN_NOT_FOUND',
+              error_type: 'FLOW_JSON_ERROR',
+              message: `Target screen '${targetName}' specified in '${screen.id}' does not exist in flow screens`,
+              pointers: [{ path: `${compPath}.on-click-action.next.name` }]
+            });
+          } else {
+            // CRITICAL CHECK: Following fields are missing in the next screen's data model: [...]
+            const targetScreen = screensMap.get(targetName);
+            const targetData = targetScreen?.data || {};
+            if (action.payload && typeof action.payload === 'object') {
+              const missingKeys: string[] = [];
+              for (const pk of Object.keys(action.payload)) {
+                if (!targetData[pk]) {
+                  missingKeys.push(pk);
+                }
+              }
+              if (missingKeys.length > 0) {
+                errors.push({
+                  error: 'DATA_MODEL_MISMATCH',
+                  error_type: 'FLOW_JSON_ERROR',
+                  message: `Following fields are missing in the next screen's data model: [${missingKeys.join(', ')}].`,
+                  screen: targetName,
+                  pointers: [{ path: `${compPath}.on-click-action.payload` }]
+                });
+              }
+            }
+          }
+        }
       }
 
       const interactiveTypes = ['TextInput', 'TextArea', 'Dropdown', 'RadioButtonsGroup', 'CheckboxGroup', 'DatePicker', 'OptIn'];
@@ -1919,6 +2108,16 @@ function validateMetaFlowJson(flowJson: any): { valid: boolean; errors: any[] } 
           error_type: 'JSON_SCHEMA_ERROR',
           message: `Interactive component '${comp.type}' in screen '${screen.id}' must have a 'name' property`,
           pointers: [{ path: `${compPath}.name` }]
+        });
+      }
+
+      // Check text lengths
+      if ((comp.type === 'TextHeading' || comp.type === 'TextSubheading') && comp.text && comp.text.length > 80) {
+        errors.push({
+          error: 'TEXT_TOO_LONG',
+          error_type: 'JSON_SCHEMA_ERROR',
+          message: `Component '${comp.type}' text exceeds Meta limit of 80 characters (${comp.text.length} chars)`,
+          pointers: [{ path: `${compPath}.text` }]
         });
       }
     });
@@ -2272,6 +2471,13 @@ whatsappRouter.post('/api/whatsapp/flows', async (req: Request, res: Response) =
     const finalFlowJson = cleanAndNormalizeMetaFlowJson(rawFlowJson);
     const validation = validateMetaFlowJson(finalFlowJson);
 
+    if (!validation.valid) {
+      return res.status(400).json({
+        error: `Flow JSON Quality Check Failed: ${validation.errors[0].message}`,
+        validation_errors: validation.errors,
+      });
+    }
+
     // Save to Supabase
     const newRecord: WhatsAppFlow = {
       id: createdFlowId,
@@ -2297,7 +2503,22 @@ whatsappRouter.post('/api/whatsapp/flows', async (req: Request, res: Response) =
 
     // If upload to Zernio is possible, upload the clean normalized JSON
     if (zernioRes.success && finalFlowJson) {
-      await ZernioWhatsAppService.uploadWhatsAppFlowJson(createdFlowId, defaultAccountId, finalFlowJson);
+      try {
+        const uploadRes = await ZernioWhatsAppService.uploadWhatsAppFlowJson(createdFlowId, defaultAccountId, finalFlowJson);
+        if (uploadRes.validation_errors && uploadRes.validation_errors.length > 0) {
+          newRecord.validation_errors = [...validation.errors, ...uploadRes.validation_errors];
+          if (supabase) {
+            await supabase.from('whatsapp_flows').update({ validation_errors: newRecord.validation_errors }).eq('id', createdFlowId);
+          }
+          return res.status(400).json({
+            error: `Meta rejected Flow JSON: ${uploadRes.validation_errors[0].message || uploadRes.validation_errors[0].error}`,
+            validation_errors: newRecord.validation_errors,
+            flow: newRecord,
+          });
+        }
+      } catch (uploadErr: any) {
+        console.warn('[Zernio initial JSON upload error]:', uploadErr.message);
+      }
     }
 
     // If immediate publish requested
@@ -2378,6 +2599,15 @@ whatsappRouter.put('/api/whatsapp/flows/:id/json', async (req: Request<IdParams>
     const normalizedFlowJson = cleanAndNormalizeMetaFlowJson(flow_json);
     const validation = validateMetaFlowJson(normalizedFlowJson);
 
+    // If internal validation failed, reject immediately with 400
+    if (!validation.valid) {
+      return res.status(400).json({
+        success: false,
+        error: `Meta Flow Quality Check Failed: ${validation.errors[0].message}`,
+        validation_errors: validation.errors,
+      });
+    }
+
     // If live account exists, push to Zernio
     let metaErrors: any[] = [];
     try {
@@ -2385,7 +2615,14 @@ whatsappRouter.put('/api/whatsapp/flows/:id/json', async (req: Request<IdParams>
       if (uploadRes.validation_errors && uploadRes.validation_errors.length > 0) {
         metaErrors = uploadRes.validation_errors;
       }
-    } catch {}
+    } catch (zernioErr: any) {
+      console.warn('[Zernio upload error]:', zernioErr.message);
+      metaErrors.push({
+        error: 'META_UPLOAD_ERROR',
+        error_type: 'FLOW_JSON_ERROR',
+        message: zernioErr.message,
+      });
+    }
 
     const allErrors = [...validation.errors, ...metaErrors];
 
@@ -2405,10 +2642,21 @@ whatsappRouter.put('/api/whatsapp/flows/:id/json', async (req: Request<IdParams>
       await supabase.from('whatsapp_flows').update(updatePayload).eq('id', id);
     }
 
+    if (allErrors.length > 0) {
+      const firstMsg = allErrors[0].message || allErrors[0].error || 'Flow JSON validation error';
+      return res.status(400).json({
+        success: false,
+        error: `Meta Flow JSON validation failed: ${firstMsg}`,
+        validation_errors: allErrors,
+        flow_json: normalizedFlowJson,
+      });
+    }
+
     return res.json({
       success: true,
-      valid: allErrors.length === 0,
-      validation_errors: allErrors,
+      valid: true,
+      validation_errors: [],
+      flow_json: normalizedFlowJson,
     });
   } catch (err: any) {
     console.error('[PUT /api/whatsapp/flows/:id/json error]:', err);

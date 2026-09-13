@@ -23,6 +23,7 @@ import {
   WhatsAppFlowValidationError
 } from '../../lib/whatsappTypes';
 import { getAuthHeaders } from '../../lib/frontendAuth';
+import { evaluateFlowQuality, autoFixFlowScreens, FlowQualityIssue } from '../../lib/flowQualityChecker';
 
 export interface FlowsStudioProps {
   userSession?: any;
@@ -624,6 +625,20 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = ({ userSession }) => {
   const [copiedJson, setCopiedJson] = useState<boolean>(false);
   const [isTestingPing, setIsTestingPing] = useState<boolean>(false);
   const [pingStatus, setPingStatus] = useState<{ ok: boolean; message: string } | null>(null);
+  const [showQualityModal, setShowQualityModal] = useState<boolean>(false);
+
+  const qualityIssues = useMemo(() => {
+    return evaluateFlowQuality(builderScreens, endpointUri);
+  }, [builderScreens, endpointUri]);
+
+  const handleAutoFixFlow = () => {
+    const fixed = autoFixFlowScreens(builderScreens, endpointUri);
+    setBuilderScreens(fixed);
+    setRawJsonText(JSON.stringify({ version: '7.3', screens: fixed }, null, 2));
+    setErrorBanner(null);
+    setSuccessBanner('Flow screens automatically synchronized and compliant with Meta v7.3 standard.');
+    setTimeout(() => setSuccessBanner(null), 3500);
+  };
 
   const handleTestEndpointPing = async () => {
     setIsTestingPing(true);
@@ -886,13 +901,21 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = ({ userSession }) => {
                 payload: currentAction.payload || {},
               };
             } else {
+              const cleanPayload: Record<string, any> = {};
+              const targetLayout = JSON.stringify(nextScreen?.layout || {});
+              for (const [pk, pv] of Object.entries(currentAction?.payload || {})) {
+                if (targetLayout.includes(`\${data.${pk}}`) || nextScreen?.data?.[pk]) {
+                  cleanPayload[pk] = pv;
+                }
+              }
+
               cleanComp['on-click-action'] = {
                 name: 'navigate',
                 next: {
                   type: 'screen',
                   name: currentAction?.next?.name || nextScreenCleanId,
                 },
-                payload: currentAction?.payload || {},
+                payload: cleanPayload,
               };
             }
           } else {
@@ -955,11 +978,27 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = ({ userSession }) => {
         }
       }
 
+      // Ensure all declared fields in screen.data have mandatory __example__
+      const cleanData: Record<string, any> = {};
+      for (const [propName, propDef] of Object.entries(s.data || {})) {
+        if (propDef && typeof propDef === 'object') {
+          cleanData[propName] = {
+            ...(propDef as any),
+            __example__: (propDef as any).__example__ || (propName.includes('email') ? 'user@example.com' : propName.includes('name') ? 'John Doe' : `sample_${propName}`),
+          };
+        } else {
+          cleanData[propName] = {
+            type: 'string',
+            __example__: propName.includes('email') ? 'user@example.com' : `sample_${propName}`,
+          };
+        }
+      }
+
       const screenObj: FlowScreen = {
         id: cleanId,
         title: s.title || `Screen ${idx + 1}`,
         terminal: isTerminal,
-        data: s.data || {},
+        data: cleanData,
         layout: {
           type: 'SingleColumnLayout',
           children,
@@ -1318,7 +1357,7 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = ({ userSession }) => {
       let flowJsonToSave = currentCompiledJson;
 
       // If user is currently editing in the raw JSON tab, parse and save those edits
-      if (builderTab === 'json') {
+      if (builderTab === 'code' || builderTab === ('json' as any)) {
         try {
           const parsed = JSON.parse(rawJsonText);
           if (parsed && Array.isArray(parsed.screens) && parsed.screens.length > 0) {
@@ -1327,6 +1366,16 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = ({ userSession }) => {
         } catch (e: any) {
           throw new Error('Cannot save: Invalid JSON syntax in editor - ' + e.message);
         }
+      }
+
+      // Quality Checker validation against Meta WhatsApp Business Flow specification
+      const issues = evaluateFlowQuality(flowJsonToSave.screens || [], endpointUri);
+      const criticalErrors = issues.filter(q => q.severity === 'error');
+      if (criticalErrors.length > 0) {
+        const errorListStr = criticalErrors.map(e => `• [${e.screenId || 'Flow'}] ${e.message}`).join('\n');
+        throw new Error(
+          `Cannot save draft Flow: ${criticalErrors.length} Meta specification error(s) detected.\n${errorListStr}\n\nClick "Auto-Fix for Meta" to automatically resolve these issues.`
+        );
       }
 
       // Pre-flight check on Screen IDs: Meta requires letters and underscores only
@@ -1351,14 +1400,17 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = ({ userSession }) => {
         const res = await fetch('/api/whatsapp/flows', {
           method: 'POST',
           headers: {
-            ...getAuthHeaders(),
+            ...getAuthHeaders(userSession),
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(payload),
         });
         const data = await res.json();
         if (!res.ok) {
-          throw new Error(data.error || 'Failed to create flow');
+          const detailedMsg = data.errors?.length
+            ? `${data.error}: ${data.errors.map((e: any) => e.message || e.error).join('; ')}`
+            : data.error || 'Failed to create flow';
+          throw new Error(detailedMsg);
         }
         setEditingFlow(data.flow);
         setSuccessBanner(`Flow "${data.flow.name}" successfully created!`);
@@ -1367,7 +1419,7 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = ({ userSession }) => {
         const res = await fetch(`/api/whatsapp/flows/${editingFlow.id}/json`, {
           method: 'PUT',
           headers: {
-            ...getAuthHeaders(),
+            ...getAuthHeaders(userSession),
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
@@ -1377,7 +1429,10 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = ({ userSession }) => {
         });
         const data = await res.json();
         if (!res.ok) {
-          throw new Error(data.error || 'Failed to update Flow JSON');
+          const detailedMsg = data.errors?.length
+            ? `${data.error}: ${data.errors.map((e: any) => e.message || e.error).join('; ')}`
+            : data.error || 'Failed to update Flow JSON';
+          throw new Error(detailedMsg);
         }
         setSuccessBanner('Flow JSON uploaded and saved successfully.');
       }
@@ -1397,6 +1452,17 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = ({ userSession }) => {
     const targetId = flowId || editingFlow?.id;
     if (!targetId) return;
 
+    // Run quality checker preflight
+    const issues = evaluateFlowQuality(builderScreens, endpointUri);
+    const criticalErrors = issues.filter(q => q.severity === 'error');
+    if (criticalErrors.length > 0) {
+      const errorListStr = criticalErrors.map(e => `• [${e.screenId || 'Flow'}] ${e.message}`).join('\n');
+      setErrorBanner(
+        `Cannot publish Flow: ${criticalErrors.length} Meta specification error(s) detected.\n${errorListStr}\n\nClick "Auto-Fix for Meta" to automatically resolve these issues.`
+      );
+      return;
+    }
+
     if (!confirm('Are you sure you want to publish this Flow?\n\nPublishing makes the Flow LIVE and IMMUTABLE per Meta specifications. Any future changes will require cloning into a new version.')) {
       return;
     }
@@ -1412,7 +1478,7 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = ({ userSession }) => {
 
       const res = await fetch(`/api/whatsapp/flows/${targetId}/publish`, {
         method: 'POST',
-        headers: getAuthHeaders(),
+        headers: getAuthHeaders(userSession),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -2199,6 +2265,47 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = ({ userSession }) => {
                 </button>
               </div>
 
+              {/* Quality Checker Status & Auto-Fix */}
+              <div className="flex items-center gap-2">
+                {qualityIssues.length === 0 ? (
+                  <button
+                    onClick={() => setShowQualityModal(true)}
+                    className="flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-semibold cursor-pointer hover:bg-emerald-100 transition-all shadow-2xs"
+                    title="Meta Flow JSON specification quality check passed"
+                  >
+                    <ShieldCheck size={14} className="text-emerald-600" />
+                    <span>Meta v7.3 Valid</span>
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => setShowQualityModal(true)}
+                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold border cursor-pointer transition-all ${
+                        qualityIssues.some(q => q.severity === 'error')
+                          ? 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'
+                          : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
+                      }`}
+                      title="Click to view Meta specification validation details"
+                    >
+                      <ShieldAlert size={14} className={qualityIssues.some(q => q.severity === 'error') ? 'text-red-500' : 'text-amber-500'} />
+                      <span>
+                        {qualityIssues.filter(q => q.severity === 'error').length} Error{qualityIssues.filter(q => q.severity === 'error').length === 1 ? '' : 's'}
+                        {qualityIssues.filter(q => q.severity === 'warning').length > 0 && ` (${qualityIssues.filter(q => q.severity === 'warning').length} warn)`}
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={handleAutoFixFlow}
+                      className="flex items-center gap-1.5 px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
+                      title="Automatically fix payload, data models, and terminal properties to match Meta Flow JSON standards"
+                    >
+                      <Sparkles size={13} />
+                      <span>Auto-Fix for Meta</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
               {/* Action Buttons */}
               <div className="flex items-center gap-2">
                 {editingFlow.status === 'DRAFT' && (
@@ -2241,6 +2348,28 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = ({ userSession }) => {
                 </button>
               </div>
             </div>
+
+            {/* Studio Inner Error / Quality Warning Banner */}
+            {errorBanner && (
+              <div className="px-6 py-2.5 bg-red-50 border-b border-red-200 text-red-700 text-xs flex items-center justify-between shadow-2xs">
+                <div className="flex items-center gap-2 max-w-4xl">
+                  <AlertCircle size={15} className="text-red-500 shrink-0" />
+                  <span className="font-medium whitespace-pre-line">{errorBanner}</span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={handleAutoFixFlow}
+                    className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs flex items-center gap-1"
+                  >
+                    <Sparkles size={12} />
+                    <span>Auto-Fix for Meta</span>
+                  </button>
+                  <button onClick={() => setErrorBanner(null)} className="hover:text-red-900 cursor-pointer p-1">
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* ── Studio Body (3 Columns) ── */}
             {builderTab === 'visual' && (
@@ -2730,7 +2859,7 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = ({ userSession }) => {
                                       'on-click-action': {
                                         name: actionType,
                                         next: actionType === 'navigate' ? { type: 'screen', name: defaultNext } : undefined,
-                                        payload: activeComponent['on-click-action']?.payload || {},
+                                        payload: actionType === 'navigate' ? {} : (activeComponent['on-click-action']?.payload || {}),
                                       },
                                     });
                                     if (actionType === 'navigate') {
@@ -3400,6 +3529,124 @@ export const FlowsStudio: React.FC<FlowsStudioProps> = ({ userSession }) => {
               >
                 Close
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          MODAL 6: META QUALITY CHECKER & AUDIT INSPECTOR
+      ========================================================================= */}
+      {showQualityModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl border border-gray-200 shadow-2xl max-w-2xl w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between pb-3 border-b border-gray-100 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${
+                  qualityIssues.some(q => q.severity === 'error') ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'
+                }`}>
+                  {qualityIssues.some(q => q.severity === 'error') ? <ShieldAlert size={18} /> : <ShieldCheck size={18} />}
+                </div>
+                <div>
+                  <h3 className="font-bold text-gray-900 text-sm">Meta WhatsApp Flow Quality Checker</h3>
+                  <p className="text-xs text-gray-500">Official Flow JSON v7.3 specification validator</p>
+                </div>
+              </div>
+              <button onClick={() => setShowQualityModal(false)} className="text-gray-400 hover:text-gray-700 cursor-pointer p-1">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-3 pr-1 text-xs">
+              {qualityIssues.length === 0 ? (
+                <div className="py-12 text-center space-y-3 bg-emerald-50/50 rounded-2xl border border-emerald-100 p-6">
+                  <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto">
+                    <CheckCircle2 size={24} />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-gray-900 text-sm">Flow is 100% Meta Compliant!</h4>
+                    <p className="text-xs text-gray-500 max-w-md mx-auto mt-1">
+                      No data model mismatches, undeclared variables, or routing flaws detected. This Flow will render without errors in Meta Business Manager and WhatsApp.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl text-amber-900 text-xs flex items-center justify-between">
+                    <div>
+                      <span className="font-bold">{qualityIssues.filter(q => q.severity === 'error').length} Critical Error(s)</span>
+                      {qualityIssues.filter(q => q.severity === 'warning').length > 0 && (
+                        <span> and {qualityIssues.filter(q => q.severity === 'warning').length} Warning(s)</span>
+                      )}
+                      <span className="block text-[11px] text-amber-800 mt-0.5">
+                        Meta rejects draft saves and publishing if any critical errors exist. Click Auto-Fix to automatically heal all issues.
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    {qualityIssues.map((issue, qIdx) => (
+                      <div
+                        key={qIdx}
+                        className={`p-3.5 rounded-xl border text-xs space-y-1.5 ${
+                          issue.severity === 'error'
+                            ? 'bg-red-50/40 border-red-200 text-red-900'
+                            : 'bg-amber-50/40 border-amber-200 text-amber-900'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full ${
+                              issue.severity === 'error' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+                            }`}>
+                              {issue.severity}
+                            </span>
+                            {issue.screenId && (
+                              <span className="font-mono font-bold text-[11px] bg-white px-2 py-0.5 rounded border border-gray-200">
+                                {issue.screenId}
+                              </span>
+                            )}
+                            <span className="font-bold text-gray-800">{issue.rule}</span>
+                          </div>
+                        </div>
+
+                        <p className="text-gray-700 font-medium">{issue.message}</p>
+
+                        {issue.remediation && (
+                          <div className="pt-1 text-[11px] text-gray-500 bg-white/70 p-2 rounded-lg border border-gray-100">
+                            <span className="font-semibold text-gray-700">Meta Rule: </span>
+                            {issue.remediation}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="pt-3 border-t border-gray-100 flex items-center justify-between shrink-0">
+              <span className="text-[11px] text-gray-400">Meta Flow JSON Specification v7.3</span>
+              <div className="flex items-center gap-2">
+                {qualityIssues.length > 0 && (
+                  <button
+                    onClick={() => {
+                      handleAutoFixFlow();
+                      setShowQualityModal(false);
+                    }}
+                    className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs flex items-center gap-1.5"
+                  >
+                    <Sparkles size={13} />
+                    <span>Auto-Fix All Issues</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowQualityModal(false)}
+                  className="px-4 py-2 bg-gray-100 text-gray-700 text-xs font-semibold rounded-xl hover:bg-gray-200 cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>
