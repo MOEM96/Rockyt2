@@ -56,6 +56,22 @@ export class ZernioWhatsAppService {
             return flowAcc.account_id;
           }
         }
+
+        if (userId) {
+          const { data: flowUserAcc } = await supabase
+            .from('whatsapp_flows')
+            .select('account_id')
+            .eq('user_id', userId)
+            .not('account_id', 'is', null)
+            .neq('account_id', 'acc_primary')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (flowUserAcc?.account_id) {
+            await cacheService.set(scopeKey, flowUserAcc.account_id, CACHE_TTL.ACCOUNT);
+            return flowUserAcc.account_id;
+          }
+        }
       }
     } catch {}
 

@@ -27,7 +27,7 @@ export const CACHE_TTL = {
   FLOWS: 300,           // 5 minutes for WhatsApp Flows
   CAMPAIGNS: 180,       // 3 minutes for campaigns overview & schedule
   BUSINESS_AGENT: 600,  // 10 minutes for Astra Business Agent full state
-  CONVERSATIONS: 60,    // 60 seconds for inbox conversation threads
+  CONVERSATIONS: 300,   // 5 minutes for inbox conversation threads
   DEFAULT: 120,         // 2 minutes default
 };
 

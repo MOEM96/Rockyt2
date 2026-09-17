@@ -546,8 +546,8 @@ var CACHE_TTL = {
   // 3 minutes for campaigns overview & schedule
   BUSINESS_AGENT: 600,
   // 10 minutes for Astra Business Agent full state
-  CONVERSATIONS: 60,
-  // 60 seconds for inbox conversation threads
+  CONVERSATIONS: 300,
+  // 5 minutes for inbox conversation threads
   DEFAULT: 120
   // 2 minutes default
 };
@@ -862,6 +862,13 @@ var ZernioWhatsAppService = class _ZernioWhatsAppService {
           if (flowAcc?.account_id) {
             await cacheService.set(scopeKey, flowAcc.account_id, CACHE_TTL.ACCOUNT);
             return flowAcc.account_id;
+          }
+        }
+        if (userId) {
+          const { data: flowUserAcc } = await supabase.from("whatsapp_flows").select("account_id").eq("user_id", userId).not("account_id", "is", null).neq("account_id", "acc_primary").order("created_at", { ascending: false }).limit(1).maybeSingle();
+          if (flowUserAcc?.account_id) {
+            await cacheService.set(scopeKey, flowUserAcc.account_id, CACHE_TTL.ACCOUNT);
+            return flowUserAcc.account_id;
           }
         }
       }

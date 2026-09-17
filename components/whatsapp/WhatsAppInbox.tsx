@@ -358,13 +358,36 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onTriggerCapi, onO
     };
   }, [activeConvId, scrollToBottom]);
 
-  // Initial load
+  // Initial load & gentle background reconciliation
   useEffect(() => {
     loadConversations(true);
     loadTemplates();
-    // Reconcile in background every 20 seconds (without heavy polling)
-    const interval = setInterval(() => loadConversations(false), 20000);
-    return () => clearInterval(interval);
+
+    // Gentle heartbeat refresh (every 5 minutes, paused when tab is inactive)
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return; // Pause background polling completely when tab is hidden
+      }
+      loadConversations(false);
+    }, 300000);
+
+    let lastVisibilityFetch = Date.now();
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        const now = Date.now();
+        // Only refresh on tab focus if at least 2 minutes have elapsed since last fetch
+        if (now - lastVisibilityFetch > 120000) {
+          lastVisibilityFetch = now;
+          loadConversations(false);
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
 
   // When active conversation changes, load messages once and scroll to bottom
