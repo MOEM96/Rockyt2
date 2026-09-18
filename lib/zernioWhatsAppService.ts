@@ -1,6 +1,7 @@
 import { Zernio } from '@zernio/node';
 import { WhatsAppSandboxSession, WhatsAppAccount, WhatsAppFlow, WhatsAppFlowResponse, WhatsAppFlowVersion } from './whatsappTypes';
 import { whatsappStore } from './whatsappStore';
+import { normalizeWhatsAppMessage } from './whatsappMessageUtils';
 import { getBackendSupabaseClient } from './backendSupabase';
 import { cacheService, CACHE_TTL } from './cacheService';
 import crypto from 'crypto';
@@ -1000,8 +1001,13 @@ export class ZernioWhatsAppService {
     accountId?: string;
     text?: string;
     mediaUrl?: string;
+    attachmentName?: string;
+    attachmentType?: string;
     participantId?: string;
     templateName?: string;
+    templateComponents?: any[];
+    buttons?: any[];
+    quickReplies?: any[];
   }) {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if (apiKey && apiKey !== 'dummy_dev_key' && params.conversationId) {
@@ -1013,13 +1019,36 @@ export class ZernioWhatsAppService {
 
         const bodyPayload: any = {
           message: params.text || '',
-          attachmentUrl: params.mediaUrl,
         };
+        if (params.mediaUrl) {
+          bodyPayload.attachmentUrl = params.mediaUrl;
+        }
+        if (params.attachmentName) {
+          bodyPayload.attachmentName = params.attachmentName;
+        }
+        if (params.attachmentType) {
+          bodyPayload.attachmentType = params.attachmentType;
+        }
+        if (params.templateName) {
+          bodyPayload.template = {
+            elements: [{
+              name: params.templateName,
+              language: { code: 'en' },
+              components: params.templateComponents || []
+            }]
+          };
+        }
+        if (params.buttons && params.buttons.length > 0) {
+          bodyPayload.buttons = params.buttons;
+        }
+        if (params.quickReplies && params.quickReplies.length > 0) {
+          bodyPayload.quickReplies = params.quickReplies;
+        }
         if (effectiveAccountId) {
           bodyPayload.accountId = effectiveAccountId;
         }
 
-        const res = await fetch(`https://zernio.com/api/v1/inbox/conversations/${params.conversationId}/messages`, {
+        const res = await fetch(`https://zernio.com/api/v1/inbox/conversations/${encodeURIComponent(params.conversationId)}/messages`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${apiKey}`,
@@ -1142,22 +1171,16 @@ export class ZernioWhatsAppService {
           // Fetch messages for thread
           const threadMsgs = await this.listMessages(convId, item.accountId);
           if (Array.isArray(threadMsgs)) {
+            const allTemplates = whatsappStore.getTemplates();
             for (const m of threadMsgs) {
               msgCount++;
               const isFromContact = m.senderId === phone || m.source === 'contact';
               const direction = isFromContact ? 'incoming' : 'outgoing';
-              whatsappStore.appendMessage({
-                id: m.id || m.messageId || `msg_${Date.now()}_${Math.random()}`,
-                conversation_id: convId,
-                direction,
-                type: m.attachmentUrl ? 'image' : 'text',
-                text: m.message || m.text,
-                media_url: m.attachmentUrl,
-                status: m.status || 'delivered',
-                timestamp: m.createdAt || m.timestamp || new Date().toISOString(),
-                sender_name: m.senderName || (direction === 'incoming' ? name : 'Support Agent'),
-                sender_phone: m.senderPhone || (direction === 'incoming' ? phone : undefined),
-              });
+              const normalized = normalizeWhatsAppMessage(m, {
+                id: convId,
+                contact,
+              } as any, direction, allTemplates);
+              whatsappStore.appendMessage(normalized);
             }
           }
         }

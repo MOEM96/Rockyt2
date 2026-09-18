@@ -8,6 +8,7 @@ import { AutomationEngine } from './automationEngine';
 import { WhatsAppMessage, MetaCAPIEvent, WhatsAppContact, AutomationFlow, BroadcastCampaign, WhatsAppConversation, WhatsAppSandboxSession, WhatsAppAccount, WhatsAppFlow, WhatsAppFlowCategory, WhatsAppFlowStatus, FlowJSON, WhatsAppFlowResponse, WhatsAppFlowVersion } from './whatsappTypes';
 import { cacheService, CACHE_TTL } from './cacheService';
 import { getBackendSupabaseClient } from './backendSupabase';
+import { normalizeWhatsAppMessage } from './whatsappMessageUtils';
 import crypto from 'crypto';
 
 interface IdParams { id: string; [key: string]: string; }
@@ -292,8 +293,8 @@ whatsappRouter.post('/api/webhooks/zernio', async (req: Request, res: Response) 
     const phone = rawPhone ? (rawPhone.startsWith('+') ? rawPhone : '+' + rawPhone) : '';
     const name = sender.name || sender.username || metadata.senderName || convData?.contact?.name || phone || 'WhatsApp Contact';
     
-    // Conversation ID resolution
-    const resolvedAccId = accountData.id || event.account_id || event.accountId || metadata.accountId;
+    // Conversation ID resolution (using canonical accountId per Zernio spec)
+    const resolvedAccId = accountData.accountId || accountData.id || event.account?.accountId || event.account_id || event.accountId || metadata.accountId;
     if (resolvedAccId && resolvedAccId !== 'acc_primary') {
       ZernioWhatsAppService.setCachedAccountId(resolvedAccId);
     }
@@ -325,7 +326,7 @@ whatsappRouter.post('/api/webhooks/zernio', async (req: Request, res: Response) 
       const viaNumber = accountData.username || accountData.display_phone_number || accountData.phone || '';
       conv = {
         id: convId,
-        account_id: accountData.id || event.account_id || 'acc_primary',
+        account_id: resolvedAccId || 'acc_primary',
         profile_id: event.profileId || event.profile_id || 'prof_default',
         via_phone_number: viaNumber,
         via_platform: 'whatsapp',
@@ -362,28 +363,30 @@ whatsappRouter.post('/api/webhooks/zernio', async (req: Request, res: Response) 
     }
 
     // 3. Append message to conversation thread
-    if (msgText || msg.media_url || msg.attachmentUrl) {
-      const newMsg: WhatsAppMessage = {
-        id: msg.id || msg._id || `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        conversation_id: convId,
-        direction: direction as any,
-        type: msg.type || (msg.media_url || msg.attachmentUrl ? 'image' : 'text'),
-        text: msgText,
-        media_url: msg.media_url || msg.attachmentUrl,
-        status: direction === 'outgoing' ? 'sent' : 'delivered',
-        timestamp: msg.timestamp || msg.createdAt || new Date().toISOString(),
-        sender_name: name,
-        sender_phone: phone,
-      };
-      whatsappStore.appendMessage(newMsg);
+    if (msgText || msg.media_url || msg.attachmentUrl || msg.interactive || msg.template || msg.button) {
+      const allTemplates = whatsappStore.getTemplates();
+    const newMsg = normalizeWhatsAppMessage({
+      ...msg,
+      id: msg.id || msg._id || `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      conversationId: convId,
+      direction,
+      senderName: name,
+      senderPhone: phone,
+      text: msgText,
+      media_url: msg.media_url || msg.attachmentUrl,
+      metadata,
+      accountData,
+    }, conv, direction, allTemplates);
 
-      // 4. Broadcast in real time to connected browser dashboard clients!
-      broadcastWhatsAppEvent({
-        event: eventType || 'message.received',
-        conversationId: convId,
-        message: newMsg,
-        conversation: conv,
-      });
+    whatsappStore.appendMessage(newMsg);
+
+    // 4. Broadcast in real time to connected browser dashboard clients!
+    broadcastWhatsAppEvent({
+      event: eventType || 'message.received',
+      conversationId: convId,
+      message: newMsg,
+      conversation: conv,
+    });
 
 // Automated trigger processing disabled as no agent is deployed
     } else if (eventType === 'message.delivered' || eventType === 'message.read') {
@@ -473,17 +476,15 @@ whatsappRouter.get('/api/whatsapp/conversations', async (req: Request, res: Resp
               ai_agent_enabled: true,
               created_at: item.updatedTime || new Date().toISOString(),
               updated_at: item.updatedTime || new Date().toISOString(),
-              last_message: item.lastMessage ? {
+              last_message: item.lastMessage ? normalizeWhatsAppMessage({
                 id: `msg_sync_${item.id}_${Date.now()}`,
                 conversation_id: item.id,
                 direction: 'incoming',
-                type: 'text',
                 text: item.lastMessage,
-                status: 'delivered',
                 timestamp: lastMsgTime,
                 sender_name: name,
                 sender_phone: phone,
-              } : undefined,
+              }, undefined, 'incoming', whatsappStore.getTemplates()) : undefined,
             };
 
             whatsappStore.saveConversation(conv);
@@ -564,17 +565,15 @@ const handleSyncChatsAndContacts = async (req: Request, res: Response) => {
               ai_agent_enabled: true,
               created_at: item.updatedTime || new Date().toISOString(),
               updated_at: item.updatedTime || new Date().toISOString(),
-              last_message: item.lastMessage ? {
+              last_message: item.lastMessage ? normalizeWhatsAppMessage({
                 id: `msg_sync_${Date.now()}`,
                 conversation_id: item.id,
                 direction: 'incoming',
-                type: 'text',
                 text: item.lastMessage,
-                status: 'delivered',
                 timestamp: lastMsgTime,
                 sender_name: name,
                 sender_phone: phone,
-              } : undefined,
+              }, undefined, 'incoming', whatsappStore.getTemplates()) : undefined,
             };
 
             whatsappStore.saveConversation(conv);
@@ -638,21 +637,11 @@ whatsappRouter.get('/api/whatsapp/conversations/:id/messages', async (req: Reque
       if (accountId) {
         const liveMessages = await ZernioWhatsAppService.listMessages(id, accountId);
         if (Array.isArray(liveMessages) && liveMessages.length > 0) {
+          const allTemplates = whatsappStore.getTemplates();
           for (const m of liveMessages) {
             const isFromContact = m.senderId === conversation?.contact.phone_number || m.source === 'contact';
             const direction = isFromContact ? 'incoming' : (m.direction || 'incoming');
-            const msg: WhatsAppMessage = {
-              id: m.id || m.messageId || `msg_${Date.now()}`,
-              conversation_id: id,
-              direction: direction as any,
-              type: m.attachmentUrl ? 'image' : 'text',
-              text: m.message || m.text,
-              media_url: m.attachmentUrl,
-              status: m.status || 'delivered',
-              timestamp: m.createdAt || m.timestamp || new Date().toISOString(),
-              sender_name: m.senderName || (direction === 'incoming' ? conversation?.contact.name : 'Support Agent'),
-              sender_phone: m.senderPhone || (direction === 'incoming' ? conversation?.contact.phone_number : undefined),
-            };
+            const msg = normalizeWhatsAppMessage(m, conversation, direction, allTemplates);
             whatsappStore.appendMessage(msg);
           }
           messages = whatsappStore.getMessages(id);
@@ -672,7 +661,21 @@ whatsappRouter.get('/api/whatsapp/conversations/:id/messages', async (req: Reque
 
 whatsappRouter.post('/api/whatsapp/conversations/:id/messages', async (req: Request<IdParams>, res: Response) => {
   const { id } = req.params;
-  const { text, media_url, template_name, template_params } = req.body;
+  const { 
+    text, 
+    media_url, 
+    template_name, 
+    template_params, 
+    attachment_name, 
+    attachmentName, 
+    attachment_type, 
+    attachmentType, 
+    buttons, 
+    quick_replies, 
+    quickReplies, 
+    template_components, 
+    templateComponents 
+  } = req.body;
 
   const conv = whatsappStore.getConversation(id);
   if (!conv) {
@@ -699,6 +702,10 @@ whatsappRouter.post('/api/whatsapp/conversations/:id/messages', async (req: Requ
   }
 
   let officialMsgId = `msg_out_${Date.now()}`;
+  const effectiveAttachmentName = attachment_name || attachmentName;
+  const effectiveAttachmentType = attachment_type || attachmentType;
+  const effectiveButtons = buttons || quick_replies || quickReplies;
+  const effectiveComponents = template_components || templateComponents;
 
   // Dispatch via Zernio SDK if online and conversation ID exists
   if (id) {
@@ -708,8 +715,12 @@ whatsappRouter.post('/api/whatsapp/conversations/:id/messages', async (req: Requ
         accountId,
         text,
         mediaUrl: media_url,
+        attachmentName: effectiveAttachmentName,
+        attachmentType: effectiveAttachmentType,
         participantId: conv.contact.phone_number,
         templateName: template_name,
+        templateComponents: effectiveComponents,
+        buttons: effectiveButtons,
       });
       if (zernioRes?.message?.id || zernioRes?.id) {
         officialMsgId = zernioRes.message?.id || zernioRes.id;
@@ -719,18 +730,21 @@ whatsappRouter.post('/api/whatsapp/conversations/:id/messages', async (req: Requ
     }
   }
 
-  const msg: WhatsAppMessage = {
+  const allTemplates = whatsappStore.getTemplates();
+  const msg = normalizeWhatsAppMessage({
     id: officialMsgId,
     conversation_id: id,
     direction: 'outgoing',
-    type: template_name ? 'template' : media_url ? 'image' : 'text',
     text: text || (template_name ? `[Template: ${template_name}]` : ''),
     media_url,
+    attachmentName: effectiveAttachmentName,
+    attachmentType: effectiveAttachmentType,
     template_name,
     template_params,
+    buttons: effectiveButtons,
     status: 'sent',
     timestamp: new Date().toISOString(),
-  };
+  }, conv, 'outgoing', allTemplates);
 
   whatsappStore.appendMessage(msg);
 

@@ -4,11 +4,13 @@ import {
   Sparkles, Megaphone, User, Phone, Mail, 
   RefreshCw, Paperclip, Smile, Zap, MessageSquare, 
   ShieldCheck, LayoutTemplate, ArrowUpRight, CheckCircle2, Loader2, Bot,
-  Info, ChevronRight
+  Info, ChevronRight, FileText, Music, ExternalLink, Download,
+  MousePointerClick, MapPin
 } from 'lucide-react';
 import { PlayCircle } from 'lucide-react';
 import { getAuthHeaders } from '../../lib/frontendAuth';
 import { WhatsAppConversation, WhatsAppMessage, WhatsAppTemplate } from '../../lib/whatsappTypes';
+import { getMessagePreviewText } from '../../lib/whatsappMessageUtils';
 
 interface WhatsAppInboxProps {
   onTriggerCapi?: (convId: string, eventName: string, value?: number) => void;
@@ -535,11 +537,240 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onTriggerCapi, onO
     return 'W';
   };
 
-  // Clean message preview text (avoid raw "[Unsupported message]")
-  const getMessagePreview = (text?: string, templateName?: string) => {
-    if (templateName) return `[Template: ${templateName}]`;
-    if (!text || text === '[Unsupported message]') return 'Media / message';
-    return text;
+  // Clean message preview text using intelligent preview helper
+  const getMessagePreview = (lastMsg?: WhatsAppMessage, fallbackText?: string, templateName?: string) => {
+    return getMessagePreviewText(lastMsg, fallbackText, templateName);
+  };
+
+  // Dedicated rich renderer for WhatsApp messages (Templates, Buttons, Media, Interactive)
+  const renderMessageContent = (msg: WhatsAppMessage, isOutgoing: boolean) => {
+    const isTemplate = msg.type === 'template' || !!msg.template_name;
+    const isButtonReply = msg.type === 'button_reply' || msg.type === 'list_reply' || !!msg.interactive_data?.selected_button_title;
+    const isInteractive = msg.type === 'interactive' || (msg.interactive_data?.buttons && msg.interactive_data.buttons.length > 0);
+    const isImage = (msg.type === 'image' || msg.media_type === 'image') && !!msg.media_url;
+    const isAudio = (msg.type === 'audio' || msg.media_type === 'audio') && !!msg.media_url;
+    const isVideo = (msg.type === 'video' || msg.media_type === 'video') && !!msg.media_url;
+    const isDocument = (msg.type === 'document' || msg.media_type === 'document') && !!msg.media_url;
+    const isUnsupported = !msg.text || msg.text === '[Unsupported message]';
+
+    // 1. Template Message
+    if (isTemplate) {
+      const tmplName = msg.template_name || 'Template';
+      const matchedTemplate = msg.template_data || templates.find(t => t.name.toLowerCase() === tmplName.toLowerCase());
+      const headerComponent = matchedTemplate?.components?.find((c: any) => (c.type || '').toUpperCase() === 'HEADER');
+      const footerComponent = matchedTemplate?.components?.find((c: any) => (c.type || '').toUpperCase() === 'FOOTER');
+      const buttonsComponent = matchedTemplate?.components?.find((c: any) => (c.type || '').toUpperCase() === 'BUTTONS');
+      const templateButtons = buttonsComponent?.buttons || msg.interactive_data?.buttons || [];
+
+      return (
+        <div className="flex flex-col gap-1.5 w-full">
+          {/* Template Header Badge */}
+          <div className="flex items-center gap-1.5 text-[10px] font-semibold text-emerald-300 bg-emerald-950/70 border border-emerald-800/60 px-2 py-0.5 rounded-md w-fit">
+            <LayoutTemplate className="w-3 h-3" />
+            <span>Meta Template: {tmplName}</span>
+          </div>
+
+          {/* Header content if image or text */}
+          {headerComponent && (
+            <div className="font-semibold text-zinc-100 text-xs">
+              {headerComponent.format === 'IMAGE' && headerComponent.media_url ? (
+                <img src={headerComponent.media_url} alt="Template Header" className="w-full max-h-48 object-cover rounded-lg mb-1 border border-zinc-700/50" />
+              ) : headerComponent.text ? (
+                <span className="font-bold text-sm block mb-0.5">{headerComponent.text}</span>
+              ) : null}
+            </div>
+          )}
+
+          {/* Body Text */}
+          <p className="whitespace-pre-wrap leading-relaxed text-xs">
+            {msg.text && msg.text !== '[Unsupported message]' && !msg.text.startsWith('[Template:') 
+              ? msg.text 
+              : (matchedTemplate?.components?.find((c: any) => (c.type || '').toUpperCase() === 'BODY')?.text || `Approved Meta Template message (${tmplName})`)}
+          </p>
+
+          {/* Footer text */}
+          {footerComponent?.text && (
+            <div className="text-[10px] text-zinc-400 italic mt-0.5">
+              {footerComponent.text}
+            </div>
+          )}
+
+          {/* Action Buttons */}
+          {templateButtons && templateButtons.length > 0 && (
+            <div className="pt-2 mt-1 border-t border-zinc-700/40 flex flex-col gap-1">
+              {templateButtons.map((btn: any, idx: number) => {
+                const bText = btn.text || btn.title || 'Action';
+                const isUrl = btn.type === 'URL' || btn.type === 'url' || !!btn.url;
+                const isPhone = btn.type === 'PHONE_NUMBER' || btn.type === 'phone_number' || !!btn.phone_number;
+                return (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      if (btn.url) window.open(btn.url, '_blank');
+                      else if (btn.phone_number) window.open(`tel:${btn.phone_number}`);
+                      else {
+                        setInputText(bText);
+                      }
+                    }}
+                    className="w-full flex items-center justify-center gap-1.5 py-1.5 px-3 bg-zinc-900/90 hover:bg-emerald-950/60 text-emerald-400 hover:text-emerald-300 border border-zinc-700/60 hover:border-emerald-700/60 rounded-lg text-xs font-medium transition-colors cursor-pointer"
+                  >
+                    {isUrl ? <ExternalLink className="w-3 h-3" /> : isPhone ? <Phone className="w-3 h-3" /> : <MousePointerClick className="w-3 h-3" />}
+                    <span>{bText}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // 2. Button Reply / Quick Reply Selection
+    if (isButtonReply) {
+      const selectedTitle = msg.interactive_data?.selected_button_title || msg.text || 'Selected Option';
+      return (
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/15 border border-emerald-500/40 rounded-xl text-emerald-300 font-semibold text-xs w-fit">
+            <MousePointerClick className="w-3.5 h-3.5 text-emerald-400" />
+            <span>{selectedTitle}</span>
+          </div>
+        </div>
+      );
+    }
+
+    // 3. Interactive Message with Action Buttons
+    if (isInteractive) {
+      const buttons = msg.interactive_data?.buttons || [];
+      const header = msg.interactive_data?.header;
+      const body = msg.interactive_data?.body || (msg.text !== '[Unsupported message]' ? msg.text : '');
+      const footer = msg.interactive_data?.footer;
+
+      return (
+        <div className="flex flex-col gap-1.5 w-full">
+          {header && <div className="font-bold text-xs text-zinc-100">{header}</div>}
+          {body && <p className="whitespace-pre-wrap leading-relaxed text-xs">{body}</p>}
+          {footer && <div className="text-[10px] text-zinc-400 italic">{footer}</div>}
+          {buttons.length > 0 && (
+            <div className="pt-2 mt-1 border-t border-zinc-700/40 flex flex-col gap-1">
+              {buttons.map((btn, idx) => (
+                <button
+                  key={btn.id || idx}
+                  type="button"
+                  onClick={() => {
+                    if (btn.url) window.open(btn.url, '_blank');
+                    else setInputText(btn.title);
+                  }}
+                  className="w-full flex items-center justify-center gap-1.5 py-1.5 px-3 bg-zinc-900/90 hover:bg-emerald-950/60 text-emerald-400 hover:text-emerald-300 border border-zinc-700/60 hover:border-emerald-700/60 rounded-lg text-xs font-medium transition-colors cursor-pointer"
+                >
+                  <MousePointerClick className="w-3 h-3" />
+                  <span>{btn.title}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // 4. Media: Image
+    if (isImage) {
+      return (
+        <div className="flex flex-col gap-1">
+          <div className="rounded-xl overflow-hidden border border-zinc-700/50 bg-black/40 max-w-sm">
+            <img
+              src={msg.media_url}
+              alt={msg.text || 'WhatsApp Photo'}
+              className="w-full max-h-64 object-cover cursor-pointer hover:opacity-95 transition-opacity"
+              onClick={() => window.open(msg.media_url, '_blank')}
+            />
+          </div>
+          {msg.text && msg.text !== 'Photo' && msg.text !== '[Unsupported message]' && (
+            <p className="whitespace-pre-wrap leading-relaxed text-xs">{msg.text}</p>
+          )}
+        </div>
+      );
+    }
+
+    // 5. Media: Audio / Voice Note
+    if (isAudio) {
+      return (
+        <div className="flex flex-col gap-1.5 min-w-[240px]">
+          <div className="flex items-center gap-2 text-emerald-400 font-semibold text-xs">
+            <Music className="w-3.5 h-3.5" />
+            <span>WhatsApp Voice Message</span>
+          </div>
+          <audio controls src={msg.media_url} className="w-full h-8 accent-emerald-500 rounded" />
+          {msg.text && msg.text !== 'Voice note' && msg.text !== '[Unsupported message]' && (
+            <p className="text-xs text-zinc-300">{msg.text}</p>
+          )}
+        </div>
+      );
+    }
+
+    // 6. Media: Video
+    if (isVideo) {
+      return (
+        <div className="flex flex-col gap-1 max-w-sm">
+          <video controls src={msg.media_url} className="w-full max-h-64 rounded-xl border border-zinc-700/50" />
+          {msg.text && msg.text !== 'Video' && msg.text !== '[Unsupported message]' && (
+            <p className="whitespace-pre-wrap leading-relaxed text-xs">{msg.text}</p>
+          )}
+        </div>
+      );
+    }
+
+    // 7. Media: Document / File
+    if (isDocument) {
+      const docName = msg.filename || 'WhatsApp Document';
+      return (
+        <div className="flex items-center gap-3 p-2.5 rounded-xl bg-zinc-900/80 border border-zinc-700/60 max-w-xs">
+          <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400">
+            <FileText className="w-5 h-5" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-xs font-semibold text-zinc-100 truncate">{docName}</div>
+            <div className="text-[10px] text-zinc-400">Document Attachment</div>
+          </div>
+          <a
+            href={msg.media_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            download={docName}
+            className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors"
+            title="Download Document"
+          >
+            <Download className="w-3.5 h-3.5" />
+          </a>
+        </div>
+      );
+    }
+
+    // 8. Location
+    if (msg.type === 'location') {
+      return (
+        <div className="flex items-center gap-2 p-2 rounded-xl bg-zinc-900/80 border border-zinc-700/60 text-xs text-zinc-200">
+          <MapPin className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{msg.text || 'Location shared by contact'}</span>
+        </div>
+      );
+    }
+
+    // 9. Unsupported / Interactive fallback (Polished Card, never raw "WhatsApp interaction / media")
+    if (isUnsupported) {
+      return (
+        <div className="flex flex-col gap-1 p-2 rounded-xl bg-zinc-900/70 border border-emerald-500/30">
+          <div className="flex items-center gap-1.5 text-emerald-400 font-semibold text-[11px]">
+            <Zap className="w-3.5 h-3.5" />
+            <span>WhatsApp Interactive Response</span>
+          </div>
+          <p className="text-zinc-300 text-xs">Rich interactive response or verified message payload received.</p>
+        </div>
+      );
+    }
+
+    // 10. Standard Text Message
+    return <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>;
   };
 
   return (
@@ -626,7 +857,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onTriggerCapi, onO
               const contactPhone = conv.contact?.formatted_phone || conv.contact?.phone_number || '';
               const viaNumber = conv.via_phone_number || '';
               const initial = getInitial(contactName, contactPhone);
-              const preview = getMessagePreview(conv.last_message?.text, conv.last_message?.template_name);
+              const preview = getMessagePreview(conv.last_message, conv.last_message?.text, conv.last_message?.template_name);
               const timeDisplay = formatTimeAgo(conv.last_message?.timestamp || conv.updated_at);
               const win = getWindowTimeLeft(conv.window_expires_at);
 
@@ -775,7 +1006,6 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onTriggerCapi, onO
             ) : (
               messages.map((msg) => {
                 const isOutgoing = msg.direction === 'outgoing';
-                const isUnsupported = msg.text === '[Unsupported message]';
 
                 return (
                   <div
@@ -783,28 +1013,13 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onTriggerCapi, onO
                     className={`flex flex-col ${isOutgoing ? 'items-end' : 'items-start'}`}
                   >
                     <div
-                      className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-xs shadow-sm ${
+                      className={`max-w-[85%] sm:max-w-[75%] rounded-2xl px-4 py-2.5 text-xs shadow-sm ${
                         isOutgoing
                           ? 'bg-[#005c4b] text-white rounded-br-sm'
                           : 'bg-zinc-800 text-zinc-100 border border-zinc-700/50 rounded-bl-sm'
                       }`}
                     >
-                      
-
-                      {msg.template_name && (
-                        <div className="mb-1 text-[10px] uppercase font-bold text-emerald-200/90 bg-emerald-700/50 px-1.5 py-0.5 rounded w-max">
-                          Template: {msg.template_name}
-                        </div>
-                      )}
-
-                      {isUnsupported ? (
-                        <div className="flex items-center gap-1.5 text-zinc-400 italic">
-                          <MessageSquare className="w-3.5 h-3.5" />
-                          <span>WhatsApp interaction / media</span>
-                        </div>
-                      ) : (
-                        <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
-                      )}
+                      {renderMessageContent(msg, isOutgoing)}
 
                       {/* Timestamp & Receipts */}
                       <div

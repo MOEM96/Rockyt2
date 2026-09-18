@@ -18,12 +18,38 @@ export interface WhatsAppMessage {
   id: string;
   conversation_id: string;
   direction: MessageDirection;
-  type: 'text' | 'template' | 'image' | 'video' | 'document' | 'audio' | 'interactive' | 'location';
+  type: 'text' | 'template' | 'image' | 'video' | 'document' | 'audio' | 'interactive' | 'location' | 'sticker' | 'button_reply' | 'list_reply';
   text?: string;
   media_url?: string;
   media_caption?: string;
+  media_type?: string;
+  filename?: string;
   template_name?: string;
   template_params?: Record<string, string>;
+  template_data?: any;
+  interactive_data?: {
+    header?: string;
+    body?: string;
+    footer?: string;
+    buttons?: Array<{
+      id?: string;
+      title: string;
+      type?: string;
+      url?: string;
+      phone_number?: string;
+      payload?: string;
+    }>;
+    selected_button_id?: string;
+    selected_button_title?: string;
+  };
+  attachments?: Array<{
+    id?: string;
+    type?: string;
+    url?: string;
+    filename?: string;
+    previewUrl?: string;
+  }>;
+  metadata?: any;
   status: MessageStatus;
   timestamp: string;
   sender_name?: string;
