@@ -7299,12 +7299,14 @@ whatsappRouter.post("/api/whatsapp/sandbox/simulate-message", async (req, res) =
 whatsappRouter.post("/api/whatsapp/connect/oauth", async (req, res) => {
   try {
     let { userId, profileId } = await resolveUserProfileId(req);
+    const rawOnboarding = (req.body?.onboarding || req.query?.onboarding || req.body?.mode || "").toString().toLowerCase();
+    const onboarding = rawOnboarding === "businessapp" || rawOnboarding === "coexistence" ? "businessapp" : "api";
     const host = req.get("x-forwarded-host") || req.get("host") || "rockyt.io";
     const protocol = req.protocol === "https" || req.get("x-forwarded-proto") === "https" ? "https" : "http";
     const appBaseUrl = `${protocol}://${host}`;
     const callbackUrl = `${appBaseUrl}/oauth/callback`;
     const redirectUri = encodeURIComponent(callbackUrl);
-    let zernioConnectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${encodeURIComponent(profileId)}&redirect_url=${redirectUri}&headless=true&reconnect=true&prompt=consent`;
+    let zernioConnectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${encodeURIComponent(profileId)}&redirect_url=${redirectUri}&onboarding=${onboarding}&headless=true&reconnect=true&prompt=consent`;
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     const headers = { "Content-Type": "application/json" };
     if (apiKey && apiKey !== "dummy_dev_key") {
@@ -7318,7 +7320,7 @@ whatsappRouter.post("/api/whatsapp/connect/oauth", async (req, res) => {
         const freshProfileId = await ZernioWhatsAppService.verifyAndRecreateProfile(userId, userEmail);
         if (freshProfileId) {
           profileId = freshProfileId;
-          zernioConnectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${encodeURIComponent(profileId)}&redirect_url=${redirectUri}&headless=true&reconnect=true&prompt=consent`;
+          zernioConnectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${encodeURIComponent(profileId)}&redirect_url=${redirectUri}&onboarding=${onboarding}&headless=true&reconnect=true&prompt=consent`;
           zernioRes = await fetch(zernioConnectUrl, { headers });
         }
       }
@@ -7330,6 +7332,7 @@ whatsappRouter.post("/api/whatsapp/connect/oauth", async (req, res) => {
             authUrl: data.authUrl || data.url,
             state: data.state,
             profileId,
+            onboarding,
             headless: true
           });
         }
@@ -7340,8 +7343,9 @@ whatsappRouter.post("/api/whatsapp/connect/oauth", async (req, res) => {
     } catch (fetchErr) {
       console.warn("[Rockyt WhatsApp connect fetch notice]:", fetchErr.message);
     }
-    const metaDialogUrl = `https://www.facebook.com/v22.0/dialog/oauth?client_id=712341431446535&redirect_uri=${encodeURIComponent("https://zernio.com/api/v1/connect/whatsapp/callback")}&scope=whatsapp_business_management%2Cwhatsapp_business_messaging%2Cwhatsapp_business_manage_events%2Cbusiness_management&response_type=code&config_id=920007930882314&override_default_response_type=true&state=${profileId}-${Date.now()}-${redirectUri}&extras=${encodeURIComponent(JSON.stringify({ sessionInfoVersion: "3", featureType: "whatsapp_business_app_onboarding" }))}`;
-    return res.json({ url: metaDialogUrl, authUrl: metaDialogUrl, profileId, headless: true });
+    const extrasObj = onboarding === "businessapp" ? { sessionInfoVersion: "3", featureType: "whatsapp_business_app_onboarding" } : { sessionInfoVersion: "3" };
+    const metaDialogUrl = `https://www.facebook.com/v22.0/dialog/oauth?client_id=712341431446535&redirect_uri=${encodeURIComponent("https://zernio.com/api/v1/connect/whatsapp/callback")}&scope=whatsapp_business_management%2Cwhatsapp_business_messaging%2Cwhatsapp_business_manage_events%2Cbusiness_management&response_type=code&config_id=920007930882314&override_default_response_type=true&state=${profileId}-${Date.now()}-${redirectUri}&extras=${encodeURIComponent(JSON.stringify(extrasObj))}`;
+    return res.json({ url: metaDialogUrl, authUrl: metaDialogUrl, profileId, onboarding, headless: true });
   } catch (err) {
     return res.status(401).json({ error: "unauthorized", message: err.message });
   }
