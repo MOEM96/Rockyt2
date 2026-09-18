@@ -252,6 +252,16 @@ export const WhatsAppDashboard: React.FC<WhatsAppDashboardProps> = ({
       setCompletedSteps(prev => ({ ...prev, 1: true }));
       window.history.replaceState({}, document.title, window.location.pathname);
       setTimeout(() => setOauthBanner(null), 8000);
+    } else if (searchParams.get('waba') === 'error' || searchParams.get('error')) {
+      const errReason = searchParams.get('error') || 'Connection was not completed';
+      const userFriendlyMsg = errReason === 'connection_cancelled' 
+        ? 'WhatsApp connection setup was cancelled.' 
+        : errReason === 'session_expired' 
+        ? 'WhatsApp connection session expired. Please try connecting again.'
+        : `WhatsApp connection encountered an issue: ${errReason}`;
+      setOauthBanner(`⚠️ ${userFriendlyMsg}`);
+      window.history.replaceState({}, document.title, window.location.pathname);
+      setTimeout(() => setOauthBanner(null), 8000);
     } else if (searchParams.get('tempToken')) {
       setIsConnectModalOpen(true);
     }

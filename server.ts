@@ -1142,14 +1142,27 @@ function startServer() {
     const appBaseUrl = process.env.APP_BASE_URL || (req.headers.origin || `https://${req.headers.host}`);
     const callbackUrl = `${appBaseUrl}/oauth/callback?platform=${encodeURIComponent(cleanPlatform)}`;
 
+    const isWhatsApp = cleanPlatform === 'whatsapp';
+    const acceptLang = String(req.headers['accept-language'] || '').toLowerCase();
+    const queryParams: any = {
+      profileId: req.zernioProfileId,
+      redirect_url: callbackUrl
+    };
+
+    if (isWhatsApp) {
+      queryParams.signup = 'hosted';
+      queryParams.brandName = 'Rockyt';
+      queryParams.primaryColor = '#00D084';
+      queryParams.language = acceptLang.startsWith('es') ? 'es' : 'en';
+      queryParams.reconnect = 'true';
+    } else {
+      queryParams.headless = 'true';
+    }
+
     try {
       const result = await zernio.connect.getConnectUrl({
         path: { platform: cleanPlatform as any },
-        query: {
-          profileId: req.zernioProfileId,
-          headless: 'true',
-          redirect_url: callbackUrl
-        } as any
+        query: queryParams
       });
       const authUrl = (result.data as any)?.authUrl || (result.data as any)?.url;
       res.json({ url: authUrl, authUrl, ...result.data });
@@ -1160,10 +1173,18 @@ function startServer() {
 
   app.get('/oauth/callback', asyncHandler(async (req: any, res: any) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-    const { profileId, accountId, platform, connected, username, returnTo, step, pendingDataToken, tempToken, userProfile, connect_token } = req.query;
+    const { profileId, accountId, platform, connected, username, returnTo, step, pendingDataToken, tempToken, userProfile, connect_token, error, error_description } = req.query;
     const rawPlatform = platform || connected || 'whatsapp';
     const cleanPlatform = getCanonicalZernioPlatform(rawPlatform);
     const formattedPlatform = cleanPlatform.charAt(0).toUpperCase() + cleanPlatform.slice(1);
+
+    if (error) {
+      console.warn('[/oauth/callback] Provider returned error or cancellation:', error, error_description);
+      const redirectUrl = returnTo || (cleanPlatform === 'whatsapp' || String(connected).toLowerCase() === 'whatsapp'
+        ? `/dashboard?waba=error&error=${encodeURIComponent(String(error))}&platform=${encodeURIComponent(formattedPlatform)}`
+        : `/dashboard?account_error=true&error=${encodeURIComponent(String(error))}&platform=${encodeURIComponent(formattedPlatform)}`);
+      return res.redirect(redirectUrl);
+    }
 
     // If headless mode returned a secondary selection step (e.g. select_phone_number, select_page, select_board)
     if (step || pendingDataToken || tempToken || userProfile) {

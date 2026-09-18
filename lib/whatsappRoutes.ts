@@ -4389,9 +4389,16 @@ whatsappRouter.post('/api/whatsapp/connect/oauth', async (req: Request, res: Res
   try {
     let { userId, profileId } = await resolveUserProfileId(req);
 
-    // Onboarding type: 'api' (Cloud API - unlocks Groups & Calling) vs 'businessapp' (Coexistence - mobile app active, disables Groups & Calling)
+    // Onboarding type: 'api' (Cloud API - unlocks Groups & Calling) vs 'business_app' (Coexistence - mobile app active, disables Groups & Calling)
     const rawOnboarding = (req.body?.onboarding || req.query?.onboarding || req.body?.mode || '').toString().toLowerCase();
-    const onboarding = rawOnboarding === 'businessapp' || rawOnboarding === 'coexistence' ? 'businessapp' : 'api';
+    const isCoexistence = rawOnboarding === 'businessapp' || rawOnboarding === 'business_app' || rawOnboarding === 'coexistence';
+    const onboarding = isCoexistence ? 'business_app' : 'api';
+
+    // Co-branding settings according to Zernio documentation
+    const brandName = 'Rockyt';
+    const primaryColor = encodeURIComponent('#00D084'); // Rockyt Emerald Green (%2300D084)
+    const acceptLang = String(req.headers['accept-language'] || '').toLowerCase();
+    const language = acceptLang.startsWith('es') ? 'es' : 'en';
 
     const host = req.get('x-forwarded-host') || req.get('host') || 'rockyt.io';
     const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
@@ -4400,7 +4407,7 @@ whatsappRouter.post('/api/whatsapp/connect/oauth', async (req: Request, res: Res
     // Redirect through /oauth/callback so server immediately stores account in DB and updates connected state
     const callbackUrl = `${appBaseUrl}/oauth/callback`;
     const redirectUri = encodeURIComponent(callbackUrl);
-    let zernioConnectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${encodeURIComponent(profileId)}&redirect_url=${redirectUri}&onboarding=${onboarding}&headless=true&reconnect=true&prompt=consent`;
+    let zernioConnectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${encodeURIComponent(profileId)}&redirect_url=${redirectUri}&signup=hosted&brandName=${encodeURIComponent(brandName)}&primaryColor=${primaryColor}&language=${language}&onboarding=${onboarding}&reconnect=true&prompt=consent`;
     
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -4418,7 +4425,7 @@ whatsappRouter.post('/api/whatsapp/connect/oauth', async (req: Request, res: Res
         const freshProfileId = await ZernioWhatsAppService.verifyAndRecreateProfile(userId, userEmail);
         if (freshProfileId) {
           profileId = freshProfileId;
-          zernioConnectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${encodeURIComponent(profileId)}&redirect_url=${redirectUri}&onboarding=${onboarding}&headless=true&reconnect=true&prompt=consent`;
+          zernioConnectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${encodeURIComponent(profileId)}&redirect_url=${redirectUri}&signup=hosted&brandName=${encodeURIComponent(brandName)}&primaryColor=${primaryColor}&language=${language}&onboarding=${onboarding}&reconnect=true&prompt=consent`;
           zernioRes = await fetch(zernioConnectUrl, { headers });
         }
       }
@@ -4432,7 +4439,10 @@ whatsappRouter.post('/api/whatsapp/connect/oauth', async (req: Request, res: Res
             state: data.state,
             profileId,
             onboarding,
-            headless: true
+            signup: 'hosted',
+            brandName,
+            primaryColor: '#00D084',
+            language
           });
         }
       } else {
@@ -4443,13 +4453,13 @@ whatsappRouter.post('/api/whatsapp/connect/oauth', async (req: Request, res: Res
       console.warn('[Rockyt WhatsApp connect fetch notice]:', fetchErr.message);
     }
 
-    // Direct Meta Facebook Embedded Signup Dialog URL (100% white-labeled Rockyt headless mode fallback)
-    const extrasObj = onboarding === 'businessapp'
+    // Direct Meta Facebook Embedded Signup Dialog URL (resilient direct fallback)
+    const extrasObj = isCoexistence
       ? { sessionInfoVersion: '3', featureType: 'whatsapp_business_app_onboarding' }
       : { sessionInfoVersion: '3' };
     const metaDialogUrl = `https://www.facebook.com/v22.0/dialog/oauth?client_id=712341431446535&redirect_uri=${encodeURIComponent('https://zernio.com/api/v1/connect/whatsapp/callback')}&scope=whatsapp_business_management%2Cwhatsapp_business_messaging%2Cwhatsapp_business_manage_events%2Cbusiness_management&response_type=code&config_id=920007930882314&override_default_response_type=true&state=${profileId}-${Date.now()}-${redirectUri}&extras=${encodeURIComponent(JSON.stringify(extrasObj))}`;
 
-    return res.json({ url: metaDialogUrl, authUrl: metaDialogUrl, profileId, onboarding, headless: true });
+    return res.json({ url: metaDialogUrl, authUrl: metaDialogUrl, profileId, onboarding, signup: 'fallback' });
   } catch (err: any) {
     return res.status(401).json({ error: 'unauthorized', message: err.message });
   }

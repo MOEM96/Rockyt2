@@ -7380,13 +7380,18 @@ whatsappRouter.post("/api/whatsapp/connect/oauth", async (req, res) => {
   try {
     let { userId, profileId } = await resolveUserProfileId(req);
     const rawOnboarding = (req.body?.onboarding || req.query?.onboarding || req.body?.mode || "").toString().toLowerCase();
-    const onboarding = rawOnboarding === "businessapp" || rawOnboarding === "coexistence" ? "businessapp" : "api";
+    const isCoexistence = rawOnboarding === "businessapp" || rawOnboarding === "business_app" || rawOnboarding === "coexistence";
+    const onboarding = isCoexistence ? "business_app" : "api";
+    const brandName = "Rockyt";
+    const primaryColor = encodeURIComponent("#00D084");
+    const acceptLang = String(req.headers["accept-language"] || "").toLowerCase();
+    const language = acceptLang.startsWith("es") ? "es" : "en";
     const host = req.get("x-forwarded-host") || req.get("host") || "rockyt.io";
     const protocol = req.protocol === "https" || req.get("x-forwarded-proto") === "https" ? "https" : "http";
     const appBaseUrl = `${protocol}://${host}`;
     const callbackUrl = `${appBaseUrl}/oauth/callback`;
     const redirectUri = encodeURIComponent(callbackUrl);
-    let zernioConnectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${encodeURIComponent(profileId)}&redirect_url=${redirectUri}&onboarding=${onboarding}&headless=true&reconnect=true&prompt=consent`;
+    let zernioConnectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${encodeURIComponent(profileId)}&redirect_url=${redirectUri}&signup=hosted&brandName=${encodeURIComponent(brandName)}&primaryColor=${primaryColor}&language=${language}&onboarding=${onboarding}&reconnect=true&prompt=consent`;
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     const headers = { "Content-Type": "application/json" };
     if (apiKey && apiKey !== "dummy_dev_key") {
@@ -7400,7 +7405,7 @@ whatsappRouter.post("/api/whatsapp/connect/oauth", async (req, res) => {
         const freshProfileId = await ZernioWhatsAppService.verifyAndRecreateProfile(userId, userEmail);
         if (freshProfileId) {
           profileId = freshProfileId;
-          zernioConnectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${encodeURIComponent(profileId)}&redirect_url=${redirectUri}&onboarding=${onboarding}&headless=true&reconnect=true&prompt=consent`;
+          zernioConnectUrl = `https://zernio.com/api/v1/connect/whatsapp?profileId=${encodeURIComponent(profileId)}&redirect_url=${redirectUri}&signup=hosted&brandName=${encodeURIComponent(brandName)}&primaryColor=${primaryColor}&language=${language}&onboarding=${onboarding}&reconnect=true&prompt=consent`;
           zernioRes = await fetch(zernioConnectUrl, { headers });
         }
       }
@@ -7413,7 +7418,10 @@ whatsappRouter.post("/api/whatsapp/connect/oauth", async (req, res) => {
             state: data.state,
             profileId,
             onboarding,
-            headless: true
+            signup: "hosted",
+            brandName,
+            primaryColor: "#00D084",
+            language
           });
         }
       } else {
@@ -7423,9 +7431,9 @@ whatsappRouter.post("/api/whatsapp/connect/oauth", async (req, res) => {
     } catch (fetchErr) {
       console.warn("[Rockyt WhatsApp connect fetch notice]:", fetchErr.message);
     }
-    const extrasObj = onboarding === "businessapp" ? { sessionInfoVersion: "3", featureType: "whatsapp_business_app_onboarding" } : { sessionInfoVersion: "3" };
+    const extrasObj = isCoexistence ? { sessionInfoVersion: "3", featureType: "whatsapp_business_app_onboarding" } : { sessionInfoVersion: "3" };
     const metaDialogUrl = `https://www.facebook.com/v22.0/dialog/oauth?client_id=712341431446535&redirect_uri=${encodeURIComponent("https://zernio.com/api/v1/connect/whatsapp/callback")}&scope=whatsapp_business_management%2Cwhatsapp_business_messaging%2Cwhatsapp_business_manage_events%2Cbusiness_management&response_type=code&config_id=920007930882314&override_default_response_type=true&state=${profileId}-${Date.now()}-${redirectUri}&extras=${encodeURIComponent(JSON.stringify(extrasObj))}`;
-    return res.json({ url: metaDialogUrl, authUrl: metaDialogUrl, profileId, onboarding, headless: true });
+    return res.json({ url: metaDialogUrl, authUrl: metaDialogUrl, profileId, onboarding, signup: "fallback" });
   } catch (err) {
     return res.status(401).json({ error: "unauthorized", message: err.message });
   }
@@ -8846,14 +8854,25 @@ function startServer() {
     const cleanPlatform = getCanonicalZernioPlatform(req.params.platform);
     const appBaseUrl = process.env.APP_BASE_URL || (req.headers.origin || `https://${req.headers.host}`);
     const callbackUrl = `${appBaseUrl}/oauth/callback?platform=${encodeURIComponent(cleanPlatform)}`;
+    const isWhatsApp = cleanPlatform === "whatsapp";
+    const acceptLang = String(req.headers["accept-language"] || "").toLowerCase();
+    const queryParams = {
+      profileId: req.zernioProfileId,
+      redirect_url: callbackUrl
+    };
+    if (isWhatsApp) {
+      queryParams.signup = "hosted";
+      queryParams.brandName = "Rockyt";
+      queryParams.primaryColor = "#00D084";
+      queryParams.language = acceptLang.startsWith("es") ? "es" : "en";
+      queryParams.reconnect = "true";
+    } else {
+      queryParams.headless = "true";
+    }
     try {
       const result = await zernio.connect.getConnectUrl({
         path: { platform: cleanPlatform },
-        query: {
-          profileId: req.zernioProfileId,
-          headless: "true",
-          redirect_url: callbackUrl
-        }
+        query: queryParams
       });
       const authUrl = result.data?.authUrl || result.data?.url;
       res.json({ url: authUrl, authUrl, ...result.data });
@@ -8863,10 +8882,15 @@ function startServer() {
   }));
   app2.get("/oauth/callback", asyncHandler(async (req, res) => {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-    const { profileId, accountId, platform, connected, username, returnTo, step, pendingDataToken, tempToken, userProfile, connect_token } = req.query;
+    const { profileId, accountId, platform, connected, username, returnTo, step, pendingDataToken, tempToken, userProfile, connect_token, error, error_description } = req.query;
     const rawPlatform = platform || connected || "whatsapp";
     const cleanPlatform = getCanonicalZernioPlatform(rawPlatform);
     const formattedPlatform = cleanPlatform.charAt(0).toUpperCase() + cleanPlatform.slice(1);
+    if (error) {
+      console.warn("[/oauth/callback] Provider returned error or cancellation:", error, error_description);
+      const redirectUrl2 = returnTo || (cleanPlatform === "whatsapp" || String(connected).toLowerCase() === "whatsapp" ? `/dashboard?waba=error&error=${encodeURIComponent(String(error))}&platform=${encodeURIComponent(formattedPlatform)}` : `/dashboard?account_error=true&error=${encodeURIComponent(String(error))}&platform=${encodeURIComponent(formattedPlatform)}`);
+      return res.redirect(redirectUrl2);
+    }
     if (step || pendingDataToken || tempToken || userProfile) {
       const stepParam = step || "select_page";
       const tokenKey = pendingDataToken || connect_token || `pdt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
