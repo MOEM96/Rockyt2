@@ -16,78 +16,81 @@ export class ZernioWhatsAppService {
   public static async getDefaultAccountId(profileId?: string, userId?: string): Promise<string | undefined> {
     const scopeKey = userId ? `default_acc_user_${userId}` : (profileId ? `default_acc_prof_${profileId}` : 'default_acc_global');
     const cached = await cacheService.get<string>(scopeKey);
-    if (cached && cached !== 'acc_primary') {
+    // Strictly require a 24-character hex MongoDB ObjectId (as required by Zernio)
+    if (cached && /^[a-f\d]{24}$/i.test(cached)) {
       return cached;
+    } else if (cached) {
+      await cacheService.del(scopeKey);
     }
 
-    // 1. Check Supabase for known connected account for THIS user
+    // 1. Authoritative check: Query Zernio accounts API directly for this profileId
+    if (profileId) {
+      try {
+        const accounts = await this.listWhatsAppAccounts(profileId);
+        if (Array.isArray(accounts) && accounts.length > 0) {
+          const valid = accounts.find(a => a.id && /^[a-f\d]{24}$/i.test(a.id));
+          if (valid && valid.id) {
+            await cacheService.set(scopeKey, valid.id, CACHE_TTL.ACCOUNT);
+            return valid.id;
+          }
+        }
+      } catch (err: any) {
+        console.warn('[getDefaultAccountId live check warning]:', err.message);
+      }
+    }
+
+    // 2. Check Supabase for known connected account for THIS user
     try {
       const supabase = getBackendSupabaseClient();
-      if (supabase) {
-        if (userId) {
-          const { data: waAcc } = await supabase
-            .from('whatsapp_accounts')
-            .select('id')
-            .eq('user_id', userId)
-            .not('id', 'is', null)
-            .neq('id', 'acc_primary')
-            .order('connected_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          if (waAcc?.id) {
-            await cacheService.set(scopeKey, waAcc.id, CACHE_TTL.ACCOUNT);
-            return waAcc.id;
+      if (supabase && userId) {
+        // First check profiles table to see if user has a zernio_profile_id
+        if (!profileId) {
+          let profQuery = userId.includes('@')
+            ? supabase.from('profiles').select('zernio_profile_id').eq('email', userId.toLowerCase()).maybeSingle()
+            : supabase.from('profiles').select('zernio_profile_id').eq('id', userId).maybeSingle();
+          const { data: profData } = await profQuery;
+          if (profData?.zernio_profile_id) {
+            const liveAccs = await this.listWhatsAppAccounts(profData.zernio_profile_id);
+            const valid = liveAccs.find(a => a.id && /^[a-f\d]{24}$/i.test(a.id));
+            if (valid?.id) {
+              await cacheService.set(scopeKey, valid.id, CACHE_TTL.ACCOUNT);
+              return valid.id;
+            }
           }
         }
 
-        // Check if there is a flow owned by user/profile
-        if (profileId) {
-          const { data: flowAcc } = await supabase
-            .from('whatsapp_flows')
-            .select('account_id')
-            .eq('profile_id', profileId)
-            .not('account_id', 'is', null)
-            .neq('account_id', 'acc_primary')
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          if (flowAcc?.account_id) {
-            await cacheService.set(scopeKey, flowAcc.account_id, CACHE_TTL.ACCOUNT);
-            return flowAcc.account_id;
-          }
+        // Check whatsapp_accounts table for a valid 24-character ObjectId
+        const { data: waAcc } = await supabase
+          .from('whatsapp_accounts')
+          .select('id')
+          .eq('user_id', userId)
+          .not('id', 'is', null)
+          .neq('id', 'acc_primary')
+          .order('connected_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (waAcc?.id && /^[a-f\d]{24}$/i.test(waAcc.id)) {
+          await cacheService.set(scopeKey, waAcc.id, CACHE_TTL.ACCOUNT);
+          return waAcc.id;
         }
 
-        if (userId) {
-          const { data: flowUserAcc } = await supabase
-            .from('whatsapp_flows')
-            .select('account_id')
-            .eq('user_id', userId)
-            .not('account_id', 'is', null)
-            .neq('account_id', 'acc_primary')
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          if (flowUserAcc?.account_id) {
-            await cacheService.set(scopeKey, flowUserAcc.account_id, CACHE_TTL.ACCOUNT);
-            return flowUserAcc.account_id;
-          }
+        // Check flows table
+        const { data: flowUserAcc } = await supabase
+          .from('whatsapp_flows')
+          .select('account_id')
+          .eq('user_id', userId)
+          .not('account_id', 'is', null)
+          .neq('account_id', 'acc_primary')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (flowUserAcc?.account_id && /^[a-f\d]{24}$/i.test(flowUserAcc.account_id)) {
+          await cacheService.set(scopeKey, flowUserAcc.account_id, CACHE_TTL.ACCOUNT);
+          return flowUserAcc.account_id;
         }
       }
     } catch {}
 
-    // 2. Query Zernio accounts API (scoped by profileId)
-    try {
-      const accounts = await this.listWhatsAppAccounts(profileId);
-      if (Array.isArray(accounts) && accounts.length > 0) {
-        const valid = accounts.find(a => a.id && a.id !== 'acc_primary');
-        if (valid && valid.id) {
-          await cacheService.set(scopeKey, valid.id, CACHE_TTL.ACCOUNT);
-          return valid.id;
-        }
-      }
-    } catch (err: any) {
-      console.warn('[getDefaultAccountId warning]:', err.message);
-    }
     return undefined;
   }
 
@@ -1187,6 +1190,10 @@ export class ZernioWhatsAppService {
       throw new Error('Zernio API key is not configured.');
     }
 
+    if (!accountId || !/^[a-f\d]{24}$/i.test(accountId)) {
+      throw new Error(`Invalid WhatsApp accountId "${accountId}". Must be a valid 24-character Zernio ObjectId.`);
+    }
+
     const body: any = {
       accountId,
       name: payload.name.trim().toLowerCase().replace(/\s+/g, '_'),
@@ -1244,6 +1251,11 @@ export class ZernioWhatsAppService {
       return { success: false, templates: [] };
     }
 
+    if (!accountId || !/^[a-f\d]{24}$/i.test(accountId)) {
+      console.warn(`[getWhatsAppTemplates skipped]: accountId "${accountId}" is not a valid 24-character Zernio ObjectId`);
+      return { success: false, templates: [] };
+    }
+
     const params = new URLSearchParams({ accountId });
     if (filters?.status) params.append('status', filters.status);
     if (filters?.name) params.append('name', filters.name);
@@ -1265,6 +1277,11 @@ export class ZernioWhatsAppService {
           if (!res.ok) {
             const err = await res.text().catch(() => '');
             console.warn(`[getWhatsAppTemplates error ${res.status}]:`, err);
+            // If Zernio reports 404 account not found, evict stale account cache
+            if (res.status === 404) {
+              await cacheService.del(`default_acc_prof_${accountId}`);
+              await cacheService.del(`default_acc_user_${accountId}`);
+            }
             return { success: false, templates: [] };
           }
 
@@ -1285,7 +1302,7 @@ export class ZernioWhatsAppService {
    */
   public static async getWhatsAppTemplate(accountId: string, templateNameOrId: string, language?: string): Promise<any> {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
-    if (!apiKey) return null;
+    if (!apiKey || !accountId || !/^[a-f\d]{24}$/i.test(accountId)) return null;
 
     const params = new URLSearchParams({ accountId });
     if (language) params.append('language', language);
@@ -1315,6 +1332,10 @@ export class ZernioWhatsAppService {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if (!apiKey) {
       throw new Error('Zernio API key is missing.');
+    }
+
+    if (!accountId || !/^[a-f\d]{24}$/i.test(accountId)) {
+      throw new Error(`Invalid WhatsApp accountId "${accountId}". Must be a valid 24-character Zernio ObjectId.`);
     }
 
     const isId = /^[0-9]+$/.test(templateNameOrId);
@@ -1353,7 +1374,7 @@ export class ZernioWhatsAppService {
    */
   public static async deleteWhatsAppTemplate(accountId: string, templateNameOrId: string, language?: string): Promise<boolean> {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
-    if (!apiKey) return false;
+    if (!apiKey || !accountId || !/^[a-f\d]{24}$/i.test(accountId)) return false;
 
     const params = new URLSearchParams({ accountId });
     if (language) params.append('language', language);
@@ -1381,7 +1402,7 @@ export class ZernioWhatsAppService {
    */
   public static async getWhatsAppLibraryTemplate(accountId: string, name: string, language = 'en_US'): Promise<any> {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
-    if (!apiKey) return null;
+    if (!apiKey || !accountId || !/^[a-f\d]{24}$/i.test(accountId)) return null;
 
     const params = new URLSearchParams({
       accountId,

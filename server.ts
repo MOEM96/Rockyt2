@@ -1221,14 +1221,39 @@ function startServer() {
 
           if (cleanPlatform === 'whatsapp' || String(connected).toLowerCase() === 'whatsapp') {
             try {
-              const accId = accountId ? String(accountId) : `waba_${Date.now()}`;
+              let accId = accountId ? String(accountId) : undefined;
+              let phoneNum = username || '';
+              let phoneNumId = accountId ? String(accountId) : undefined;
+              let wabaId = undefined;
+
+              // Query Zernio for the authoritative connected account with its real 24-char ObjectId
+              if (profileId) {
+                try {
+                  const liveAccounts = await ZernioWhatsAppService.listWhatsAppAccounts(String(profileId), true);
+                  if (Array.isArray(liveAccounts) && liveAccounts.length > 0) {
+                    const liveAcc = liveAccounts.find(a => a.id && /^[a-f\d]{24}$/i.test(a.id)) || liveAccounts[0];
+                    if (liveAcc) {
+                      accId = liveAcc.id;
+                      phoneNum = liveAcc.phone_number || phoneNum;
+                      phoneNumId = liveAcc.phone_number_id || phoneNumId;
+                      wabaId = liveAcc.waba_id;
+                    }
+                  }
+                } catch (liveAccErr: any) {
+                  console.warn('[/oauth/callback] Failed to fetch live accounts:', liveAccErr.message);
+                }
+              }
+
+              const finalAccId = accId || (accountId && /^[a-f\d]{24}$/i.test(String(accountId)) ? String(accountId) : `waba_${Date.now()}`);
+
               await supabase.from('whatsapp_accounts').upsert({
-                id: accId,
+                id: finalAccId,
                 user_id: userRow.id,
                 platform: 'whatsapp',
                 name: username || 'Connected WhatsApp Account',
-                phone_number: username || '',
-                phone_number_id: accountId ? String(accountId) : accId,
+                phone_number: phoneNum,
+                phone_number_id: phoneNumId || finalAccId,
+                waba_id: wabaId || null,
                 status: 'connected',
                 mode: 'production',
                 quality_rating: 'GREEN',
@@ -1239,6 +1264,12 @@ function startServer() {
               await supabase.from('profiles').update({
                 connected_accounts_count: 1
               }).eq('id', userRow.id);
+
+              // Invalidate caches so next template/account fetch picks up the new real account ID
+              await cacheService.del(`default_acc_user_${userRow.id}`);
+              if (profileId) await cacheService.del(`default_acc_prof_${profileId}`);
+              await cacheService.del(cacheService.getUserKey(userRow.id, 'templates'));
+              await cacheService.del(`zernio_wa_accounts_${profileId || 'all'}`);
             } catch (wErr: any) {
               console.warn('[/oauth/callback] whatsapp_accounts upsert warning:', wErr.message);
             }
