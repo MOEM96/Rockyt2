@@ -395,7 +395,12 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onTriggerCapi, onO
     if (activeConvId) {
       loadMessages(activeConvId, true);
       // Mark as read
-      fetch(`/api/whatsapp/conversations/${activeConvId}/read`, { method: 'POST', headers: getHeaders() }).catch(() => {});
+      const bodyPayload = activeConv?.account_id ? JSON.stringify({ accountId: activeConv.account_id }) : undefined;
+      fetch(`/api/whatsapp/conversations/${activeConvId}/read`, {
+        method: 'POST',
+        headers: { ...getHeaders(), ...(bodyPayload ? { 'Content-Type': 'application/json' } : {}) },
+        body: bodyPayload,
+      }).catch(() => {});
       // Reset unread count locally for instant responsiveness
       setConversations((prev) =>
         prev.map((c) => (c.id === activeConvId ? { ...c, unread_count: 0 } : c))

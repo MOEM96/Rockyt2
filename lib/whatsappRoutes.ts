@@ -48,10 +48,12 @@ whatsappRouter.get('/api/whatsapp/events', (req: Request, res: Response) => {
   const client = { res, userId };
   activeSseClients.add(client);
 
+  // Instruct client EventSource to reconnect cleanly after 1500ms
+  res.write('retry: 1500\n');
   // Send initial connection confirmation event
   res.write(`data: ${JSON.stringify({ type: 'connected', timestamp: new Date().toISOString() })}\n\n`);
 
-  // Heartbeat ping every 15s to keep connection open through proxies/Vercel
+  // Heartbeat ping every 15s to keep connection alive through edge proxies
   const pingInterval = setInterval(() => {
     try {
       res.write(': ping\n\n');
@@ -60,7 +62,19 @@ whatsappRouter.get('/api/whatsapp/events', (req: Request, res: Response) => {
     }
   }, 15000);
 
+  // Gracefully complete stream after 45s so serverless function exits cleanly
+  // Browser EventSource automatically reconnects without any 300s runtime timeout error!
+  const cycleTimeout = setTimeout(() => {
+    try {
+      clearInterval(pingInterval);
+      activeSseClients.delete(client);
+      res.write(': cycle\n\n');
+      res.end();
+    } catch {}
+  }, 45000);
+
   req.on('close', () => {
+    clearTimeout(cycleTimeout);
     clearInterval(pingInterval);
     activeSseClients.delete(client);
   });
@@ -739,9 +753,12 @@ whatsappRouter.post('/api/whatsapp/conversations/:id/typing', async (req: Reques
 
 whatsappRouter.post('/api/whatsapp/conversations/:id/read', async (req: Request<IdParams>, res: Response) => {
   const { id } = req.params;
+  const userId = getUserIdFromReq(req);
+  const account = whatsappStore.getAccount(userId);
+  const accountId = (req.body && req.body.accountId) || (req.query && req.query.accountId as string) || account?.account_id || account?.id;
   whatsappStore.markConversationRead(id);
   if (/^[0-9a-fA-F]{24}$/.test(id)) {
-    ZernioWhatsAppService.markConversationRead(id).catch(() => {});
+    ZernioWhatsAppService.markConversationRead(id, accountId).catch(() => {});
   }
   return res.json({ ok: true });
 });
@@ -1100,36 +1117,99 @@ whatsappRouter.get('/api/whatsapp/templates', async (req: Request, res: Response
           }
         }
 
-        // 4. If user has templates and account is connected, update live review statuses from Meta WABA
-        if (dbTemplates.length > 0 && defaultAccountId) {
+        // 4. If account is connected, fetch live templates from Meta WABA via Zernio and sync ALL templates (including drafted ones!)
+        if (defaultAccountId) {
           try {
             const liveResult = await ZernioWhatsAppService.getWhatsAppTemplates(defaultAccountId);
             if (liveResult.success && Array.isArray(liveResult.templates)) {
-              for (const userTmpl of dbTemplates) {
-                const match = liveResult.templates.find((lt: any) => 
+              for (const lt of liveResult.templates) {
+                if (!lt.name) continue;
+                const matchIndex = dbTemplates.findIndex((userTmpl: any) => 
                   (lt.id && String(lt.id) === String(userTmpl.id)) ||
-                  (lt.name && lt.name.toLowerCase() === userTmpl.name.toLowerCase() && (!userTmpl.language || lt.language === userTmpl.language))
+                  (lt.name.toLowerCase() === userTmpl.name.toLowerCase() && (!userTmpl.language || lt.language === userTmpl.language))
                 );
 
-                if (match && match.status) {
-                  userTmpl.status = match.status;
-                  userTmpl.rejected_reason = match.rejected_reason || userTmpl.rejected_reason || null;
+                const normalizedStatus = (lt.status || 'DRAFT').toUpperCase();
+                const normalizedComponents = Array.isArray(lt.components) ? lt.components : [];
+                const headerComp = normalizedComponents.find((c: any) => c.type === 'HEADER' || (c.type as any) === 'header');
+                const headerFormat = (headerComp?.format || (headerComp?.text ? 'TEXT' : 'NONE')).toUpperCase();
+
+                if (matchIndex >= 0) {
+                  // Update existing template
+                  const userTmpl = dbTemplates[matchIndex];
+                  userTmpl.status = normalizedStatus;
+                  userTmpl.rejected_reason = lt.rejected_reason || userTmpl.rejected_reason || null;
+                  if (normalizedComponents.length > 0) {
+                    userTmpl.components = normalizedComponents;
+                  }
+                  if (lt.category) {
+                    userTmpl.category = lt.category.toUpperCase();
+                  }
                   if (supabase) {
                     await supabase
                       .from('whatsapp_templates')
                       .update({
-                        status: match.status,
-                        rejected_reason: match.rejected_reason || null,
+                        status: normalizedStatus,
+                        components: userTmpl.components,
+                        category: userTmpl.category,
+                        rejected_reason: userTmpl.rejected_reason || null,
                         updated_at: new Date().toISOString(),
                       })
                       .eq('user_id', targetUserId)
                       .eq('name', userTmpl.name);
                   }
+                } else {
+                  // Template exists in Meta Business Manager (e.g. drafted, pending, approved) but not yet in local DB!
+                  const importedTmpl: any = {
+                    id: String(lt.id || `meta_${lt.name}_${lt.language || 'en_US'}`),
+                    name: lt.name,
+                    category: (lt.category || 'MARKETING').toUpperCase(),
+                    language: lt.language || 'en_US',
+                    status: normalizedStatus,
+                    components: normalizedComponents,
+                    account_id: defaultAccountId,
+                    header_type: headerFormat,
+                    media_url: lt.media_url || null,
+                    rejected_reason: lt.rejected_reason || null,
+                    message_send_ttl_seconds: lt.message_send_ttl_seconds || null,
+                    created_at: lt.created_at || new Date().toISOString(),
+                    last_updated: lt.updated_at || new Date().toISOString(),
+                  };
+
+                  dbTemplates.push(importedTmpl);
+
+                  // Persist to memory store
+                  whatsappStore.saveTemplate(importedTmpl, targetUserId);
+
+                  // Persist to Supabase
+                  if (supabase && targetUserId) {
+                    try {
+                      const record = {
+                        id: importedTmpl.id,
+                        user_id: targetUserId,
+                        name: importedTmpl.name,
+                        category: importedTmpl.category,
+                        language: importedTmpl.language,
+                        status: importedTmpl.status,
+                        components: importedTmpl.components,
+                        account_id: defaultAccountId,
+                        header_type: importedTmpl.header_type,
+                        media_url: importedTmpl.media_url,
+                        rejected_reason: importedTmpl.rejected_reason,
+                        created_at: importedTmpl.created_at,
+                        updated_at: new Date().toISOString(),
+                      };
+                      const { error: insErr } = await supabase.from('whatsapp_templates').upsert(record, { onConflict: 'user_id,name' });
+                      if (insErr) {
+                        await supabase.from('whatsapp_templates').upsert(record, { onConflict: 'id' });
+                      }
+                    } catch {}
+                  }
                 }
               }
             }
           } catch (syncErr: any) {
-            console.warn('[Zernio user templates status sync warning]:', syncErr.message);
+            console.warn('[Zernio user templates live sync warning]:', syncErr.message);
           }
         }
 
@@ -2364,13 +2444,36 @@ whatsappRouter.get('/api/whatsapp/flows', async (req: Request, res: Response) =>
           } catch {}
         }
 
-        // Resolve active account ID
+        // Resolve active account ID strictly for this tenant
         let resolvedAccountId: string | undefined = (req.query.accountId as string) || undefined;
-        if (!resolvedAccountId && supabase) {
+        if (!resolvedAccountId) {
+          const userAcc = whatsappStore.getAccount(userId) || whatsappStore.getAccount(targetUserId);
+          if (userAcc?.id && userAcc.id !== 'acc_primary') {
+            resolvedAccountId = userAcc.id;
+          }
+        }
+        if (!resolvedAccountId && supabase && targetUserId) {
+          try {
+            const { data: waAcc } = await supabase
+              .from('whatsapp_accounts')
+              .select('id')
+              .eq('user_id', targetUserId)
+              .not('id', 'is', null)
+              .neq('id', 'acc_primary')
+              .order('connected_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            if (waAcc?.id) {
+              resolvedAccountId = waAcc.id;
+            }
+          } catch {}
+        }
+        if (!resolvedAccountId && supabase && targetUserId) {
           try {
             const { data: flowAcc } = await supabase
               .from('whatsapp_flows')
               .select('account_id')
+              .eq('user_id', targetUserId)
               .not('account_id', 'is', null)
               .neq('account_id', 'acc_primary')
               .order('created_at', { ascending: false })
@@ -2383,7 +2486,7 @@ whatsappRouter.get('/api/whatsapp/flows', async (req: Request, res: Response) =>
         }
 
         if (!resolvedAccountId) {
-          resolvedAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId, userId);
+          resolvedAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId, targetUserId);
         }
         if (resolvedAccountId) {
           ZernioWhatsAppService.setCachedAccountId(resolvedAccountId, userId, profileId);

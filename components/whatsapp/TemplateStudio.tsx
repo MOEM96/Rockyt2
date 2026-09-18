@@ -121,8 +121,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({ userSession }) =
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'REJECTED'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'DRAFT' | 'PENDING' | 'APPROVED' | 'REJECTED'>('ALL');
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
@@ -245,13 +244,20 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({ userSession }) =
     const approved = templates.filter(t => t.status === 'APPROVED').length;
     const pending = templates.filter(t => t.status === 'PENDING').length;
     const rejected = templates.filter(t => t.status === 'REJECTED').length;
-    return { total, approved, pending, rejected };
+    const draft = templates.filter(t => t.status === 'DRAFT' || t.status === 'DRAFTED').length;
+    return { total, approved, pending, rejected, draft };
   }, [templates]);
 
   // Filtered Templates List
   const filteredTemplates = useMemo(() => {
     return templates.filter(t => {
-      if (statusFilter !== 'ALL' && t.status !== statusFilter) return false;
+      if (statusFilter !== 'ALL') {
+        if (statusFilter === 'DRAFT') {
+          if (t.status !== 'DRAFT' && t.status !== 'DRAFTED') return false;
+        } else if (t.status !== statusFilter) {
+          return false;
+        }
+      }
       if (categoryFilter !== 'ALL' && t.category !== categoryFilter) return false;
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -959,8 +965,8 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({ userSession }) =
         </div>
       )}
 
-      {/* ─── 4 Metric Stat Cards Row ─── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* ─── 5 Metric Stat Cards Row ─── */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         {/* Total Templates */}
         <div 
           onClick={() => { setStatusFilter('ALL'); setActiveView('list'); }}
@@ -976,6 +982,21 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({ userSession }) =
           <div className="text-[11px] text-gray-500 mt-1 font-medium">Verified in workspace</div>
         </div>
 
+        {/* Drafts */}
+        <div 
+          onClick={() => { setStatusFilter('DRAFT'); setActiveView('list'); }}
+          className={`p-4 rounded-2xl bg-white border transition-all cursor-pointer shadow-xs hover:border-slate-300 ${
+            statusFilter === 'DRAFT' && activeView === 'list' ? 'ring-2 ring-slate-500/20 border-slate-500' : 'border-gray-200'
+          }`}
+        >
+          <div className="flex items-center justify-between text-slate-600 mb-2">
+            <span className="text-xs font-bold uppercase tracking-wider">Drafts</span>
+            <FileText className="w-4 h-4 text-slate-500" />
+          </div>
+          <div className="text-2xl font-black text-slate-700">{stats.draft}</div>
+          <div className="text-[11px] text-slate-500 mt-1 font-medium">Drafted in Business Manager</div>
+        </div>
+
         {/* Pending Review */}
         <div 
           onClick={() => { setStatusFilter('PENDING'); setActiveView('list'); }}
@@ -984,11 +1005,11 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({ userSession }) =
           }`}
         >
           <div className="flex items-center justify-between text-amber-600 mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider">Under Meta Review</span>
+            <span className="text-xs font-bold uppercase tracking-wider">Under Review</span>
             <Clock className="w-4 h-4 text-amber-500 animate-pulse" />
           </div>
           <div className="text-2xl font-black text-amber-600">{stats.pending}</div>
-          <div className="text-[11px] text-amber-700/80 mt-1 font-medium">Awaiting automated verification</div>
+          <div className="text-[11px] text-amber-700/80 mt-1 font-medium">Awaiting verification</div>
         </div>
 
         {/* Approved & Live */}
@@ -1003,7 +1024,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({ userSession }) =
             <CheckCircle2 className="w-4 h-4 text-emerald-500" />
           </div>
           <div className="text-2xl font-black text-emerald-600">{stats.approved}</div>
-          <div className="text-[11px] text-emerald-700/80 mt-1 font-medium">Ready for broadcasts & API sends</div>
+          <div className="text-[11px] text-emerald-700/80 mt-1 font-medium">Ready for broadcasts</div>
         </div>
 
         {/* Rejected */}
@@ -1018,7 +1039,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({ userSession }) =
             <ShieldAlert className="w-4 h-4 text-rose-500" />
           </div>
           <div className="text-2xl font-black text-rose-600">{stats.rejected}</div>
-          <div className="text-[11px] text-rose-700/80 mt-1 font-medium">Requires component modifications</div>
+          <div className="text-[11px] text-rose-700/80 mt-1 font-medium">Requires component edits</div>
         </div>
       </div>
 
@@ -1031,7 +1052,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({ userSession }) =
           <div className="bg-white border border-gray-200 rounded-2xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xs">
             {/* Status Tabs */}
             <div className="flex flex-wrap items-center gap-1.5 p-1 bg-gray-100 rounded-xl">
-              {(['ALL', 'PENDING', 'APPROVED', 'REJECTED'] as const).map(st => (
+              {(['ALL', 'DRAFT', 'PENDING', 'APPROVED', 'REJECTED'] as const).map(st => (
                 <button
                   key={st}
                   onClick={() => setStatusFilter(st)}
@@ -1042,6 +1063,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({ userSession }) =
                   }`}
                 >
                   {st === 'ALL' && `All (${stats.total})`}
+                  {st === 'DRAFT' && `Drafts (${stats.draft})`}
                   {st === 'PENDING' && `Pending (${stats.pending})`}
                   {st === 'APPROVED' && `Approved (${stats.approved})`}
                   {st === 'REJECTED' && `Rejected (${stats.rejected})`}
@@ -1107,10 +1129,13 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({ userSession }) =
                             ? 'bg-emerald-100 text-emerald-800'
                             : tmpl.status === 'PENDING'
                             ? 'bg-amber-100 text-amber-800'
+                            : (tmpl.status === 'DRAFT' || tmpl.status === 'DRAFTED')
+                            ? 'bg-slate-100 text-slate-800 border border-slate-200'
                             : 'bg-rose-100 text-rose-800'
                         }`}>
                           {tmpl.status === 'APPROVED' && <CheckCircle2 className="w-3 h-3 text-emerald-600" />}
                           {tmpl.status === 'PENDING' && <Clock className="w-3 h-3 text-amber-600 animate-pulse" />}
+                          {(tmpl.status === 'DRAFT' || tmpl.status === 'DRAFTED') && <FileText className="w-3 h-3 text-slate-600" />}
                           {tmpl.status === 'REJECTED' && <ShieldAlert className="w-3 h-3 text-rose-600" />}
                           <span>{tmpl.status}</span>
                         </span>

@@ -93,6 +93,8 @@ export interface MetaCAPIEvent {
 }
 
 export type WhatsAppTemplateStatus = 
+  | 'DRAFT'
+  | 'DRAFTED'
   | 'APPROVED' 
   | 'PENDING' 
   | 'REJECTED' 

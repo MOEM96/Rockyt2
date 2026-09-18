@@ -168,30 +168,59 @@ export class ZernioWhatsAppService {
       return hash;
     }
 
+    const cacheKey = `zernio_prof_${key}`;
+    if (!forceRefresh) {
+      const cached = await cacheService.get<string>(cacheKey);
+      if (cached && /^[0-9a-fA-F]{24}$/.test(cached)) {
+        this.userProfileCache.set(key, cached);
+        return cached;
+      }
+
+      // Fast-path: If already stored in DB from previous verification, trust it & cache it!
+      if (storedProfileId) {
+        await cacheService.set(cacheKey, storedProfileId, 3600);
+        this.userProfileCache.set(key, storedProfileId);
+        if (userId) this.userProfileCache.set(userId, storedProfileId);
+        if (cleanEmail) this.userProfileCache.set(cleanEmail, storedProfileId);
+        return storedProfileId;
+      }
+    }
+
     let resolvedProfileId: string | null = null;
     const profileDisplayName = cleanEmail || `User - ${userId || key}`;
 
     try {
-      // 3. Fetch active profiles from live Zernio API to verify existence and avoid 404
-      const listRes = await fetch('https://zernio.com/api/v1/profiles', {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
+      // 3. Fetch active profiles with request coalescing to prevent 10,000 users hammering Zernio
+      const profilesList = await cacheService.fetchWithCoalescing<any[]>(
+        'zernio_all_profiles',
+        async () => {
+          try {
+            const listRes = await fetch('https://zernio.com/api/v1/profiles', {
+              headers: {
+                Authorization: `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+              },
+            });
+            if (listRes.ok) {
+              const listData = await listRes.json();
+              return listData.profiles || listData.data || [];
+            } else {
+              console.warn('[ZernioWhatsAppService] GET /api/v1/profiles returned status:', listRes.status);
+              return [];
+            }
+          } catch (e: any) {
+            console.warn('[ZernioWhatsAppService] GET /api/v1/profiles error:', e.message);
+            return [];
+          }
         },
-      });
-
-      let profilesList: any[] = [];
-      if (listRes.ok) {
-        const listData = await listRes.json();
-        profilesList = listData.profiles || listData.data || [];
-      } else {
-        console.warn('[ZernioWhatsAppService] GET /api/v1/profiles returned status:', listRes.status);
-      }
+        600 // 10 minutes cache
+      );
 
       // 3a. Check if the stored profile ID actually exists on Zernio!
       if (storedProfileId && !forceRefresh && profilesList.length > 0) {
         const existsOnZernio = profilesList.some((p: any) => (p._id === storedProfileId || p.id === storedProfileId));
         if (existsOnZernio) {
+          await cacheService.set(cacheKey, storedProfileId, 3600);
           this.userProfileCache.set(key, storedProfileId);
           if (userId) this.userProfileCache.set(userId, storedProfileId);
           if (cleanEmail) this.userProfileCache.set(cleanEmail, storedProfileId);
@@ -1028,18 +1057,26 @@ export class ZernioWhatsAppService {
   }
 
   /**
-   * Mark conversation as read
+   * Mark conversation as read (requires accountId in request body per Zernio API spec)
    */
-  public static async markConversationRead(conversationId: string) {
+  public static async markConversationRead(conversationId: string, accountId?: string) {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if (apiKey && apiKey !== 'dummy_dev_key' && conversationId) {
       try {
-        await fetch(`https://zernio.com/api/v1/inbox/conversations/${conversationId}/read`, {
+        let effectiveAccountId = (accountId && accountId !== 'acc_primary') ? accountId : undefined;
+        if (!effectiveAccountId) {
+          effectiveAccountId = await this.getDefaultAccountId();
+        }
+        if (!effectiveAccountId) {
+          return null;
+        }
+        await fetch(`https://zernio.com/api/v1/inbox/conversations/${encodeURIComponent(conversationId)}/read`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
           },
+          body: JSON.stringify({ accountId: effectiveAccountId }),
         });
       } catch {}
     }
@@ -1232,7 +1269,7 @@ export class ZernioWhatsAppService {
           }
 
           const data = await res.json().catch(() => ({}));
-          const templates = Array.isArray(data.templates) ? data.templates : (Array.isArray(data) ? data : []);
+          const templates = Array.isArray(data.templates) ? data.templates : (Array.isArray(data) ? data : (Array.isArray(data.data) ? data.data : []));
           return { success: true, templates };
         } catch (err: any) {
           console.warn('[getWhatsAppTemplates exception]:', err.message);
@@ -1397,7 +1434,9 @@ export class ZernioWhatsAppService {
           cacheService.recordUpstreamStatus('zernio', res.status);
           if (!res.ok) {
             const err = await res.text().catch(() => '');
-            console.warn(`[listWhatsAppFlows error ${res.status}]:`, err);
+            if (res.status !== 404) {
+              console.warn(`[listWhatsAppFlows error ${res.status}]:`, err);
+            }
             return [];
           }
           const data = await res.json().catch(() => ({}));

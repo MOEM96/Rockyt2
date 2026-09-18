@@ -949,25 +949,53 @@ var ZernioWhatsAppService = class _ZernioWhatsAppService {
       this.userProfileCache.set(key, hash);
       return hash;
     }
+    const cacheKey = `zernio_prof_${key}`;
+    if (!forceRefresh) {
+      const cached = await cacheService.get(cacheKey);
+      if (cached && /^[0-9a-fA-F]{24}$/.test(cached)) {
+        this.userProfileCache.set(key, cached);
+        return cached;
+      }
+      if (storedProfileId) {
+        await cacheService.set(cacheKey, storedProfileId, 3600);
+        this.userProfileCache.set(key, storedProfileId);
+        if (userId) this.userProfileCache.set(userId, storedProfileId);
+        if (cleanEmail) this.userProfileCache.set(cleanEmail, storedProfileId);
+        return storedProfileId;
+      }
+    }
     let resolvedProfileId = null;
     const profileDisplayName = cleanEmail || `User - ${userId || key}`;
     try {
-      const listRes = await fetch("https://zernio.com/api/v1/profiles", {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json"
-        }
-      });
-      let profilesList = [];
-      if (listRes.ok) {
-        const listData = await listRes.json();
-        profilesList = listData.profiles || listData.data || [];
-      } else {
-        console.warn("[ZernioWhatsAppService] GET /api/v1/profiles returned status:", listRes.status);
-      }
+      const profilesList = await cacheService.fetchWithCoalescing(
+        "zernio_all_profiles",
+        async () => {
+          try {
+            const listRes = await fetch("https://zernio.com/api/v1/profiles", {
+              headers: {
+                Authorization: `Bearer ${apiKey}`,
+                "Content-Type": "application/json"
+              }
+            });
+            if (listRes.ok) {
+              const listData = await listRes.json();
+              return listData.profiles || listData.data || [];
+            } else {
+              console.warn("[ZernioWhatsAppService] GET /api/v1/profiles returned status:", listRes.status);
+              return [];
+            }
+          } catch (e) {
+            console.warn("[ZernioWhatsAppService] GET /api/v1/profiles error:", e.message);
+            return [];
+          }
+        },
+        600
+        // 10 minutes cache
+      );
       if (storedProfileId && !forceRefresh && profilesList.length > 0) {
         const existsOnZernio = profilesList.some((p) => p._id === storedProfileId || p.id === storedProfileId);
         if (existsOnZernio) {
+          await cacheService.set(cacheKey, storedProfileId, 3600);
           this.userProfileCache.set(key, storedProfileId);
           if (userId) this.userProfileCache.set(userId, storedProfileId);
           if (cleanEmail) this.userProfileCache.set(cleanEmail, storedProfileId);
@@ -1674,18 +1702,26 @@ var ZernioWhatsAppService = class _ZernioWhatsAppService {
     return null;
   }
   /**
-   * Mark conversation as read
+   * Mark conversation as read (requires accountId in request body per Zernio API spec)
    */
-  static async markConversationRead(conversationId) {
+  static async markConversationRead(conversationId, accountId) {
     const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
     if (apiKey && apiKey !== "dummy_dev_key" && conversationId) {
       try {
-        await fetch(`https://zernio.com/api/v1/inbox/conversations/${conversationId}/read`, {
+        let effectiveAccountId = accountId && accountId !== "acc_primary" ? accountId : void 0;
+        if (!effectiveAccountId) {
+          effectiveAccountId = await this.getDefaultAccountId();
+        }
+        if (!effectiveAccountId) {
+          return null;
+        }
+        await fetch(`https://zernio.com/api/v1/inbox/conversations/${encodeURIComponent(conversationId)}/read`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json"
-          }
+          },
+          body: JSON.stringify({ accountId: effectiveAccountId })
         });
       } catch {
       }
@@ -1846,7 +1882,7 @@ var ZernioWhatsAppService = class _ZernioWhatsAppService {
             return { success: false, templates: [] };
           }
           const data = await res.json().catch(() => ({}));
-          const templates = Array.isArray(data.templates) ? data.templates : Array.isArray(data) ? data : [];
+          const templates = Array.isArray(data.templates) ? data.templates : Array.isArray(data) ? data : Array.isArray(data.data) ? data.data : [];
           return { success: true, templates };
         } catch (err) {
           console.warn("[getWhatsAppTemplates exception]:", err.message);
@@ -1975,7 +2011,9 @@ var ZernioWhatsAppService = class _ZernioWhatsAppService {
           cacheService.recordUpstreamStatus("zernio", res.status);
           if (!res.ok) {
             const err = await res.text().catch(() => "");
-            console.warn(`[listWhatsAppFlows error ${res.status}]:`, err);
+            if (res.status !== 404) {
+              console.warn(`[listWhatsAppFlows error ${res.status}]:`, err);
+            }
             return [];
           }
           const data = await res.json().catch(() => ({}));
@@ -3734,6 +3772,7 @@ whatsappRouter.get("/api/whatsapp/events", (req, res) => {
   const userId = getUserIdFromReq(req) || req.query.userId;
   const client = { res, userId };
   activeSseClients.add(client);
+  res.write("retry: 1500\n");
   res.write(`data: ${JSON.stringify({ type: "connected", timestamp: (/* @__PURE__ */ new Date()).toISOString() })}
 
 `);
@@ -3744,7 +3783,17 @@ whatsappRouter.get("/api/whatsapp/events", (req, res) => {
       clearInterval(pingInterval);
     }
   }, 15e3);
+  const cycleTimeout = setTimeout(() => {
+    try {
+      clearInterval(pingInterval);
+      activeSseClients.delete(client);
+      res.write(": cycle\n\n");
+      res.end();
+    } catch {
+    }
+  }, 45e3);
   req.on("close", () => {
+    clearTimeout(cycleTimeout);
     clearInterval(pingInterval);
     activeSseClients.delete(client);
   });
@@ -4332,9 +4381,12 @@ whatsappRouter.post("/api/whatsapp/conversations/:id/typing", async (req, res) =
 });
 whatsappRouter.post("/api/whatsapp/conversations/:id/read", async (req, res) => {
   const { id } = req.params;
+  const userId = getUserIdFromReq(req);
+  const account = whatsappStore.getAccount(userId);
+  const accountId = req.body && req.body.accountId || req.query && req.query.accountId || account?.account_id || account?.id;
   whatsappStore.markConversationRead(id);
   if (/^[0-9a-fA-F]{24}$/.test(id)) {
-    ZernioWhatsAppService.markConversationRead(id).catch(() => {
+    ZernioWhatsAppService.markConversationRead(id, accountId).catch(() => {
     });
   }
   return res.json({ ok: true });
@@ -4625,29 +4677,85 @@ whatsappRouter.get("/api/whatsapp/templates", async (req, res) => {
             dbTemplates = mem;
           }
         }
-        if (dbTemplates.length > 0 && defaultAccountId) {
+        if (defaultAccountId) {
           try {
             const liveResult = await ZernioWhatsAppService.getWhatsAppTemplates(defaultAccountId);
             if (liveResult.success && Array.isArray(liveResult.templates)) {
-              for (const userTmpl of dbTemplates) {
-                const match = liveResult.templates.find(
-                  (lt) => lt.id && String(lt.id) === String(userTmpl.id) || lt.name && lt.name.toLowerCase() === userTmpl.name.toLowerCase() && (!userTmpl.language || lt.language === userTmpl.language)
+              for (const lt of liveResult.templates) {
+                if (!lt.name) continue;
+                const matchIndex = dbTemplates.findIndex(
+                  (userTmpl) => lt.id && String(lt.id) === String(userTmpl.id) || lt.name.toLowerCase() === userTmpl.name.toLowerCase() && (!userTmpl.language || lt.language === userTmpl.language)
                 );
-                if (match && match.status) {
-                  userTmpl.status = match.status;
-                  userTmpl.rejected_reason = match.rejected_reason || userTmpl.rejected_reason || null;
+                const normalizedStatus = (lt.status || "DRAFT").toUpperCase();
+                const normalizedComponents = Array.isArray(lt.components) ? lt.components : [];
+                const headerComp = normalizedComponents.find((c) => c.type === "HEADER" || c.type === "header");
+                const headerFormat = (headerComp?.format || (headerComp?.text ? "TEXT" : "NONE")).toUpperCase();
+                if (matchIndex >= 0) {
+                  const userTmpl = dbTemplates[matchIndex];
+                  userTmpl.status = normalizedStatus;
+                  userTmpl.rejected_reason = lt.rejected_reason || userTmpl.rejected_reason || null;
+                  if (normalizedComponents.length > 0) {
+                    userTmpl.components = normalizedComponents;
+                  }
+                  if (lt.category) {
+                    userTmpl.category = lt.category.toUpperCase();
+                  }
                   if (supabase) {
                     await supabase.from("whatsapp_templates").update({
-                      status: match.status,
-                      rejected_reason: match.rejected_reason || null,
+                      status: normalizedStatus,
+                      components: userTmpl.components,
+                      category: userTmpl.category,
+                      rejected_reason: userTmpl.rejected_reason || null,
                       updated_at: (/* @__PURE__ */ new Date()).toISOString()
                     }).eq("user_id", targetUserId).eq("name", userTmpl.name);
+                  }
+                } else {
+                  const importedTmpl = {
+                    id: String(lt.id || `meta_${lt.name}_${lt.language || "en_US"}`),
+                    name: lt.name,
+                    category: (lt.category || "MARKETING").toUpperCase(),
+                    language: lt.language || "en_US",
+                    status: normalizedStatus,
+                    components: normalizedComponents,
+                    account_id: defaultAccountId,
+                    header_type: headerFormat,
+                    media_url: lt.media_url || null,
+                    rejected_reason: lt.rejected_reason || null,
+                    message_send_ttl_seconds: lt.message_send_ttl_seconds || null,
+                    created_at: lt.created_at || (/* @__PURE__ */ new Date()).toISOString(),
+                    last_updated: lt.updated_at || (/* @__PURE__ */ new Date()).toISOString()
+                  };
+                  dbTemplates.push(importedTmpl);
+                  whatsappStore.saveTemplate(importedTmpl, targetUserId);
+                  if (supabase && targetUserId) {
+                    try {
+                      const record = {
+                        id: importedTmpl.id,
+                        user_id: targetUserId,
+                        name: importedTmpl.name,
+                        category: importedTmpl.category,
+                        language: importedTmpl.language,
+                        status: importedTmpl.status,
+                        components: importedTmpl.components,
+                        account_id: defaultAccountId,
+                        header_type: importedTmpl.header_type,
+                        media_url: importedTmpl.media_url,
+                        rejected_reason: importedTmpl.rejected_reason,
+                        created_at: importedTmpl.created_at,
+                        updated_at: (/* @__PURE__ */ new Date()).toISOString()
+                      };
+                      const { error: insErr } = await supabase.from("whatsapp_templates").upsert(record, { onConflict: "user_id,name" });
+                      if (insErr) {
+                        await supabase.from("whatsapp_templates").upsert(record, { onConflict: "id" });
+                      }
+                    } catch {
+                    }
                   }
                 }
               }
             }
           } catch (syncErr) {
-            console.warn("[Zernio user templates status sync warning]:", syncErr.message);
+            console.warn("[Zernio user templates live sync warning]:", syncErr.message);
           }
         }
         return {
@@ -5694,9 +5802,24 @@ whatsappRouter.get("/api/whatsapp/flows", async (req, res) => {
           }
         }
         let resolvedAccountId = req.query.accountId || void 0;
-        if (!resolvedAccountId && supabase) {
+        if (!resolvedAccountId) {
+          const userAcc = whatsappStore.getAccount(userId) || whatsappStore.getAccount(targetUserId);
+          if (userAcc?.id && userAcc.id !== "acc_primary") {
+            resolvedAccountId = userAcc.id;
+          }
+        }
+        if (!resolvedAccountId && supabase && targetUserId) {
           try {
-            const { data: flowAcc } = await supabase.from("whatsapp_flows").select("account_id").not("account_id", "is", null).neq("account_id", "acc_primary").order("created_at", { ascending: false }).limit(1).maybeSingle();
+            const { data: waAcc } = await supabase.from("whatsapp_accounts").select("id").eq("user_id", targetUserId).not("id", "is", null).neq("id", "acc_primary").order("connected_at", { ascending: false }).limit(1).maybeSingle();
+            if (waAcc?.id) {
+              resolvedAccountId = waAcc.id;
+            }
+          } catch {
+          }
+        }
+        if (!resolvedAccountId && supabase && targetUserId) {
+          try {
+            const { data: flowAcc } = await supabase.from("whatsapp_flows").select("account_id").eq("user_id", targetUserId).not("account_id", "is", null).neq("account_id", "acc_primary").order("created_at", { ascending: false }).limit(1).maybeSingle();
             if (flowAcc?.account_id) {
               resolvedAccountId = flowAcc.account_id;
             }
@@ -5704,7 +5827,7 @@ whatsappRouter.get("/api/whatsapp/flows", async (req, res) => {
           }
         }
         if (!resolvedAccountId) {
-          resolvedAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId, userId);
+          resolvedAccountId = await ZernioWhatsAppService.getDefaultAccountId(profileId, targetUserId);
         }
         if (resolvedAccountId) {
           ZernioWhatsAppService.setCachedAccountId(resolvedAccountId, userId, profileId);
@@ -7756,6 +7879,7 @@ whatsappRouter.post("/api/whatsapp/business-agent/thread-control", async (req, r
 // server.ts
 function startServer() {
   const app2 = express2();
+  app2.set("trust proxy", 1);
   app2.set("etag", false);
   app2.use((req, res, next) => {
     if (req.path.startsWith("/api/") || req.path.startsWith("/oauth/")) {
@@ -7811,7 +7935,10 @@ function startServer() {
   app2.use(whatsappRouter);
   const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1e3,
-    max: 30,
+    max: 60,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    validate: { xForwardedForHeader: false },
     message: { error: "Too many requests from this IP, please try again after 15 minutes" }
   });
   app2.use("/api/auth/", authLimiter);

@@ -17,6 +17,9 @@ import { ZernioWhatsAppService } from "./lib/zernioWhatsAppService";
 function startServer() {
   const app = express();
 
+  // Trust first proxy (Vercel / Cloudflare edge router) so client IP is accurately extracted from X-Forwarded-For
+  app.set('trust proxy', 1);
+
   // Disable ETags globally to eliminate HTTP 304 caching errors on Vercel
   app.set('etag', false);
 
@@ -81,10 +84,13 @@ function startServer() {
   // Mount WhatsApp API, CTWA CAPI, Automations, and MCP Gateway router
   app.use(whatsappRouter);
 
-  // Rate limiting for auth and API key creation
+  // Rate limiting for auth and API key creation with standard proxy handling
   const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 30,
+    max: 60,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    validate: { xForwardedForHeader: false },
     message: { error: 'Too many requests from this IP, please try again after 15 minutes' }
   });
   app.use('/api/auth/', authLimiter);
