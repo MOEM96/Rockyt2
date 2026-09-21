@@ -616,7 +616,63 @@ whatsappRouter.get('/api/whatsapp/conversations/:id/messages', async (req: Reque
   const { id } = req.params;
   const { userId, profileId } = await resolveUserProfileId(req);
   let messages = whatsappStore.getMessages(id);
-  const conversation = whatsappStore.getConversation(id, profileId);
+  let conversation = whatsappStore.getConversation(id, profileId);
+
+  // ─── Supabase + Zernio API Fallback for Serverless Cold Starts ───
+  // On Vercel, in-memory whatsappStore is empty after cold start.
+  // Chain: 1) check Supabase DB, 2) fetch live from Zernio API, 3) persist to store + DB.
+  if (!conversation) {
+    try {
+      const supabase = getBackendSupabaseClient();
+      if (supabase) {
+        const { data: dbConv } = await supabase
+          .from('whatsapp_conversations')
+          .select('*')
+          .eq('id', id)
+          .maybeSingle();
+        if (dbConv) {
+          conversation = {
+            id: dbConv.id,
+            contact: dbConv.contact || { phone_number: dbConv.contact_phone || '', name: dbConv.contact_name || 'Unknown' },
+            last_message: dbConv.last_message || '',
+            last_message_at: dbConv.last_message_at || dbConv.updated_at || new Date().toISOString(),
+            unread_count: dbConv.unread_count || 0,
+            status: dbConv.status || 'active',
+            is_window_open: dbConv.is_window_open !== false,
+            window_expires_at: dbConv.window_expires_at,
+            account_id: dbConv.account_id,
+            profile_id: dbConv.profile_id || profileId,
+          } as any;
+          whatsappStore.saveConversation(conversation!);
+        }
+      }
+    } catch {}
+
+    // If still not found, try fetching from Zernio API live
+    if (!conversation && profileId) {
+      try {
+        const liveConvs = await ZernioWhatsAppService.listConversations(profileId, 100);
+        const match = liveConvs.find((c: any) => (c.id || c._id) === id);
+        if (match) {
+          const contactPhone = match.participantId || match.contact?.phone_number || match.senderUsername || '';
+          const contactName = match.participantName || match.contact?.name || match.senderName || contactPhone;
+          conversation = {
+            id: match.id || match._id,
+            contact: { phone_number: contactPhone, name: contactName },
+            last_message: match.lastMessage?.text || match.snippet || '',
+            last_message_at: match.lastMessage?.timestamp || match.updatedAt || new Date().toISOString(),
+            unread_count: match.unreadCount || 0,
+            status: 'active',
+            is_window_open: true,
+            account_id: match.accountId || match.account_id,
+            profile_id: profileId,
+          } as any;
+          whatsappStore.saveConversation(conversation!);
+        }
+      } catch {}
+    }
+  }
+
   if (!conversation) {
     return res.status(404).json({ error: 'Conversation not found or access denied' });
   }
@@ -643,6 +699,28 @@ whatsappRouter.get('/api/whatsapp/conversations/:id/messages', async (req: Reque
             const direction = isFromContact ? 'incoming' : (m.direction || 'incoming');
             const msg = normalizeWhatsAppMessage(m, conversation, direction, allTemplates);
             whatsappStore.appendMessage(msg);
+
+            // Persist to Supabase for cold start resilience
+            try {
+              const supabase = getBackendSupabaseClient();
+              if (supabase) {
+                await supabase.from('whatsapp_messages').upsert({
+                  id: msg.id,
+                  conversation_id: id,
+                  direction: msg.direction,
+                  text: msg.text,
+                  type: msg.type,
+                  status: msg.status,
+                  media_url: msg.media_url,
+                  template_name: msg.template_name,
+                  template_data: msg.template_data,
+                  flow_data: msg.flow_data,
+                  attachments: msg.attachments,
+                  metadata: msg.metadata,
+                  created_at: msg.timestamp,
+                }, { onConflict: 'id', ignoreDuplicates: true });
+              }
+            } catch {}
           }
           messages = whatsappStore.getMessages(id);
         }
@@ -663,6 +741,7 @@ whatsappRouter.post('/api/whatsapp/conversations/:id/messages', async (req: Requ
   const { id } = req.params;
   const { 
     text, 
+    message,
     media_url, 
     template_name, 
     template_params, 
@@ -677,7 +756,64 @@ whatsappRouter.post('/api/whatsapp/conversations/:id/messages', async (req: Requ
     templateComponents 
   } = req.body;
 
-  const conv = whatsappStore.getConversation(id);
+  // Normalize: accept both `text` and `message` body keys (v1 inbox API compat)
+  const effectiveText = text || message || '';
+
+  const { userId, profileId } = await resolveUserProfileId(req);
+  let conv = whatsappStore.getConversation(id);
+
+  // ─── Supabase + Zernio API Fallback for Serverless Cold Starts ───
+  if (!conv) {
+    try {
+      const supabase = getBackendSupabaseClient();
+      if (supabase) {
+        const { data: dbConv } = await supabase
+          .from('whatsapp_conversations')
+          .select('*')
+          .eq('id', id)
+          .maybeSingle();
+        if (dbConv) {
+          conv = {
+            id: dbConv.id,
+            contact: dbConv.contact || { phone_number: dbConv.contact_phone || '', name: dbConv.contact_name || 'Unknown' },
+            last_message: dbConv.last_message || '',
+            last_message_at: dbConv.last_message_at || dbConv.updated_at || new Date().toISOString(),
+            unread_count: dbConv.unread_count || 0,
+            status: dbConv.status || 'active',
+            is_window_open: dbConv.is_window_open !== false,
+            window_expires_at: dbConv.window_expires_at,
+            account_id: dbConv.account_id,
+            profile_id: dbConv.profile_id || profileId,
+          } as any;
+          whatsappStore.saveConversation(conv!);
+        }
+      }
+    } catch {}
+
+    if (!conv && profileId) {
+      try {
+        const liveConvs = await ZernioWhatsAppService.listConversations(profileId, 100);
+        const match = liveConvs.find((c: any) => (c.id || c._id) === id);
+        if (match) {
+          const contactPhone = match.participantId || match.contact?.phone_number || match.senderUsername || '';
+          const contactName = match.participantName || match.contact?.name || match.senderName || contactPhone;
+          conv = {
+            id: match.id || match._id,
+            contact: { phone_number: contactPhone, name: contactName },
+            last_message: match.lastMessage?.text || match.snippet || '',
+            last_message_at: match.lastMessage?.timestamp || match.updatedAt || new Date().toISOString(),
+            unread_count: match.unreadCount || 0,
+            status: 'active',
+            is_window_open: true,
+            account_id: match.accountId || match.account_id,
+            profile_id: profileId,
+          } as any;
+          whatsappStore.saveConversation(conv!);
+        }
+      } catch {}
+    }
+  }
+
   if (!conv) {
     return res.status(404).json({ error: 'Conversation not found' });
   }
@@ -713,7 +849,7 @@ whatsappRouter.post('/api/whatsapp/conversations/:id/messages', async (req: Requ
       const zernioRes = await ZernioWhatsAppService.sendInboxMessage({
         conversationId: id,
         accountId,
-        text,
+        text: effectiveText,
         mediaUrl: media_url,
         attachmentName: effectiveAttachmentName,
         attachmentType: effectiveAttachmentType,
@@ -735,7 +871,7 @@ whatsappRouter.post('/api/whatsapp/conversations/:id/messages', async (req: Requ
     id: officialMsgId,
     conversation_id: id,
     direction: 'outgoing',
-    text: text || (template_name ? `[Template: ${template_name}]` : ''),
+    text: effectiveText || (template_name ? `[Template: ${template_name}]` : ''),
     media_url,
     attachmentName: effectiveAttachmentName,
     attachmentType: effectiveAttachmentType,
@@ -747,6 +883,28 @@ whatsappRouter.post('/api/whatsapp/conversations/:id/messages', async (req: Requ
   }, conv, 'outgoing', allTemplates);
 
   whatsappStore.appendMessage(msg);
+
+  // Persist sent message to Supabase for cold start resilience
+  try {
+    const supabase = getBackendSupabaseClient();
+    if (supabase) {
+      await supabase.from('whatsapp_messages').upsert({
+        id: msg.id,
+        conversation_id: id,
+        direction: 'outgoing',
+        text: msg.text,
+        type: msg.type,
+        status: msg.status,
+        media_url: msg.media_url,
+        template_name: msg.template_name,
+        template_data: msg.template_data,
+        flow_data: msg.flow_data,
+        attachments: msg.attachments,
+        metadata: msg.metadata,
+        created_at: msg.timestamp,
+      }, { onConflict: 'id', ignoreDuplicates: true });
+    }
+  } catch {}
 
   // Broadcast sent message in real time to all open dashboard instances
   broadcastWhatsAppEvent({
@@ -3752,6 +3910,109 @@ whatsappRouter.delete('/api/mcp/tokens/:id', (req: Request<IdParams>, res: Respo
   const { id } = req.params;
   whatsappStore.deleteMCPToken(id);
   return res.json({ success: true });
+});
+
+// ─── 10. WhatsApp Catalog Management (Sept 17 changelog) ───
+whatsappRouter.get('/api/whatsapp/catalogs', async (req: Request, res: Response) => {
+  try {
+    const { profileId } = await resolveUserProfileId(req);
+    const accountId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey && accountId) {
+      const url = new URL('https://zernio.com/api/v1/whatsapp/catalogs');
+      url.searchParams.set('accountId', accountId);
+      const catRes = await fetch(url.toString(), { headers: { 'Authorization': `Bearer ${apiKey}` } });
+      if (catRes.ok) {
+        const data = await catRes.json();
+        return res.json({ success: true, catalogs: data.catalogs || data.data || [] });
+      }
+    }
+  } catch (err: any) {
+    console.warn('[whatsapp/catalogs] Fetch warning:', err.message);
+  }
+  return res.json({ success: true, catalogs: [] });
+});
+
+whatsappRouter.post('/api/whatsapp/catalogs', async (req: Request, res: Response) => {
+  try {
+    const { profileId } = await resolveUserProfileId(req);
+    const accountId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey && accountId) {
+      const catRes = await fetch('https://zernio.com/api/v1/whatsapp/catalogs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({ ...req.body, accountId })
+      });
+      if (catRes.ok) {
+        const data = await catRes.json();
+        return res.json({ success: true, data });
+      }
+    }
+  } catch (err: any) {
+    console.warn('[whatsapp/catalogs] Link warning:', err.message);
+  }
+  return res.status(400).json({ error: 'Failed to link catalog' });
+});
+
+whatsappRouter.delete('/api/whatsapp/catalogs/:id', async (req: Request<IdParams>, res: Response) => {
+  const { id } = req.params;
+  try {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey) {
+      const delRes = await fetch(`https://zernio.com/api/v1/whatsapp/catalogs/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${apiKey}` }
+      });
+      if (delRes.ok) return res.json({ success: true });
+    }
+  } catch (err: any) {
+    console.warn('[whatsapp/catalogs] Unlink warning:', err.message);
+  }
+  return res.status(400).json({ error: 'Failed to unlink catalog' });
+});
+
+// ─── 11. WhatsApp Commerce Settings (Sept 17 changelog) ───
+whatsappRouter.get('/api/whatsapp/commerce-settings', async (req: Request, res: Response) => {
+  try {
+    const { profileId } = await resolveUserProfileId(req);
+    const accountId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey && accountId) {
+      const url = new URL('https://zernio.com/api/v1/whatsapp/commerce-settings');
+      url.searchParams.set('accountId', accountId);
+      const csRes = await fetch(url.toString(), { headers: { 'Authorization': `Bearer ${apiKey}` } });
+      if (csRes.ok) {
+        const data = await csRes.json();
+        return res.json({ success: true, settings: data.settings || data.data || data });
+      }
+    }
+  } catch (err: any) {
+    console.warn('[whatsapp/commerce-settings] Fetch warning:', err.message);
+  }
+  return res.json({ success: true, settings: {} });
+});
+
+whatsappRouter.put('/api/whatsapp/commerce-settings', async (req: Request, res: Response) => {
+  try {
+    const { profileId } = await resolveUserProfileId(req);
+    const accountId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey && accountId) {
+      const csRes = await fetch('https://zernio.com/api/v1/whatsapp/commerce-settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({ ...req.body, accountId })
+      });
+      if (csRes.ok) {
+        const data = await csRes.json();
+        return res.json({ success: true, data });
+      }
+    }
+  } catch (err: any) {
+    console.warn('[whatsapp/commerce-settings] Update warning:', err.message);
+  }
+  return res.status(400).json({ error: 'Failed to update commerce settings' });
 });
 
 function getUserIdFromReq(req: Request): string | undefined {

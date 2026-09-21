@@ -546,6 +546,8 @@ function normalizeWhatsAppMessage(m, conversation, fallbackDirection, registered
   const direction = m.direction ? m.direction : isFromContact ? "incoming" : fallbackDirection || "incoming";
   const rawAttachments = Array.isArray(m.attachments) ? m.attachments : [];
   const primaryAttachment = rawAttachments[0] || {};
+  const templateAttachment = rawAttachments.find((a) => a?.type === "template");
+  const shareAttachment = rawAttachments.find((a) => a?.type === "share");
   const mediaUrl = m.media_url || m.mediaUrl || m.attachmentUrl || primaryAttachment.url || m.image?.url || m.video?.url || m.audio?.url || m.document?.url;
   let mediaType = m.media_type || primaryAttachment.type;
   if (!mediaType && mediaUrl) {
@@ -584,31 +586,90 @@ function normalizeWhatsAppMessage(m, conversation, fallbackDirection, registered
       }
     }
   }
-  if (!interactiveData && (rawInteractive || parsedButtons.length > 0 || selectedButtonTitle)) {
-    interactiveData = {
-      header: typeof headerText === "string" ? headerText : void 0,
-      body: typeof bodyText === "string" ? bodyText : void 0,
-      footer: typeof footerText === "string" ? footerText : void 0,
-      buttons: parsedButtons.length > 0 ? parsedButtons : void 0,
-      selected_button_id: selectedButtonId,
-      selected_button_title: selectedButtonTitle
+  const nfmReply = m.interactive?.nfm_reply || rawInteractive?.nfm_reply || m.metadata?.nfm_reply;
+  const isFlowResponse = m.type === "nfm_reply" || rawInteractive?.type === "nfm_reply" || !!nfmReply;
+  const rawFlowAction = rawInteractive?.action?.name === "flow" ? rawInteractive?.action : void 0;
+  const rawFlowParams = rawFlowAction?.parameters || m.flow || m.metadata?.flow;
+  const isFlowPrompt = m.type === "flow" || rawInteractive?.type === "flow" || !!rawFlowAction || !!rawFlowParams;
+  let flowData = m.flow_data || void 0;
+  if (isFlowResponse && nfmReply) {
+    let parsedFields = void 0;
+    let rawJsonStr = nfmReply.response_json || nfmReply.response || "";
+    if (typeof rawJsonStr === "string" && rawJsonStr.trim().startsWith("{")) {
+      try {
+        parsedFields = JSON.parse(rawJsonStr);
+      } catch {
+      }
+    } else if (typeof rawJsonStr === "object") {
+      parsedFields = rawJsonStr;
+      rawJsonStr = JSON.stringify(rawJsonStr);
+    }
+    flowData = {
+      flow_id: nfmReply.flow_id || m.metadata?.flowId,
+      flow_token: nfmReply.flow_token || m.metadata?.flowToken,
+      flow_name: nfmReply.body || nfmReply.name || "WhatsApp Flow Response",
+      response_json: rawJsonStr,
+      submitted_fields: parsedFields
+    };
+  } else if (isFlowPrompt && rawFlowParams) {
+    flowData = {
+      flow_id: rawFlowParams.flow_id || rawFlowParams.id,
+      flow_token: rawFlowParams.flow_token || rawFlowParams.token,
+      flow_name: rawFlowParams.flow_name || rawFlowParams.name || headerText || "Interactive Form",
+      flow_cta: rawFlowParams.flow_cta || rawFlowAction?.button || "Start Flow",
+      flow_action: rawFlowParams.flow_action || "navigate",
+      screen: rawFlowParams.flow_action_payload?.screen || rawFlowParams.screen,
+      data: rawFlowParams.flow_action_payload?.data || rawFlowParams.data
     };
   }
-  const templateName = m.template_name || m.templateName || m.template?.name || m.template?.elements?.[0]?.name || m.metadata?.template?.name || m.metadata?.templateName;
-  const templateParams = m.template_params || m.templateParams || m.metadata?.template?.params;
-  let templateData = m.template_data || m.template || m.metadata?.template;
+  const tmplPayload = templateAttachment?.payload || {};
+  const templateName = m.template_name || m.templateName || m.template?.name || m.template?.elements?.[0]?.name || tmplPayload.name || tmplPayload.templateName || tmplPayload.template_name || m.metadata?.template?.name || m.metadata?.templateName;
+  const templateParams = m.template_params || m.templateParams || tmplPayload.params || m.metadata?.template?.params;
+  let templateData = m.template_data || m.template || tmplPayload || m.metadata?.template;
   if (templateName && !templateData && registeredTemplates && Array.isArray(registeredTemplates)) {
     templateData = registeredTemplates.find(
       (t) => t.name.toLowerCase() === templateName.toLowerCase()
     );
   }
+  if (tmplPayload.buttons && Array.isArray(tmplPayload.buttons) && parsedButtons.length === 0) {
+    for (const b of tmplPayload.buttons) {
+      parsedButtons.push({
+        id: b.id || b.title || b.text,
+        title: b.title || b.text || "Action",
+        type: b.type,
+        url: b.url,
+        phone_number: b.phone_number
+      });
+    }
+  }
+  if (!interactiveData && (rawInteractive || parsedButtons.length > 0 || selectedButtonTitle || isFlowPrompt)) {
+    interactiveData = {
+      header: typeof headerText === "string" ? headerText : tmplPayload.title || void 0,
+      body: typeof bodyText === "string" ? bodyText : tmplPayload.body || void 0,
+      footer: typeof footerText === "string" ? footerText : tmplPayload.footer || void 0,
+      buttons: parsedButtons.length > 0 ? parsedButtons : void 0,
+      selected_button_id: selectedButtonId,
+      selected_button_title: selectedButtonTitle
+    };
+  }
   let rawText = m.message || m.text || m.body || m.caption || m.metadata?.messagePreview || "";
   let resolvedText = rawText;
   let finalType = m.type || "text";
-  if (templateName) {
+  if (isFlowResponse) {
+    finalType = "flow_response";
+    if (!resolvedText || resolvedText === "[Unsupported message]") {
+      const keys = flowData?.submitted_fields ? Object.keys(flowData.submitted_fields) : [];
+      resolvedText = keys.length > 0 ? `Flow Response: ${keys.slice(0, 3).map((k) => `${k}=${flowData.submitted_fields[k]}`).join(", ")}` : "WhatsApp Flow Completed";
+    }
+  } else if (isFlowPrompt) {
+    finalType = "flow";
+    if (!resolvedText || resolvedText === "[Unsupported message]") {
+      resolvedText = headerText || bodyText || `Flow: ${flowData?.flow_name || "Interactive Flow"}`;
+    }
+  } else if (templateName || templateAttachment) {
     finalType = "template";
-    let tmplBody = "";
-    if (templateData?.components && Array.isArray(templateData.components)) {
+    let tmplBody = tmplPayload.body || "";
+    if (!tmplBody && templateData?.components && Array.isArray(templateData.components)) {
       const bodyComp = templateData.components.find(
         (c) => (c.type || "").toUpperCase() === "BODY"
       );
@@ -617,7 +678,12 @@ function normalizeWhatsAppMessage(m, conversation, fallbackDirection, registered
       }
     }
     if (!resolvedText || resolvedText === "[Unsupported message]") {
-      resolvedText = tmplBody || `[Template: ${templateName}]`;
+      resolvedText = tmplBody || tmplPayload.title || `[Template: ${templateName || "Message"}]`;
+    }
+  } else if (shareAttachment) {
+    finalType = "share";
+    if (!resolvedText || resolvedText === "[Unsupported message]") {
+      resolvedText = shareAttachment.title || shareAttachment.url || "Shared Content";
     }
   } else if (selectedButtonTitle) {
     finalType = "button_reply";
@@ -658,6 +724,7 @@ function normalizeWhatsAppMessage(m, conversation, fallbackDirection, registered
     template_name: templateName,
     template_params: templateParams,
     template_data: templateData,
+    flow_data: flowData,
     interactive_data: interactiveData,
     attachments: rawAttachments.length > 0 ? rawAttachments : mediaUrl ? [{ type: mediaType, url: mediaUrl, filename }] : void 0,
     status: m.status || m.deliveryStatus || (direction === "outgoing" ? "sent" : "delivered"),
@@ -4454,7 +4521,54 @@ whatsappRouter.get("/api/whatsapp/conversations/:id/messages", async (req, res) 
   const { id } = req.params;
   const { userId, profileId } = await resolveUserProfileId(req);
   let messages = whatsappStore.getMessages(id);
-  const conversation = whatsappStore.getConversation(id, profileId);
+  let conversation = whatsappStore.getConversation(id, profileId);
+  if (!conversation) {
+    try {
+      const supabase = getBackendSupabaseClient();
+      if (supabase) {
+        const { data: dbConv } = await supabase.from("whatsapp_conversations").select("*").eq("id", id).maybeSingle();
+        if (dbConv) {
+          conversation = {
+            id: dbConv.id,
+            contact: dbConv.contact || { phone_number: dbConv.contact_phone || "", name: dbConv.contact_name || "Unknown" },
+            last_message: dbConv.last_message || "",
+            last_message_at: dbConv.last_message_at || dbConv.updated_at || (/* @__PURE__ */ new Date()).toISOString(),
+            unread_count: dbConv.unread_count || 0,
+            status: dbConv.status || "active",
+            is_window_open: dbConv.is_window_open !== false,
+            window_expires_at: dbConv.window_expires_at,
+            account_id: dbConv.account_id,
+            profile_id: dbConv.profile_id || profileId
+          };
+          whatsappStore.saveConversation(conversation);
+        }
+      }
+    } catch {
+    }
+    if (!conversation && profileId) {
+      try {
+        const liveConvs = await ZernioWhatsAppService.listConversations(profileId, 100);
+        const match = liveConvs.find((c) => (c.id || c._id) === id);
+        if (match) {
+          const contactPhone = match.participantId || match.contact?.phone_number || match.senderUsername || "";
+          const contactName = match.participantName || match.contact?.name || match.senderName || contactPhone;
+          conversation = {
+            id: match.id || match._id,
+            contact: { phone_number: contactPhone, name: contactName },
+            last_message: match.lastMessage?.text || match.snippet || "",
+            last_message_at: match.lastMessage?.timestamp || match.updatedAt || (/* @__PURE__ */ new Date()).toISOString(),
+            unread_count: match.unreadCount || 0,
+            status: "active",
+            is_window_open: true,
+            account_id: match.accountId || match.account_id,
+            profile_id: profileId
+          };
+          whatsappStore.saveConversation(conversation);
+        }
+      } catch {
+      }
+    }
+  }
   if (!conversation) {
     return res.status(404).json({ error: "Conversation not found or access denied" });
   }
@@ -4477,6 +4591,27 @@ whatsappRouter.get("/api/whatsapp/conversations/:id/messages", async (req, res) 
             const direction = isFromContact ? "incoming" : m.direction || "incoming";
             const msg = normalizeWhatsAppMessage(m, conversation, direction, allTemplates);
             whatsappStore.appendMessage(msg);
+            try {
+              const supabase = getBackendSupabaseClient();
+              if (supabase) {
+                await supabase.from("whatsapp_messages").upsert({
+                  id: msg.id,
+                  conversation_id: id,
+                  direction: msg.direction,
+                  text: msg.text,
+                  type: msg.type,
+                  status: msg.status,
+                  media_url: msg.media_url,
+                  template_name: msg.template_name,
+                  template_data: msg.template_data,
+                  flow_data: msg.flow_data,
+                  attachments: msg.attachments,
+                  metadata: msg.metadata,
+                  created_at: msg.timestamp
+                }, { onConflict: "id", ignoreDuplicates: true });
+              }
+            } catch {
+            }
           }
           messages = whatsappStore.getMessages(id);
         }
@@ -4493,6 +4628,7 @@ whatsappRouter.post("/api/whatsapp/conversations/:id/messages", async (req, res)
   const { id } = req.params;
   const {
     text,
+    message,
     media_url,
     template_name,
     template_params,
@@ -4506,7 +4642,56 @@ whatsappRouter.post("/api/whatsapp/conversations/:id/messages", async (req, res)
     template_components,
     templateComponents
   } = req.body;
-  const conv = whatsappStore.getConversation(id);
+  const effectiveText = text || message || "";
+  const { userId, profileId } = await resolveUserProfileId(req);
+  let conv = whatsappStore.getConversation(id);
+  if (!conv) {
+    try {
+      const supabase = getBackendSupabaseClient();
+      if (supabase) {
+        const { data: dbConv } = await supabase.from("whatsapp_conversations").select("*").eq("id", id).maybeSingle();
+        if (dbConv) {
+          conv = {
+            id: dbConv.id,
+            contact: dbConv.contact || { phone_number: dbConv.contact_phone || "", name: dbConv.contact_name || "Unknown" },
+            last_message: dbConv.last_message || "",
+            last_message_at: dbConv.last_message_at || dbConv.updated_at || (/* @__PURE__ */ new Date()).toISOString(),
+            unread_count: dbConv.unread_count || 0,
+            status: dbConv.status || "active",
+            is_window_open: dbConv.is_window_open !== false,
+            window_expires_at: dbConv.window_expires_at,
+            account_id: dbConv.account_id,
+            profile_id: dbConv.profile_id || profileId
+          };
+          whatsappStore.saveConversation(conv);
+        }
+      }
+    } catch {
+    }
+    if (!conv && profileId) {
+      try {
+        const liveConvs = await ZernioWhatsAppService.listConversations(profileId, 100);
+        const match = liveConvs.find((c) => (c.id || c._id) === id);
+        if (match) {
+          const contactPhone = match.participantId || match.contact?.phone_number || match.senderUsername || "";
+          const contactName = match.participantName || match.contact?.name || match.senderName || contactPhone;
+          conv = {
+            id: match.id || match._id,
+            contact: { phone_number: contactPhone, name: contactName },
+            last_message: match.lastMessage?.text || match.snippet || "",
+            last_message_at: match.lastMessage?.timestamp || match.updatedAt || (/* @__PURE__ */ new Date()).toISOString(),
+            unread_count: match.unreadCount || 0,
+            status: "active",
+            is_window_open: true,
+            account_id: match.accountId || match.account_id,
+            profile_id: profileId
+          };
+          whatsappStore.saveConversation(conv);
+        }
+      } catch {
+      }
+    }
+  }
   if (!conv) {
     return res.status(404).json({ error: "Conversation not found" });
   }
@@ -4535,7 +4720,7 @@ whatsappRouter.post("/api/whatsapp/conversations/:id/messages", async (req, res)
       const zernioRes = await ZernioWhatsAppService.sendInboxMessage({
         conversationId: id,
         accountId,
-        text,
+        text: effectiveText,
         mediaUrl: media_url,
         attachmentName: effectiveAttachmentName,
         attachmentType: effectiveAttachmentType,
@@ -4556,7 +4741,7 @@ whatsappRouter.post("/api/whatsapp/conversations/:id/messages", async (req, res)
     id: officialMsgId,
     conversation_id: id,
     direction: "outgoing",
-    text: text || (template_name ? `[Template: ${template_name}]` : ""),
+    text: effectiveText || (template_name ? `[Template: ${template_name}]` : ""),
     media_url,
     attachmentName: effectiveAttachmentName,
     attachmentType: effectiveAttachmentType,
@@ -4567,6 +4752,27 @@ whatsappRouter.post("/api/whatsapp/conversations/:id/messages", async (req, res)
     timestamp: (/* @__PURE__ */ new Date()).toISOString()
   }, conv, "outgoing", allTemplates);
   whatsappStore.appendMessage(msg);
+  try {
+    const supabase = getBackendSupabaseClient();
+    if (supabase) {
+      await supabase.from("whatsapp_messages").upsert({
+        id: msg.id,
+        conversation_id: id,
+        direction: "outgoing",
+        text: msg.text,
+        type: msg.type,
+        status: msg.status,
+        media_url: msg.media_url,
+        template_name: msg.template_name,
+        template_data: msg.template_data,
+        flow_data: msg.flow_data,
+        attachments: msg.attachments,
+        metadata: msg.metadata,
+        created_at: msg.timestamp
+      }, { onConflict: "id", ignoreDuplicates: true });
+    }
+  } catch {
+  }
   broadcastWhatsAppEvent({
     event: "message.sent",
     conversationId: id,
@@ -7041,6 +7247,102 @@ whatsappRouter.delete("/api/mcp/tokens/:id", (req, res) => {
   whatsappStore.deleteMCPToken(id);
   return res.json({ success: true });
 });
+whatsappRouter.get("/api/whatsapp/catalogs", async (req, res) => {
+  try {
+    const { profileId } = await resolveUserProfileId(req);
+    const accountId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey && accountId) {
+      const url = new URL("https://zernio.com/api/v1/whatsapp/catalogs");
+      url.searchParams.set("accountId", accountId);
+      const catRes = await fetch(url.toString(), { headers: { "Authorization": `Bearer ${apiKey}` } });
+      if (catRes.ok) {
+        const data = await catRes.json();
+        return res.json({ success: true, catalogs: data.catalogs || data.data || [] });
+      }
+    }
+  } catch (err) {
+    console.warn("[whatsapp/catalogs] Fetch warning:", err.message);
+  }
+  return res.json({ success: true, catalogs: [] });
+});
+whatsappRouter.post("/api/whatsapp/catalogs", async (req, res) => {
+  try {
+    const { profileId } = await resolveUserProfileId(req);
+    const accountId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey && accountId) {
+      const catRes = await fetch("https://zernio.com/api/v1/whatsapp/catalogs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+        body: JSON.stringify({ ...req.body, accountId })
+      });
+      if (catRes.ok) {
+        const data = await catRes.json();
+        return res.json({ success: true, data });
+      }
+    }
+  } catch (err) {
+    console.warn("[whatsapp/catalogs] Link warning:", err.message);
+  }
+  return res.status(400).json({ error: "Failed to link catalog" });
+});
+whatsappRouter.delete("/api/whatsapp/catalogs/:id", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey) {
+      const delRes = await fetch(`https://zernio.com/api/v1/whatsapp/catalogs/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: { "Authorization": `Bearer ${apiKey}` }
+      });
+      if (delRes.ok) return res.json({ success: true });
+    }
+  } catch (err) {
+    console.warn("[whatsapp/catalogs] Unlink warning:", err.message);
+  }
+  return res.status(400).json({ error: "Failed to unlink catalog" });
+});
+whatsappRouter.get("/api/whatsapp/commerce-settings", async (req, res) => {
+  try {
+    const { profileId } = await resolveUserProfileId(req);
+    const accountId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey && accountId) {
+      const url = new URL("https://zernio.com/api/v1/whatsapp/commerce-settings");
+      url.searchParams.set("accountId", accountId);
+      const csRes = await fetch(url.toString(), { headers: { "Authorization": `Bearer ${apiKey}` } });
+      if (csRes.ok) {
+        const data = await csRes.json();
+        return res.json({ success: true, settings: data.settings || data.data || data });
+      }
+    }
+  } catch (err) {
+    console.warn("[whatsapp/commerce-settings] Fetch warning:", err.message);
+  }
+  return res.json({ success: true, settings: {} });
+});
+whatsappRouter.put("/api/whatsapp/commerce-settings", async (req, res) => {
+  try {
+    const { profileId } = await resolveUserProfileId(req);
+    const accountId = await ZernioWhatsAppService.getDefaultAccountId(profileId);
+    const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+    if (apiKey && accountId) {
+      const csRes = await fetch("https://zernio.com/api/v1/whatsapp/commerce-settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+        body: JSON.stringify({ ...req.body, accountId })
+      });
+      if (csRes.ok) {
+        const data = await csRes.json();
+        return res.json({ success: true, data });
+      }
+    }
+  } catch (err) {
+    console.warn("[whatsapp/commerce-settings] Update warning:", err.message);
+  }
+  return res.status(400).json({ error: "Failed to update commerce settings" });
+});
 function getUserIdFromReq(req) {
   const customHeader = req.headers["x-user-id"] || req.headers["x-rockyt-user-id"];
   if (customHeader && customHeader !== "undefined" && customHeader !== "null" && customHeader.trim()) {
@@ -8171,7 +8473,13 @@ function startServer() {
     crossOriginEmbedderPolicy: false
   }));
   app2.use(cors({
-    origin: ["https://rockyt.io", "http://localhost:3000"],
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return callback(null, true);
+      if (/^https:\/\/(.*\.)?rockyt\.io$/.test(origin)) return callback(null, true);
+      if (/^https:\/\/.*\.vercel\.app$/.test(origin)) return callback(null, true);
+      callback(new Error("Not allowed by CORS"));
+    },
     credentials: true
   }));
   app2.use(cookieParser());
@@ -11391,6 +11699,378 @@ function startServer() {
       console.warn("[inbox/reply] Reply warning:", err.message);
     }
     return res.json({ success: true, message: "Message sent successfully" });
+  }));
+  app2.get("/api/v1/inbox/conversations/:id/messages", supabaseAuth, asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    let zernioProfileId = req.zernioProfileId || null;
+    if (req.user) {
+      const profile = await ensureUserProfile(req.user);
+      if (profile?.zernio_profile_id) zernioProfileId = profile.zernio_profile_id;
+    }
+    let messages = [];
+    if (zernioProfileId) {
+      try {
+        const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+        if (apiKey) {
+          let accountId;
+          try {
+            const accId = await ZernioWhatsAppService.getDefaultAccountId(zernioProfileId, req.user?.id);
+            if (accId) accountId = accId;
+          } catch {
+          }
+          const url = new URL(`https://zernio.com/api/v1/inbox/conversations/${encodeURIComponent(id)}/messages`);
+          if (accountId) url.searchParams.set("accountId", accountId);
+          const msgRes = await fetch(url.toString(), {
+            headers: { "Authorization": `Bearer ${apiKey}` }
+          });
+          if (msgRes.ok) {
+            const msgData = await msgRes.json();
+            messages = msgData.messages || msgData.data || [];
+          }
+        }
+      } catch (err) {
+        console.warn("[inbox/messages] Zernio messages fetch warning:", err.message);
+      }
+    }
+    if (messages.length === 0 && supabase) {
+      try {
+        const { data: dbMsgs } = await supabase.from("whatsapp_messages").select("*").eq("conversation_id", id).order("created_at", { ascending: true }).limit(100);
+        if (dbMsgs && dbMsgs.length > 0) messages = dbMsgs;
+      } catch {
+      }
+    }
+    return res.json({ success: true, messages });
+  }));
+  app2.get("/api/v1/whatsapp/catalogs", supabaseAuth, asyncHandler(async (req, res) => {
+    let zernioProfileId = req.zernioProfileId || null;
+    if (req.user) {
+      const profile = await ensureUserProfile(req.user);
+      if (profile?.zernio_profile_id) zernioProfileId = profile.zernio_profile_id;
+    }
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey && zernioProfileId) {
+        const accountId = await ZernioWhatsAppService.getDefaultAccountId(zernioProfileId, req.user?.id);
+        const url = new URL("https://zernio.com/api/v1/whatsapp/catalogs");
+        if (accountId) url.searchParams.set("accountId", accountId);
+        const catRes = await fetch(url.toString(), { headers: { "Authorization": `Bearer ${apiKey}` } });
+        if (catRes.ok) {
+          const data = await catRes.json();
+          return res.json({ success: true, catalogs: data.catalogs || data.data || [] });
+        }
+      }
+    } catch (err) {
+      console.warn("[catalogs] Fetch warning:", err.message);
+    }
+    return res.json({ success: true, catalogs: [] });
+  }));
+  app2.post("/api/v1/whatsapp/catalogs", supabaseAuth, asyncHandler(async (req, res) => {
+    let zernioProfileId = req.zernioProfileId || null;
+    if (req.user) {
+      const profile = await ensureUserProfile(req.user);
+      if (profile?.zernio_profile_id) zernioProfileId = profile.zernio_profile_id;
+    }
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey && zernioProfileId) {
+        const accountId = await ZernioWhatsAppService.getDefaultAccountId(zernioProfileId, req.user?.id);
+        const catRes = await fetch("https://zernio.com/api/v1/whatsapp/catalogs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+          body: JSON.stringify({ ...req.body, accountId })
+        });
+        if (catRes.ok) {
+          const data = await catRes.json();
+          return res.json({ success: true, data });
+        }
+      }
+    } catch (err) {
+      console.warn("[catalogs] Link warning:", err.message);
+    }
+    return res.status(400).json({ error: "Failed to link catalog" });
+  }));
+  app2.delete("/api/v1/whatsapp/catalogs/:catalogId", supabaseAuth, asyncHandler(async (req, res) => {
+    const { catalogId } = req.params;
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const delRes = await fetch(`https://zernio.com/api/v1/whatsapp/catalogs/${encodeURIComponent(catalogId)}`, {
+          method: "DELETE",
+          headers: { "Authorization": `Bearer ${apiKey}` }
+        });
+        if (delRes.ok) return res.json({ success: true });
+      }
+    } catch (err) {
+      console.warn("[catalogs] Unlink warning:", err.message);
+    }
+    return res.status(400).json({ error: "Failed to unlink catalog" });
+  }));
+  app2.get("/api/v1/whatsapp/commerce-settings", supabaseAuth, asyncHandler(async (req, res) => {
+    let zernioProfileId = req.zernioProfileId || null;
+    if (req.user) {
+      const profile = await ensureUserProfile(req.user);
+      if (profile?.zernio_profile_id) zernioProfileId = profile.zernio_profile_id;
+    }
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey && zernioProfileId) {
+        const accountId = await ZernioWhatsAppService.getDefaultAccountId(zernioProfileId, req.user?.id);
+        const url = new URL("https://zernio.com/api/v1/whatsapp/commerce-settings");
+        if (accountId) url.searchParams.set("accountId", accountId);
+        const csRes = await fetch(url.toString(), { headers: { "Authorization": `Bearer ${apiKey}` } });
+        if (csRes.ok) {
+          const data = await csRes.json();
+          return res.json({ success: true, settings: data.settings || data.data || data });
+        }
+      }
+    } catch (err) {
+      console.warn("[commerce-settings] Fetch warning:", err.message);
+    }
+    return res.json({ success: true, settings: {} });
+  }));
+  app2.put("/api/v1/whatsapp/commerce-settings", supabaseAuth, asyncHandler(async (req, res) => {
+    let zernioProfileId = req.zernioProfileId || null;
+    if (req.user) {
+      const profile = await ensureUserProfile(req.user);
+      if (profile?.zernio_profile_id) zernioProfileId = profile.zernio_profile_id;
+    }
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey && zernioProfileId) {
+        const accountId = await ZernioWhatsAppService.getDefaultAccountId(zernioProfileId, req.user?.id);
+        const csRes = await fetch("https://zernio.com/api/v1/whatsapp/commerce-settings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+          body: JSON.stringify({ ...req.body, accountId })
+        });
+        if (csRes.ok) {
+          const data = await csRes.json();
+          return res.json({ success: true, data });
+        }
+      }
+    } catch (err) {
+      console.warn("[commerce-settings] Update warning:", err.message);
+    }
+    return res.status(400).json({ error: "Failed to update commerce settings" });
+  }));
+  app2.get("/api/v1/ads/catalogs", supabaseAuth, asyncHandler(async (req, res) => {
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const url = new URL("https://zernio.com/api/v1/ads/catalogs");
+        for (const [key, val] of Object.entries(req.query)) {
+          if (val) url.searchParams.set(key, String(val));
+        }
+        const catRes = await fetch(url.toString(), { headers: { "Authorization": `Bearer ${apiKey}` } });
+        if (catRes.ok) {
+          const data = await catRes.json();
+          return res.json({ success: true, ...data });
+        }
+      }
+    } catch (err) {
+      console.warn("[meta-catalogs] Fetch warning:", err.message);
+    }
+    return res.json({ success: true, catalogs: [] });
+  }));
+  app2.post("/api/v1/ads/catalogs", supabaseAuth, asyncHandler(async (req, res) => {
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const catRes = await fetch("https://zernio.com/api/v1/ads/catalogs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+          body: JSON.stringify(req.body)
+        });
+        const data = await catRes.json();
+        return res.status(catRes.status).json({ success: catRes.ok, ...data });
+      }
+    } catch (err) {
+      console.warn("[meta-catalogs] Create warning:", err.message);
+    }
+    return res.status(400).json({ error: "Failed to create catalog" });
+  }));
+  app2.get("/api/v1/ads/catalogs/:catalogId", supabaseAuth, asyncHandler(async (req, res) => {
+    const { catalogId } = req.params;
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const catRes = await fetch(`https://zernio.com/api/v1/ads/catalogs/${encodeURIComponent(catalogId)}`, {
+          headers: { "Authorization": `Bearer ${apiKey}` }
+        });
+        if (catRes.ok) {
+          const data = await catRes.json();
+          return res.json({ success: true, ...data });
+        }
+      }
+    } catch (err) {
+      console.warn("[meta-catalogs] Get warning:", err.message);
+    }
+    return res.status(404).json({ error: "Catalog not found" });
+  }));
+  app2.patch("/api/v1/ads/catalogs/:catalogId", supabaseAuth, asyncHandler(async (req, res) => {
+    const { catalogId } = req.params;
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const catRes = await fetch(`https://zernio.com/api/v1/ads/catalogs/${encodeURIComponent(catalogId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+          body: JSON.stringify(req.body)
+        });
+        const data = await catRes.json();
+        return res.status(catRes.status).json({ success: catRes.ok, ...data });
+      }
+    } catch (err) {
+      console.warn("[meta-catalogs] Update warning:", err.message);
+    }
+    return res.status(400).json({ error: "Failed to update catalog" });
+  }));
+  app2.delete("/api/v1/ads/catalogs/:catalogId", supabaseAuth, asyncHandler(async (req, res) => {
+    const { catalogId } = req.params;
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const delRes = await fetch(`https://zernio.com/api/v1/ads/catalogs/${encodeURIComponent(catalogId)}`, {
+          method: "DELETE",
+          headers: { "Authorization": `Bearer ${apiKey}` }
+        });
+        if (delRes.ok) return res.json({ success: true });
+      }
+    } catch (err) {
+      console.warn("[meta-catalogs] Delete warning:", err.message);
+    }
+    return res.status(400).json({ error: "Failed to delete catalog" });
+  }));
+  app2.get("/api/v1/ads/catalogs/:catalogId/products", supabaseAuth, asyncHandler(async (req, res) => {
+    const { catalogId } = req.params;
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const url = new URL(`https://zernio.com/api/v1/ads/catalogs/${encodeURIComponent(catalogId)}/products`);
+        for (const [key, val] of Object.entries(req.query)) {
+          if (val) url.searchParams.set(key, String(val));
+        }
+        const prodRes = await fetch(url.toString(), { headers: { "Authorization": `Bearer ${apiKey}` } });
+        if (prodRes.ok) {
+          const data = await prodRes.json();
+          return res.json({ success: true, ...data });
+        }
+      }
+    } catch (err) {
+      console.warn("[meta-catalog-products] Fetch warning:", err.message);
+    }
+    return res.json({ success: true, products: [] });
+  }));
+  app2.post("/api/v1/ads/catalogs/:catalogId/products/batch", supabaseAuth, asyncHandler(async (req, res) => {
+    const { catalogId } = req.params;
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const batchRes = await fetch(`https://zernio.com/api/v1/ads/catalogs/${encodeURIComponent(catalogId)}/products/batch`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+          body: JSON.stringify(req.body)
+        });
+        const data = await batchRes.json();
+        return res.status(batchRes.status).json({ success: batchRes.ok, ...data });
+      }
+    } catch (err) {
+      console.warn("[meta-catalog-products] Batch warning:", err.message);
+    }
+    return res.status(400).json({ error: "Failed to batch update catalog products" });
+  }));
+  app2.get("/api/v1/ads/catalogs/:catalogId/product-sets", supabaseAuth, asyncHandler(async (req, res) => {
+    const { catalogId } = req.params;
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const psRes = await fetch(`https://zernio.com/api/v1/ads/catalogs/${encodeURIComponent(catalogId)}/product-sets`, {
+          headers: { "Authorization": `Bearer ${apiKey}` }
+        });
+        if (psRes.ok) {
+          const data = await psRes.json();
+          return res.json({ success: true, ...data });
+        }
+      }
+    } catch (err) {
+      console.warn("[meta-catalog-product-sets] Fetch warning:", err.message);
+    }
+    return res.json({ success: true, productSets: [] });
+  }));
+  app2.get("/api/v1/accounts/:accountId/products", supabaseAuth, asyncHandler(async (req, res) => {
+    const { accountId } = req.params;
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const url = new URL(`https://zernio.com/api/v1/accounts/${encodeURIComponent(accountId)}/products`);
+        for (const [key, val] of Object.entries(req.query)) {
+          if (val) url.searchParams.set(key, String(val));
+        }
+        const prodRes = await fetch(url.toString(), { headers: { "Authorization": `Bearer ${apiKey}` } });
+        if (prodRes.ok) {
+          const data = await prodRes.json();
+          return res.json({ success: true, ...data });
+        }
+      }
+    } catch (err) {
+      console.warn("[shopify-products] Fetch warning:", err.message);
+    }
+    return res.json({ success: true, products: [] });
+  }));
+  app2.get("/api/v1/accounts/:accountId/products/:productId", supabaseAuth, asyncHandler(async (req, res) => {
+    const { accountId, productId } = req.params;
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const prodRes = await fetch(`https://zernio.com/api/v1/accounts/${encodeURIComponent(accountId)}/products/${encodeURIComponent(productId)}`, {
+          headers: { "Authorization": `Bearer ${apiKey}` }
+        });
+        if (prodRes.ok) {
+          const data = await prodRes.json();
+          return res.json({ success: true, ...data });
+        }
+      }
+    } catch (err) {
+      console.warn("[shopify-products] Get warning:", err.message);
+    }
+    return res.status(404).json({ error: "Product not found" });
+  }));
+  app2.patch("/api/v1/accounts/:accountId/products/:productId", supabaseAuth, asyncHandler(async (req, res) => {
+    const { accountId, productId } = req.params;
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const patchRes = await fetch(`https://zernio.com/api/v1/accounts/${encodeURIComponent(accountId)}/products/${encodeURIComponent(productId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+          body: JSON.stringify(req.body)
+        });
+        const data = await patchRes.json();
+        return res.status(patchRes.status).json({ success: patchRes.ok, ...data });
+      }
+    } catch (err) {
+      console.warn("[shopify-products] Update warning:", err.message);
+    }
+    return res.status(400).json({ error: "Failed to update product" });
+  }));
+  app2.get("/api/v1/ads/instagram-posts", supabaseAuth, asyncHandler(async (req, res) => {
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const url = new URL("https://zernio.com/api/v1/ads/instagram-posts");
+        for (const [key, val] of Object.entries(req.query)) {
+          if (val) url.searchParams.set(key, String(val));
+        }
+        const igRes = await fetch(url.toString(), { headers: { "Authorization": `Bearer ${apiKey}` } });
+        if (igRes.ok) {
+          const data = await igRes.json();
+          return res.json({ success: true, ...data });
+        }
+      }
+    } catch (err) {
+      console.warn("[instagram-posts] Fetch warning:", err.message);
+    }
+    return res.json({ success: true, posts: [] });
   }));
   app2.get(["/api/v1/ads", "/api/v1/ad-campaigns"], supabaseAuth, asyncHandler(handleGetAdCampaigns));
   app2.get(["/api/v1/users", "/api/v1/me/team"], supabaseAuth, asyncHandler(async (req, res) => {

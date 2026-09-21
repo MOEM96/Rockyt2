@@ -5,7 +5,7 @@ import {
   RefreshCw, Paperclip, Smile, Zap, MessageSquare, 
   ShieldCheck, LayoutTemplate, ArrowUpRight, CheckCircle2, Loader2, Bot,
   Info, ChevronRight, FileText, Music, ExternalLink, Download,
-  MousePointerClick, MapPin
+  MousePointerClick, MapPin, Share2, Workflow, ClipboardCheck
 } from 'lucide-react';
 import { PlayCircle } from 'lucide-react';
 import { getAuthHeaders } from '../../lib/frontendAuth';
@@ -542,9 +542,12 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onTriggerCapi, onO
     return getMessagePreviewText(lastMsg, fallbackText, templateName);
   };
 
-  // Dedicated rich renderer for WhatsApp messages (Templates, Buttons, Media, Interactive)
+  // Dedicated rich renderer for WhatsApp messages (Templates, Flows, Buttons, Media, Interactive)
   const renderMessageContent = (msg: WhatsAppMessage, isOutgoing: boolean) => {
-    const isTemplate = msg.type === 'template' || !!msg.template_name;
+    const isFlowResponse = msg.type === 'flow_response' || !!msg.flow_data?.submitted_fields;
+    const isFlow = msg.type === 'flow' || (!!msg.flow_data && !isFlowResponse);
+    const isShare = msg.type === 'share';
+    const isTemplate = msg.type === 'template' || !!msg.template_name || (msg.attachments && msg.attachments.some(a => a.type === 'template'));
     const isButtonReply = msg.type === 'button_reply' || msg.type === 'list_reply' || !!msg.interactive_data?.selected_button_title;
     const isInteractive = msg.type === 'interactive' || (msg.interactive_data?.buttons && msg.interactive_data.buttons.length > 0);
     const isImage = (msg.type === 'image' || msg.media_type === 'image') && !!msg.media_url;
@@ -553,45 +556,157 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onTriggerCapi, onO
     const isDocument = (msg.type === 'document' || msg.media_type === 'document') && !!msg.media_url;
     const isUnsupported = !msg.text || msg.text === '[Unsupported message]';
 
-    // 1. Template Message
+    // 1. WhatsApp Flow Completed Response Card
+    if (isFlowResponse) {
+      const flowData = msg.flow_data || {};
+      const fields = flowData.submitted_fields || {};
+      const fieldEntries = Object.entries(fields);
+
+      return (
+        <div className="flex flex-col gap-2 w-full max-w-sm">
+          {/* Header Badge */}
+          <div className="flex items-center gap-1.5 text-[10px] font-semibold text-emerald-300 bg-emerald-950/80 border border-emerald-800/70 px-2 py-0.5 rounded-md w-fit">
+            <ClipboardCheck className="w-3 h-3 text-emerald-400" />
+            <span>Flow Completed: {flowData.flow_name || 'WhatsApp Form'}</span>
+          </div>
+
+          {/* Intro text */}
+          <p className="text-xs text-zinc-200 font-medium leading-relaxed">
+            Customer submitted the interactive flow:
+          </p>
+
+          {/* Form responses table / pills */}
+          {fieldEntries.length > 0 ? (
+            <div className="bg-zinc-900/90 rounded-xl border border-zinc-800/80 p-2.5 divide-y divide-zinc-800/60 flex flex-col gap-1.5">
+              {fieldEntries.map(([key, val], idx) => {
+                const displayVal = typeof val === 'object' ? JSON.stringify(val) : String(val);
+                const displayKey = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                return (
+                  <div key={idx} className="pt-1.5 first:pt-0 flex flex-col gap-0.5">
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-400">{displayKey}</span>
+                    <span className="text-xs font-semibold text-emerald-300 break-words">{displayVal}</span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="bg-zinc-900/90 rounded-xl border border-zinc-800/80 p-2.5 text-xs text-zinc-300">
+              {flowData.response_json || 'Flow responses captured and synced.'}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // 2. WhatsApp Interactive Flow Invitation Card
+    if (isFlow) {
+      const flowData = msg.flow_data || {};
+      const header = msg.interactive_data?.header || flowData.flow_name || 'Interactive Flow';
+      const body = msg.interactive_data?.body || msg.text || 'Tap below to complete this interactive WhatsApp flow:';
+      const footer = msg.interactive_data?.footer;
+      const ctaText = flowData.flow_cta || 'Start Flow';
+
+      return (
+        <div className="flex flex-col gap-2 w-full max-w-sm">
+          {/* Flow Header Badge */}
+          <div className="flex items-center gap-1.5 text-[10px] font-semibold text-cyan-300 bg-cyan-950/80 border border-cyan-800/70 px-2 py-0.5 rounded-md w-fit">
+            <Workflow className="w-3 h-3 text-cyan-400" />
+            <span>WhatsApp Flow</span>
+          </div>
+
+          {header && <div className="font-bold text-xs text-zinc-100">{header}</div>}
+          {body && <p className="whitespace-pre-wrap leading-relaxed text-xs text-zinc-200">{body}</p>}
+          {footer && <div className="text-[10px] text-zinc-400 italic">{footer}</div>}
+
+          {/* Interactive Flow Launch Button */}
+          <div className="pt-2 mt-1 border-t border-zinc-700/40">
+            <button
+              type="button"
+              onClick={() => {
+                if (flowData.flow_id) {
+                  window.open(`https://wa.me/?flow_id=${encodeURIComponent(flowData.flow_id)}`, '_blank');
+                } else {
+                  setInputText(ctaText);
+                }
+              }}
+              className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-cyan-950/70 hover:bg-cyan-900/80 text-cyan-300 hover:text-cyan-200 border border-cyan-700/60 hover:border-cyan-600 rounded-lg text-xs font-semibold transition-colors cursor-pointer shadow-sm"
+            >
+              <Workflow className="w-3.5 h-3.5 text-cyan-400" />
+              <span>{ctaText}</span>
+              <ArrowUpRight className="w-3 h-3 text-cyan-400/80" />
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // 3. Shared Content (Post / Story / Media Attachment)
+    if (isShare) {
+      return (
+        <div className="flex flex-col gap-2 p-2.5 rounded-xl bg-zinc-900/90 border border-zinc-800 max-w-xs">
+          <div className="flex items-center gap-1.5 text-[10px] font-semibold text-indigo-300 bg-indigo-950/70 border border-indigo-800/60 px-2 py-0.5 rounded-md w-fit">
+            <Share2 className="w-3 h-3" />
+            <span>Shared Content</span>
+          </div>
+          {msg.media_url && (
+            <img src={msg.media_url} alt="Shared preview" className="w-full max-h-40 object-cover rounded-lg border border-zinc-700/50" />
+          )}
+          <p className="text-xs text-zinc-200">{msg.text || 'Shared link or post attachment'}</p>
+          {msg.media_url && (
+            <a
+              href={msg.media_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 mt-1 font-medium"
+            >
+              <span>View shared content</span>
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          )}
+        </div>
+      );
+    }
+
+    // 4. Template Message (with attachment payload support from Sep 17 changelog)
     if (isTemplate) {
-      const tmplName = msg.template_name || 'Template';
+      const tmplName = msg.template_name || msg.template_data?.name || 'Template';
       const matchedTemplate = msg.template_data || templates.find(t => t.name.toLowerCase() === tmplName.toLowerCase());
       const headerComponent = matchedTemplate?.components?.find((c: any) => (c.type || '').toUpperCase() === 'HEADER');
       const footerComponent = matchedTemplate?.components?.find((c: any) => (c.type || '').toUpperCase() === 'FOOTER');
       const buttonsComponent = matchedTemplate?.components?.find((c: any) => (c.type || '').toUpperCase() === 'BUTTONS');
-      const templateButtons = buttonsComponent?.buttons || msg.interactive_data?.buttons || [];
+      const templateButtons = buttonsComponent?.buttons || msg.interactive_data?.buttons || msg.template_data?.buttons || [];
+
+      const headerText = msg.interactive_data?.header || headerComponent?.text || msg.template_data?.title;
+      const footerText = msg.interactive_data?.footer || footerComponent?.text || msg.template_data?.footer;
+      const headerImage = headerComponent?.media_url || msg.template_data?.image || msg.media_url;
 
       return (
-        <div className="flex flex-col gap-1.5 w-full">
+        <div className="flex flex-col gap-1.5 w-full max-w-sm">
           {/* Template Header Badge */}
           <div className="flex items-center gap-1.5 text-[10px] font-semibold text-emerald-300 bg-emerald-950/70 border border-emerald-800/60 px-2 py-0.5 rounded-md w-fit">
             <LayoutTemplate className="w-3 h-3" />
             <span>Meta Template: {tmplName}</span>
           </div>
 
-          {/* Header content if image or text */}
-          {headerComponent && (
-            <div className="font-semibold text-zinc-100 text-xs">
-              {headerComponent.format === 'IMAGE' && headerComponent.media_url ? (
-                <img src={headerComponent.media_url} alt="Template Header" className="w-full max-h-48 object-cover rounded-lg mb-1 border border-zinc-700/50" />
-              ) : headerComponent.text ? (
-                <span className="font-bold text-sm block mb-0.5">{headerComponent.text}</span>
-              ) : null}
-            </div>
+          {/* Header image or text */}
+          {headerImage && (
+            <img src={headerImage} alt="Template Header" className="w-full max-h-48 object-cover rounded-lg mb-1 border border-zinc-700/50" />
+          )}
+          {headerText && (
+            <div className="font-bold text-sm text-zinc-100 mb-0.5">{headerText}</div>
           )}
 
           {/* Body Text */}
-          <p className="whitespace-pre-wrap leading-relaxed text-xs">
+          <p className="whitespace-pre-wrap leading-relaxed text-xs text-zinc-200">
             {msg.text && msg.text !== '[Unsupported message]' && !msg.text.startsWith('[Template:') 
               ? msg.text 
-              : (matchedTemplate?.components?.find((c: any) => (c.type || '').toUpperCase() === 'BODY')?.text || `Approved Meta Template message (${tmplName})`)}
+              : (matchedTemplate?.components?.find((c: any) => (c.type || '').toUpperCase() === 'BODY')?.text || msg.template_data?.body || `Approved Meta Template message (${tmplName})`)}
           </p>
 
           {/* Footer text */}
-          {footerComponent?.text && (
+          {footerText && (
             <div className="text-[10px] text-zinc-400 italic mt-0.5">
-              {footerComponent.text}
+              {footerText}
             </div>
           )}
 
@@ -602,6 +717,7 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onTriggerCapi, onO
                 const bText = btn.text || btn.title || 'Action';
                 const isUrl = btn.type === 'URL' || btn.type === 'url' || !!btn.url;
                 const isPhone = btn.type === 'PHONE_NUMBER' || btn.type === 'phone_number' || !!btn.phone_number;
+                const isFlowBtn = btn.type === 'FLOW' || btn.type === 'flow' || !!btn.flow_id;
                 return (
                   <button
                     key={idx}
@@ -609,13 +725,14 @@ export const WhatsAppInbox: React.FC<WhatsAppInboxProps> = ({ onTriggerCapi, onO
                     onClick={() => {
                       if (btn.url) window.open(btn.url, '_blank');
                       else if (btn.phone_number) window.open(`tel:${btn.phone_number}`);
+                      else if (btn.flow_id) window.open(`https://wa.me/?flow_id=${encodeURIComponent(btn.flow_id)}`, '_blank');
                       else {
                         setInputText(bText);
                       }
                     }}
                     className="w-full flex items-center justify-center gap-1.5 py-1.5 px-3 bg-zinc-900/90 hover:bg-emerald-950/60 text-emerald-400 hover:text-emerald-300 border border-zinc-700/60 hover:border-emerald-700/60 rounded-lg text-xs font-medium transition-colors cursor-pointer"
                   >
-                    {isUrl ? <ExternalLink className="w-3 h-3" /> : isPhone ? <Phone className="w-3 h-3" /> : <MousePointerClick className="w-3 h-3" />}
+                    {isFlowBtn ? <Workflow className="w-3 h-3 text-cyan-400" /> : isUrl ? <ExternalLink className="w-3 h-3" /> : isPhone ? <Phone className="w-3 h-3" /> : <MousePointerClick className="w-3 h-3" />}
                     <span>{bText}</span>
                   </button>
                 );

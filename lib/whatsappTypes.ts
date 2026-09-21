@@ -18,7 +18,7 @@ export interface WhatsAppMessage {
   id: string;
   conversation_id: string;
   direction: MessageDirection;
-  type: 'text' | 'template' | 'image' | 'video' | 'document' | 'audio' | 'interactive' | 'location' | 'sticker' | 'button_reply' | 'list_reply';
+  type: 'text' | 'template' | 'image' | 'video' | 'document' | 'audio' | 'interactive' | 'location' | 'sticker' | 'button_reply' | 'list_reply' | 'flow' | 'flow_response' | 'share';
   text?: string;
   media_url?: string;
   media_caption?: string;
@@ -27,6 +27,17 @@ export interface WhatsAppMessage {
   template_name?: string;
   template_params?: Record<string, string>;
   template_data?: any;
+  flow_data?: {
+    flow_id?: string;
+    flow_token?: string;
+    flow_name?: string;
+    flow_cta?: string;
+    flow_action?: string;
+    screen?: string;
+    data?: Record<string, any>;
+    response_json?: string;
+    submitted_fields?: Record<string, any>;
+  };
   interactive_data?: {
     header?: string;
     body?: string;
@@ -48,6 +59,7 @@ export interface WhatsAppMessage {
     url?: string;
     filename?: string;
     previewUrl?: string;
+    payload?: any;
   }>;
   metadata?: any;
   status: MessageStatus;
@@ -181,6 +193,7 @@ export interface WhatsAppTemplate {
   status: WhatsAppTemplateStatus;
   components: WhatsAppTemplateComponent[];
   account_id?: string;
+  user_id?: string;
   header_type?: string;
   media_url?: string;
   rejected_reason?: string;
@@ -262,6 +275,7 @@ export interface MCPToken {
 
 export interface WhatsAppAccount {
   id: string;
+  account_id?: string;
   platform: 'whatsapp';
   name: string;
   phone_number: string;
@@ -414,11 +428,13 @@ export interface WhatsAppFlowValidationError {
 
 export interface WhatsAppFlow {
   id: string;
+  _id?: string;
   name: string;
   status: WhatsAppFlowStatus;
   categories: WhatsAppFlowCategory[];
   version?: number;
   lineage_id?: string;
+  lineageId?: string;
   parent_flow_id?: string;
   flow_json?: FlowJSON;
   endpoint_uri?: string;

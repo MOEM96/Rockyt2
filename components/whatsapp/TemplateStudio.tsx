@@ -121,6 +121,7 @@ export const TemplateStudio: React.FC<TemplateStudioProps> = ({ userSession }) =
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'DRAFT' | 'PENDING' | 'APPROVED' | 'REJECTED'>('ALL');
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState('');

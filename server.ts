@@ -42,7 +42,18 @@ function startServer() {
   }));
 
   app.use(cors({
-    origin: ['https://rockyt.io', 'http://localhost:3000'],
+    origin: (origin, callback) => {
+      // Allow requests with no origin (mobile apps, curl, server-to-server)
+      if (!origin) return callback(null, true);
+      // Allow all localhost/127.0.0.1 on any port (Vite :5173, CRA :3000, etc.)
+      if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return callback(null, true);
+      // Allow rockyt.io (www and subdomains)
+      if (/^https:\/\/(.*\.)?rockyt\.io$/.test(origin)) return callback(null, true);
+      // Allow Vercel preview and production deployments
+      if (/^https:\/\/.*\.vercel\.app$/.test(origin)) return callback(null, true);
+      // Reject all other origins
+      callback(new Error('Not allowed by CORS'));
+    },
     credentials: true,
   }));
 
@@ -3963,6 +3974,412 @@ function startServer() {
     }
 
     return res.json({ success: true, message: 'Message sent successfully' });
+  }));
+
+  // ─── Inbox: GET Messages for a Conversation (was missing, causing browser JSON parse errors) ───
+  app.get('/api/v1/inbox/conversations/:id/messages', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { id } = req.params;
+    let zernioProfileId: string | null = req.zernioProfileId || null;
+    if (req.user) {
+      const profile = await ensureUserProfile(req.user);
+      if (profile?.zernio_profile_id) zernioProfileId = profile.zernio_profile_id;
+    }
+
+    let messages: any[] = [];
+    if (zernioProfileId) {
+      try {
+        const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+        if (apiKey) {
+          // First resolve accountId for the conversation
+          let accountId: string | undefined;
+          try {
+            const accId = await ZernioWhatsAppService.getDefaultAccountId(zernioProfileId, req.user?.id);
+            if (accId) accountId = accId;
+          } catch {}
+
+          const url = new URL(`https://zernio.com/api/v1/inbox/conversations/${encodeURIComponent(id)}/messages`);
+          if (accountId) url.searchParams.set('accountId', accountId);
+          const msgRes = await fetch(url.toString(), {
+            headers: { 'Authorization': `Bearer ${apiKey}` }
+          });
+          if (msgRes.ok) {
+            const msgData = await msgRes.json();
+            messages = msgData.messages || msgData.data || [];
+          }
+        }
+      } catch (err: any) {
+        console.warn('[inbox/messages] Zernio messages fetch warning:', err.message);
+      }
+    }
+
+    // Fallback: check Supabase whatsapp_messages table
+    if (messages.length === 0 && supabase) {
+      try {
+        const { data: dbMsgs } = await supabase
+          .from('whatsapp_messages')
+          .select('*')
+          .eq('conversation_id', id)
+          .order('created_at', { ascending: true })
+          .limit(100);
+        if (dbMsgs && dbMsgs.length > 0) messages = dbMsgs;
+      } catch {}
+    }
+
+    return res.json({ success: true, messages });
+  }));
+
+  // ─── WhatsApp Catalog Management (Sept 17 changelog) ───
+  app.get('/api/v1/whatsapp/catalogs', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    let zernioProfileId: string | null = req.zernioProfileId || null;
+    if (req.user) {
+      const profile = await ensureUserProfile(req.user);
+      if (profile?.zernio_profile_id) zernioProfileId = profile.zernio_profile_id;
+    }
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey && zernioProfileId) {
+        const accountId = await ZernioWhatsAppService.getDefaultAccountId(zernioProfileId, req.user?.id);
+        const url = new URL('https://zernio.com/api/v1/whatsapp/catalogs');
+        if (accountId) url.searchParams.set('accountId', accountId);
+        const catRes = await fetch(url.toString(), { headers: { 'Authorization': `Bearer ${apiKey}` } });
+        if (catRes.ok) {
+          const data = await catRes.json();
+          return res.json({ success: true, catalogs: data.catalogs || data.data || [] });
+        }
+      }
+    } catch (err: any) {
+      console.warn('[catalogs] Fetch warning:', err.message);
+    }
+    return res.json({ success: true, catalogs: [] });
+  }));
+
+  app.post('/api/v1/whatsapp/catalogs', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    let zernioProfileId: string | null = req.zernioProfileId || null;
+    if (req.user) {
+      const profile = await ensureUserProfile(req.user);
+      if (profile?.zernio_profile_id) zernioProfileId = profile.zernio_profile_id;
+    }
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey && zernioProfileId) {
+        const accountId = await ZernioWhatsAppService.getDefaultAccountId(zernioProfileId, req.user?.id);
+        const catRes = await fetch('https://zernio.com/api/v1/whatsapp/catalogs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          body: JSON.stringify({ ...req.body, accountId })
+        });
+        if (catRes.ok) {
+          const data = await catRes.json();
+          return res.json({ success: true, data });
+        }
+      }
+    } catch (err: any) {
+      console.warn('[catalogs] Link warning:', err.message);
+    }
+    return res.status(400).json({ error: 'Failed to link catalog' });
+  }));
+
+  app.delete('/api/v1/whatsapp/catalogs/:catalogId', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { catalogId } = req.params;
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const delRes = await fetch(`https://zernio.com/api/v1/whatsapp/catalogs/${encodeURIComponent(catalogId)}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        if (delRes.ok) return res.json({ success: true });
+      }
+    } catch (err: any) {
+      console.warn('[catalogs] Unlink warning:', err.message);
+    }
+    return res.status(400).json({ error: 'Failed to unlink catalog' });
+  }));
+
+  // ─── WhatsApp Commerce Settings (Sept 17 changelog) ───
+  app.get('/api/v1/whatsapp/commerce-settings', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    let zernioProfileId: string | null = req.zernioProfileId || null;
+    if (req.user) {
+      const profile = await ensureUserProfile(req.user);
+      if (profile?.zernio_profile_id) zernioProfileId = profile.zernio_profile_id;
+    }
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey && zernioProfileId) {
+        const accountId = await ZernioWhatsAppService.getDefaultAccountId(zernioProfileId, req.user?.id);
+        const url = new URL('https://zernio.com/api/v1/whatsapp/commerce-settings');
+        if (accountId) url.searchParams.set('accountId', accountId);
+        const csRes = await fetch(url.toString(), { headers: { 'Authorization': `Bearer ${apiKey}` } });
+        if (csRes.ok) {
+          const data = await csRes.json();
+          return res.json({ success: true, settings: data.settings || data.data || data });
+        }
+      }
+    } catch (err: any) {
+      console.warn('[commerce-settings] Fetch warning:', err.message);
+    }
+    return res.json({ success: true, settings: {} });
+  }));
+
+  app.put('/api/v1/whatsapp/commerce-settings', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    let zernioProfileId: string | null = req.zernioProfileId || null;
+    if (req.user) {
+      const profile = await ensureUserProfile(req.user);
+      if (profile?.zernio_profile_id) zernioProfileId = profile.zernio_profile_id;
+    }
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey && zernioProfileId) {
+        const accountId = await ZernioWhatsAppService.getDefaultAccountId(zernioProfileId, req.user?.id);
+        const csRes = await fetch('https://zernio.com/api/v1/whatsapp/commerce-settings', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          body: JSON.stringify({ ...req.body, accountId })
+        });
+        if (csRes.ok) {
+          const data = await csRes.json();
+          return res.json({ success: true, data });
+        }
+      }
+    } catch (err: any) {
+      console.warn('[commerce-settings] Update warning:', err.message);
+    }
+    return res.status(400).json({ error: 'Failed to update commerce settings' });
+  }));
+
+  // ─── Meta Product Catalogs CRUD (Sept 17 changelog) ───
+  app.get('/api/v1/ads/catalogs', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const url = new URL('https://zernio.com/api/v1/ads/catalogs');
+        for (const [key, val] of Object.entries(req.query)) {
+          if (val) url.searchParams.set(key, String(val));
+        }
+        const catRes = await fetch(url.toString(), { headers: { 'Authorization': `Bearer ${apiKey}` } });
+        if (catRes.ok) {
+          const data = await catRes.json();
+          return res.json({ success: true, ...data });
+        }
+      }
+    } catch (err: any) {
+      console.warn('[meta-catalogs] Fetch warning:', err.message);
+    }
+    return res.json({ success: true, catalogs: [] });
+  }));
+
+  app.post('/api/v1/ads/catalogs', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const catRes = await fetch('https://zernio.com/api/v1/ads/catalogs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          body: JSON.stringify(req.body)
+        });
+        const data = await catRes.json();
+        return res.status(catRes.status).json({ success: catRes.ok, ...data });
+      }
+    } catch (err: any) {
+      console.warn('[meta-catalogs] Create warning:', err.message);
+    }
+    return res.status(400).json({ error: 'Failed to create catalog' });
+  }));
+
+  app.get('/api/v1/ads/catalogs/:catalogId', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { catalogId } = req.params;
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const catRes = await fetch(`https://zernio.com/api/v1/ads/catalogs/${encodeURIComponent(catalogId)}`, {
+          headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        if (catRes.ok) {
+          const data = await catRes.json();
+          return res.json({ success: true, ...data });
+        }
+      }
+    } catch (err: any) {
+      console.warn('[meta-catalogs] Get warning:', err.message);
+    }
+    return res.status(404).json({ error: 'Catalog not found' });
+  }));
+
+  app.patch('/api/v1/ads/catalogs/:catalogId', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { catalogId } = req.params;
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const catRes = await fetch(`https://zernio.com/api/v1/ads/catalogs/${encodeURIComponent(catalogId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          body: JSON.stringify(req.body)
+        });
+        const data = await catRes.json();
+        return res.status(catRes.status).json({ success: catRes.ok, ...data });
+      }
+    } catch (err: any) {
+      console.warn('[meta-catalogs] Update warning:', err.message);
+    }
+    return res.status(400).json({ error: 'Failed to update catalog' });
+  }));
+
+  app.delete('/api/v1/ads/catalogs/:catalogId', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { catalogId } = req.params;
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const delRes = await fetch(`https://zernio.com/api/v1/ads/catalogs/${encodeURIComponent(catalogId)}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        if (delRes.ok) return res.json({ success: true });
+      }
+    } catch (err: any) {
+      console.warn('[meta-catalogs] Delete warning:', err.message);
+    }
+    return res.status(400).json({ error: 'Failed to delete catalog' });
+  }));
+
+  // ─── Meta Product Catalog Products & Product Sets (Sept 17 changelog) ───
+  app.get('/api/v1/ads/catalogs/:catalogId/products', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { catalogId } = req.params;
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const url = new URL(`https://zernio.com/api/v1/ads/catalogs/${encodeURIComponent(catalogId)}/products`);
+        for (const [key, val] of Object.entries(req.query)) {
+          if (val) url.searchParams.set(key, String(val));
+        }
+        const prodRes = await fetch(url.toString(), { headers: { 'Authorization': `Bearer ${apiKey}` } });
+        if (prodRes.ok) {
+          const data = await prodRes.json();
+          return res.json({ success: true, ...data });
+        }
+      }
+    } catch (err: any) {
+      console.warn('[meta-catalog-products] Fetch warning:', err.message);
+    }
+    return res.json({ success: true, products: [] });
+  }));
+
+  app.post('/api/v1/ads/catalogs/:catalogId/products/batch', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { catalogId } = req.params;
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const batchRes = await fetch(`https://zernio.com/api/v1/ads/catalogs/${encodeURIComponent(catalogId)}/products/batch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          body: JSON.stringify(req.body)
+        });
+        const data = await batchRes.json();
+        return res.status(batchRes.status).json({ success: batchRes.ok, ...data });
+      }
+    } catch (err: any) {
+      console.warn('[meta-catalog-products] Batch warning:', err.message);
+    }
+    return res.status(400).json({ error: 'Failed to batch update catalog products' });
+  }));
+
+  app.get('/api/v1/ads/catalogs/:catalogId/product-sets', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { catalogId } = req.params;
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const psRes = await fetch(`https://zernio.com/api/v1/ads/catalogs/${encodeURIComponent(catalogId)}/product-sets`, {
+          headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        if (psRes.ok) {
+          const data = await psRes.json();
+          return res.json({ success: true, ...data });
+        }
+      }
+    } catch (err: any) {
+      console.warn('[meta-catalog-product-sets] Fetch warning:', err.message);
+    }
+    return res.json({ success: true, productSets: [] });
+  }));
+
+  // ─── Shopify Products (Sept 16 changelog) ───
+  app.get('/api/v1/accounts/:accountId/products', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { accountId } = req.params;
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const url = new URL(`https://zernio.com/api/v1/accounts/${encodeURIComponent(accountId)}/products`);
+        for (const [key, val] of Object.entries(req.query)) {
+          if (val) url.searchParams.set(key, String(val));
+        }
+        const prodRes = await fetch(url.toString(), { headers: { 'Authorization': `Bearer ${apiKey}` } });
+        if (prodRes.ok) {
+          const data = await prodRes.json();
+          return res.json({ success: true, ...data });
+        }
+      }
+    } catch (err: any) {
+      console.warn('[shopify-products] Fetch warning:', err.message);
+    }
+    return res.json({ success: true, products: [] });
+  }));
+
+  app.get('/api/v1/accounts/:accountId/products/:productId', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { accountId, productId } = req.params;
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const prodRes = await fetch(`https://zernio.com/api/v1/accounts/${encodeURIComponent(accountId)}/products/${encodeURIComponent(productId)}`, {
+          headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        if (prodRes.ok) {
+          const data = await prodRes.json();
+          return res.json({ success: true, ...data });
+        }
+      }
+    } catch (err: any) {
+      console.warn('[shopify-products] Get warning:', err.message);
+    }
+    return res.status(404).json({ error: 'Product not found' });
+  }));
+
+  app.patch('/api/v1/accounts/:accountId/products/:productId', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    const { accountId, productId } = req.params;
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const patchRes = await fetch(`https://zernio.com/api/v1/accounts/${encodeURIComponent(accountId)}/products/${encodeURIComponent(productId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          body: JSON.stringify(req.body)
+        });
+        const data = await patchRes.json();
+        return res.status(patchRes.status).json({ success: patchRes.ok, ...data });
+      }
+    } catch (err: any) {
+      console.warn('[shopify-products] Update warning:', err.message);
+    }
+    return res.status(400).json({ error: 'Failed to update product' });
+  }));
+
+  // ─── Instagram Boostable Posts (Sept 21 changelog) ───
+  app.get('/api/v1/ads/instagram-posts', supabaseAuth, asyncHandler(async (req: any, res: any) => {
+    try {
+      const apiKey = process.env.ZERNIO_API_KEY || process.env.ROCKYT_API_KEY;
+      if (apiKey) {
+        const url = new URL('https://zernio.com/api/v1/ads/instagram-posts');
+        for (const [key, val] of Object.entries(req.query)) {
+          if (val) url.searchParams.set(key, String(val));
+        }
+        const igRes = await fetch(url.toString(), { headers: { 'Authorization': `Bearer ${apiKey}` } });
+        if (igRes.ok) {
+          const data = await igRes.json();
+          return res.json({ success: true, ...data });
+        }
+      }
+    } catch (err: any) {
+      console.warn('[instagram-posts] Fetch warning:', err.message);
+    }
+    return res.json({ success: true, posts: [] });
   }));
 
   app.get(['/api/v1/ads', '/api/v1/ad-campaigns'], supabaseAuth, asyncHandler(handleGetAdCampaigns));

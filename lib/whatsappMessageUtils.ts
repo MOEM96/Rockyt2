@@ -62,6 +62,9 @@ export function normalizeWhatsAppMessage(
   // 2. Attachments & Media extraction
   const rawAttachments = Array.isArray(m.attachments) ? m.attachments : [];
   const primaryAttachment = rawAttachments[0] || {};
+  const templateAttachment = rawAttachments.find((a: any) => a?.type === 'template');
+  const shareAttachment = rawAttachments.find((a: any) => a?.type === 'share');
+
   const mediaUrl =
     m.media_url ||
     m.mediaUrl ||
@@ -135,28 +138,62 @@ export function normalizeWhatsAppMessage(
     }
   }
 
-  if (!interactiveData && (rawInteractive || parsedButtons.length > 0 || selectedButtonTitle)) {
-    interactiveData = {
-      header: typeof headerText === 'string' ? headerText : undefined,
-      body: typeof bodyText === 'string' ? bodyText : undefined,
-      footer: typeof footerText === 'string' ? footerText : undefined,
-      buttons: parsedButtons.length > 0 ? parsedButtons : undefined,
-      selected_button_id: selectedButtonId,
-      selected_button_title: selectedButtonTitle,
+  // 4. WhatsApp Flows extraction (Flow message & Flow completion response)
+  const nfmReply = m.interactive?.nfm_reply || rawInteractive?.nfm_reply || m.metadata?.nfm_reply;
+  const isFlowResponse = m.type === 'nfm_reply' || rawInteractive?.type === 'nfm_reply' || !!nfmReply;
+
+  const rawFlowAction = rawInteractive?.action?.name === 'flow' ? rawInteractive?.action : undefined;
+  const rawFlowParams = rawFlowAction?.parameters || m.flow || m.metadata?.flow;
+  const isFlowPrompt = m.type === 'flow' || rawInteractive?.type === 'flow' || !!rawFlowAction || !!rawFlowParams;
+
+  let flowData: WhatsAppMessage['flow_data'] = m.flow_data || undefined;
+
+  if (isFlowResponse && nfmReply) {
+    let parsedFields: Record<string, any> | undefined = undefined;
+    let rawJsonStr = nfmReply.response_json || nfmReply.response || '';
+    if (typeof rawJsonStr === 'string' && rawJsonStr.trim().startsWith('{')) {
+      try {
+        parsedFields = JSON.parse(rawJsonStr);
+      } catch {}
+    } else if (typeof rawJsonStr === 'object') {
+      parsedFields = rawJsonStr;
+      rawJsonStr = JSON.stringify(rawJsonStr);
+    }
+
+    flowData = {
+      flow_id: nfmReply.flow_id || m.metadata?.flowId,
+      flow_token: nfmReply.flow_token || m.metadata?.flowToken,
+      flow_name: nfmReply.body || nfmReply.name || 'WhatsApp Flow Response',
+      response_json: rawJsonStr,
+      submitted_fields: parsedFields,
+    };
+  } else if (isFlowPrompt && rawFlowParams) {
+    flowData = {
+      flow_id: rawFlowParams.flow_id || rawFlowParams.id,
+      flow_token: rawFlowParams.flow_token || rawFlowParams.token,
+      flow_name: rawFlowParams.flow_name || rawFlowParams.name || headerText || 'Interactive Form',
+      flow_cta: rawFlowParams.flow_cta || rawFlowAction?.button || 'Start Flow',
+      flow_action: rawFlowParams.flow_action || 'navigate',
+      screen: rawFlowParams.flow_action_payload?.screen || rawFlowParams.screen,
+      data: rawFlowParams.flow_action_payload?.data || rawFlowParams.data,
     };
   }
 
-  // 4. Template extraction & component resolution
+  // 5. Template extraction & component resolution (including attachments[].payload from Sep 17 changelog)
+  const tmplPayload = templateAttachment?.payload || {};
   const templateName =
     m.template_name ||
     m.templateName ||
     m.template?.name ||
     m.template?.elements?.[0]?.name ||
+    tmplPayload.name ||
+    tmplPayload.templateName ||
+    tmplPayload.template_name ||
     m.metadata?.template?.name ||
     m.metadata?.templateName;
 
-  const templateParams = m.template_params || m.templateParams || m.metadata?.template?.params;
-  let templateData = m.template_data || m.template || m.metadata?.template;
+  const templateParams = m.template_params || m.templateParams || tmplPayload.params || m.metadata?.template?.params;
+  let templateData = m.template_data || m.template || tmplPayload || m.metadata?.template;
 
   if (templateName && !templateData && registeredTemplates && Array.isArray(registeredTemplates)) {
     templateData = registeredTemplates.find(
@@ -164,16 +201,53 @@ export function normalizeWhatsAppMessage(
     );
   }
 
-  // 5. Intelligent Text & Type resolution
+  // If template has buttons in payload (from Sep 17 changelog attachment payload), unpack them
+  if (tmplPayload.buttons && Array.isArray(tmplPayload.buttons) && parsedButtons.length === 0) {
+    for (const b of tmplPayload.buttons) {
+      parsedButtons.push({
+        id: b.id || b.title || b.text,
+        title: b.title || b.text || 'Action',
+        type: b.type,
+        url: b.url,
+        phone_number: b.phone_number,
+      });
+    }
+  }
+
+  if (!interactiveData && (rawInteractive || parsedButtons.length > 0 || selectedButtonTitle || isFlowPrompt)) {
+    interactiveData = {
+      header: typeof headerText === 'string' ? headerText : (tmplPayload.title || undefined),
+      body: typeof bodyText === 'string' ? bodyText : (tmplPayload.body || undefined),
+      footer: typeof footerText === 'string' ? footerText : (tmplPayload.footer || undefined),
+      buttons: parsedButtons.length > 0 ? parsedButtons : undefined,
+      selected_button_id: selectedButtonId,
+      selected_button_title: selectedButtonTitle,
+    };
+  }
+
+  // 6. Intelligent Text & Type resolution
   let rawText = m.message || m.text || m.body || m.caption || m.metadata?.messagePreview || '';
 
   let resolvedText = rawText;
   let finalType: WhatsAppMessage['type'] = m.type || 'text';
 
-  if (templateName) {
+  if (isFlowResponse) {
+    finalType = 'flow_response';
+    if (!resolvedText || resolvedText === '[Unsupported message]') {
+      const keys = flowData?.submitted_fields ? Object.keys(flowData.submitted_fields) : [];
+      resolvedText = keys.length > 0
+        ? `Flow Response: ${keys.slice(0, 3).map(k => `${k}=${flowData!.submitted_fields![k]}`).join(', ')}`
+        : 'WhatsApp Flow Completed';
+    }
+  } else if (isFlowPrompt) {
+    finalType = 'flow';
+    if (!resolvedText || resolvedText === '[Unsupported message]') {
+      resolvedText = headerText || bodyText || `Flow: ${flowData?.flow_name || 'Interactive Flow'}`;
+    }
+  } else if (templateName || templateAttachment) {
     finalType = 'template';
-    let tmplBody = '';
-    if (templateData?.components && Array.isArray(templateData.components)) {
+    let tmplBody = tmplPayload.body || '';
+    if (!tmplBody && templateData?.components && Array.isArray(templateData.components)) {
       const bodyComp = templateData.components.find(
         (c: any) => (c.type || '').toUpperCase() === 'BODY'
       );
@@ -182,7 +256,12 @@ export function normalizeWhatsAppMessage(
       }
     }
     if (!resolvedText || resolvedText === '[Unsupported message]') {
-      resolvedText = tmplBody || `[Template: ${templateName}]`;
+      resolvedText = tmplBody || tmplPayload.title || `[Template: ${templateName || 'Message'}]`;
+    }
+  } else if (shareAttachment) {
+    finalType = 'share';
+    if (!resolvedText || resolvedText === '[Unsupported message]') {
+      resolvedText = shareAttachment.title || shareAttachment.url || 'Shared Content';
     }
   } else if (selectedButtonTitle) {
     finalType = 'button_reply';
@@ -208,7 +287,6 @@ export function normalizeWhatsAppMessage(
       finalType = 'interactive';
       resolvedText = interactiveData?.body || 'WhatsApp Interactive Message';
     } else {
-      // In the context of the user screenshot where incoming prompts received "YES" or "Got it!"
       resolvedText = direction === 'incoming' ? 'WhatsApp interaction' : 'Message';
     }
   }
@@ -225,6 +303,7 @@ export function normalizeWhatsAppMessage(
     template_name: templateName,
     template_params: templateParams,
     template_data: templateData,
+    flow_data: flowData,
     interactive_data: interactiveData,
     attachments:
       rawAttachments.length > 0
@@ -262,6 +341,17 @@ export function getMessagePreviewText(
 
   const tmpl = msg.template_name || templateName;
   if (tmpl) return `📋 Template: ${tmpl}`;
+
+  if (msg.type === 'flow') {
+    return `⚡ Flow: ${msg.flow_data?.flow_name || 'Interactive Flow'}`;
+  }
+  if (msg.type === 'flow_response') {
+    const fieldCount = msg.flow_data?.submitted_fields ? Object.keys(msg.flow_data.submitted_fields).length : 0;
+    return `📝 Form response (${fieldCount} answer${fieldCount === 1 ? '' : 's'})`;
+  }
+  if (msg.type === 'share') {
+    return `🔗 Shared content`;
+  }
 
   if (msg.type === 'image' || msg.media_type === 'image') {
     const caption = msg.text && msg.text !== 'Photo' && msg.text !== '[Unsupported message]' ? `: ${msg.text}` : '';
